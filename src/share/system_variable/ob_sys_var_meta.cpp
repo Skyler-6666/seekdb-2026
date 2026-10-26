@@ -2189,7 +2189,8 @@ const char *ObSysVarMeta::SYS_VAR_NAMES_SORTED_BY_ID[] = {
   "ob_ivf_nprobes",
   "ob_hnsw_extra_info_max_size",
   "_push_join_predicate",
-  "ob_sparse_drop_ratio_search"
+  "ob_sparse_drop_ratio_search",
+  "ai_column_strict_read"
 };
 
 bool ObSysVarMeta::sys_var_name_case_cmp(const char *name1, const ObString &name2)
