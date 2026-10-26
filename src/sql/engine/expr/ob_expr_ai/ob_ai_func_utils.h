@@ -279,6 +279,9 @@ private:
 class ObAIFuncUtils 
 {
 public:
+  static int validate_embedding_result(ObIAllocator &allocator, ObIJsonBase *result, int64_t dimension = 0);
+  static int normalize_rerank_result(ObIAllocator &allocator, ObIJsonBase *result,
+                                     int64_t count, ObJsonArray *&normalized);
   ObAIFuncUtils() {}
   virtual ~ObAIFuncUtils() {}
   static bool is_completion_type(const ObAIFuncExprInfo *info) {return info->type_ == share::EndpointType::COMPLETION;}
@@ -337,12 +340,6 @@ public:
   static int get_ai_func_info(ObIAllocator &allocator, const ObString &model_id,
                               share::schema::ObSchemaGetterGuard &guard, ObAIFuncExprInfo *&info);
   static int get_ai_func_info(ObIAllocator &allocator, const ObString &model_id, ObAIFuncExprInfo *&info);
-  static int validate_embedding_result(ObIJsonBase *result,
-                                       const int64_t expected_count,
-                                       const int64_t dimension);
-  static int validate_rerank_result(ObIJsonBase *result,
-                                    const int64_t expected_count);
-  static int get_json_number_value(const ObIJsonBase *node, double &value);
 private:
   DISALLOW_COPY_AND_ASSIGN(ObAIFuncUtils);
 };
