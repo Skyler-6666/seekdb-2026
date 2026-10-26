@@ -185,13 +185,23 @@ cc_library(
 # Private means private to the SQL module, not private to one Unity action.
 # Submodule header owners are visible only through this SQL-internal seam.
 cc_library(
+    name = "uuid_node_linux",
+    hdrs = ["engine/expr/ob_uuid_node_linux.h"],
+    strip_include_prefix = "/src",
+    visibility = ["//src/sql:__subpackages__", "//unittest/sql/engine/expr:__pkg__"],
+)
+
+cc_library(
     name = "sql_runtime_internal_headers",
     hdrs = glob(
         ["**/*.h", "**/*.ipp", "**/*.def"],
         allow_empty = True,
-        exclude = SQL_PUBLIC_HEADER_ROOTS + SQL_INTERFACE_CLOSURE_HEADERS + SQL_COMPOSITION_HEADERS,
+        exclude = SQL_PUBLIC_HEADER_ROOTS + SQL_INTERFACE_CLOSURE_HEADERS + SQL_COMPOSITION_HEADERS + [
+            "engine/expr/ob_uuid_node_linux.h",
+        ],
     ),
     deps = [
+        ":uuid_node_linux",
         ":sql_retrieval_composition_headers",
         ":sql_runtime_interface",
         "//rust:config_headers",
