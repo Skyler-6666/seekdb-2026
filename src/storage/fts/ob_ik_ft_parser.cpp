@@ -138,7 +138,7 @@ int ObIKFTParser::process_one_char(TokenizeContext &ctx,
   for (ObList<ObIIKProcessor *, ObIAllocator>::iterator iter = segmenters_.begin();
        OB_SUCC(ret) && iter != segmenters_.end();
        iter++) {
-    if (OB_FAIL((*iter)->process(ctx))) {
+    if (OB_FAIL((*iter)->do_process(ctx, ch, char_len, type))) {
     }
   }
   return ret;
@@ -352,6 +352,7 @@ void ObIKFTParser::reset()
   if (!OB_ISNULL(ctx_)) {
     ctx_->~TokenizeContext();
     allocator_.free(ctx_);
+    ctx_ = nullptr;
   }
 
   for (ObIIKProcessor *segmenter : segmenters_) {
@@ -369,14 +370,17 @@ void ObIKFTParser::reset()
   if (!OB_ISNULL(dict_main_)) {
     dict_main_->~ObIFTDict();
     allocator_.free(dict_main_);
+    dict_main_ = nullptr;
   }
   if (!OB_ISNULL(dict_quan_)) {
     dict_quan_->~ObIFTDict();
     allocator_.free(dict_quan_);
+    dict_quan_ = nullptr;
   }
   if (!OB_ISNULL(dict_stop_)) {
     dict_stop_->~ObIFTDict();
     allocator_.free(dict_stop_);
+    dict_stop_ = nullptr;
   }
 
   is_inited_ = false;

@@ -1,0 +1,493 @@
+{
+  "date": "2026-10-26",
+  "upstream_commit": "5bce9e06d1281347ad61344e4b01fab9158c58a2",
+  "measured_product_commit": "71282989375e22024d485b2c622ab3dde05a725b",
+  "regression_commit": "be767177813b437f128dc4d7a526957c8d6a1c9d",
+  "build": "./build.sh release --make -j24 (RelWithDebInfo, fixed Clang 17.0.6)",
+  "machine": "Ubuntu 22.04 x86_64, 128 visible logical CPUs, 503 GiB visible RAM",
+  "server_parameters": {
+    "memory_budget": "8G",
+    "cpu_count": "4",
+    "datafile_size": "4G",
+    "datafile_maxsize": "8G",
+    "log_disk_size": "4G"
+  },
+  "benchmark_config": {
+    "rows": 20000,
+    "batch": 500,
+    "rounds": 3000,
+    "query_rounds": 200,
+    "samples": 3,
+    "warmup": 30,
+    "skip_load": 0
+  },
+  "benchmark_assets_sha256": {
+    "fts_large_bench.sh": "596ea5d1c0038e666b78aa94bef22d2dfb87ffc9e84dbc7e2a1da1f746424462",
+    "fts_large_bench_baseline.json": "f4e97eddb2e49c982b967fc8047f7cf37177eebe53d648f6746d85aacda91f0c",
+    "fts_large_bench_gen.py": "b0c816dd8211ac0471f60b72a37a3fb5c62580357a5b6d7ac95f5a8c2e3f143d",
+    "fts_large_bench_score.py": "bea52eb1c68d05693bb3ac5b910ab0e2fa0e70e01582f40466898ee1e2e3ef55",
+    "fts_large_bench_setup.sql": "311826751df7f51ac45156fb4284aeca9bd9197370aceb88f4fb92832b458108"
+  },
+  "binary_sha256": {
+    "before": "f99ed72e6366f4dae594700219815d897a7d3c0ce0be737da502eb27491d0059",
+    "after": "94b4fea43d79ce6b7f5a2b2f5d0e960153daf693f047e1cc1338e01bb2e5e4ba"
+  },
+  "reports": {
+    "before": [
+      {
+        "git_head": 712829893.0,
+        "git_dirty": 0.0,
+        "rows": 20000.0,
+        "batch": 500.0,
+        "rounds": 3000.0,
+        "query_rounds": 200.0,
+        "samples": 3.0,
+        "warmup": 30.0,
+        "skip_load": 0.0,
+        "select1_avg_ms": 0.1165,
+        "select1_stdev_ms": 0.0019,
+        "raw_load_sec": 0.808,
+        "raw_load_rows_per_sec": 24752.5,
+        "build_ik_all_sec": 12.804,
+        "build_ik_content_sec": 9.926,
+        "build_beng_en_sec": 5.197,
+        "build_total_sec": 27.961,
+        "tokenize_ik_avg_ms": 0.2511,
+        "tokenize_ik_median_ms": 0.2468,
+        "tokenize_ik_stdev_ms": 0.0074,
+        "tokenize_beng_avg_ms": 0.1937,
+        "tokenize_beng_median_ms": 0.1938,
+        "tokenize_beng_stdev_ms": 0.0025,
+        "query_cn_hits": 8001.0,
+        "query_cn_avg_ms": 2.9542,
+        "query_cn_stdev_ms": 0.0606,
+        "query_beng_hits": 11000.0,
+        "query_beng_avg_ms": 4.8029,
+        "query_beng_stdev_ms": 0.408,
+        "query_mixed_hits": 7332.0,
+        "query_mixed_avg_ms": 3.3439,
+        "query_mixed_stdev_ms": 0.17,
+        "query_limit_hits": 20.0,
+        "query_limit_avg_ms": 3.7835,
+        "query_limit_stdev_ms": 0.5124
+      },
+      {
+        "git_head": 712829893.0,
+        "git_dirty": 0.0,
+        "rows": 20000.0,
+        "batch": 500.0,
+        "rounds": 3000.0,
+        "query_rounds": 200.0,
+        "samples": 3.0,
+        "warmup": 30.0,
+        "skip_load": 0.0,
+        "select1_avg_ms": 0.1199,
+        "select1_stdev_ms": 0.0163,
+        "raw_load_sec": 1.089,
+        "raw_load_rows_per_sec": 18365.5,
+        "build_ik_all_sec": 11.959,
+        "build_ik_content_sec": 9.43,
+        "build_beng_en_sec": 5.306,
+        "build_total_sec": 26.727,
+        "tokenize_ik_avg_ms": 0.2384,
+        "tokenize_ik_median_ms": 0.2372,
+        "tokenize_ik_stdev_ms": 0.0203,
+        "tokenize_beng_avg_ms": 0.1907,
+        "tokenize_beng_median_ms": 0.2012,
+        "tokenize_beng_stdev_ms": 0.0188,
+        "query_cn_hits": 8001.0,
+        "query_cn_avg_ms": 3.1803,
+        "query_cn_stdev_ms": 0.3078,
+        "query_beng_hits": 11000.0,
+        "query_beng_avg_ms": 4.3354,
+        "query_beng_stdev_ms": 0.0295,
+        "query_mixed_hits": 7332.0,
+        "query_mixed_avg_ms": 3.2909,
+        "query_mixed_stdev_ms": 0.0179,
+        "query_limit_hits": 20.0,
+        "query_limit_avg_ms": 3.6636,
+        "query_limit_stdev_ms": 0.1559
+      },
+      {
+        "git_head": 712829893.0,
+        "git_dirty": 0.0,
+        "rows": 20000.0,
+        "batch": 500.0,
+        "rounds": 3000.0,
+        "query_rounds": 200.0,
+        "samples": 3.0,
+        "warmup": 30.0,
+        "skip_load": 0.0,
+        "select1_avg_ms": 0.1141,
+        "select1_stdev_ms": 0.0018,
+        "raw_load_sec": 0.771,
+        "raw_load_rows_per_sec": 25940.3,
+        "build_ik_all_sec": 12.524,
+        "build_ik_content_sec": 9.18,
+        "build_beng_en_sec": 5.101,
+        "build_total_sec": 26.84,
+        "tokenize_ik_avg_ms": 0.2493,
+        "tokenize_ik_median_ms": 0.2527,
+        "tokenize_ik_stdev_ms": 0.0087,
+        "tokenize_beng_avg_ms": 0.1907,
+        "tokenize_beng_median_ms": 0.1904,
+        "tokenize_beng_stdev_ms": 0.0023,
+        "query_cn_hits": 8001.0,
+        "query_cn_avg_ms": 2.9388,
+        "query_cn_stdev_ms": 0.0255,
+        "query_beng_hits": 11000.0,
+        "query_beng_avg_ms": 4.2819,
+        "query_beng_stdev_ms": 0.0166,
+        "query_mixed_hits": 7332.0,
+        "query_mixed_avg_ms": 3.2283,
+        "query_mixed_stdev_ms": 0.0201,
+        "query_limit_hits": 20.0,
+        "query_limit_avg_ms": 3.6306,
+        "query_limit_stdev_ms": 0.031
+      }
+    ],
+    "after": [
+      {
+        "git_head": 712829893.0,
+        "git_dirty": 0.0,
+        "rows": 20000.0,
+        "batch": 500.0,
+        "rounds": 3000.0,
+        "query_rounds": 200.0,
+        "samples": 3.0,
+        "warmup": 30.0,
+        "skip_load": 0.0,
+        "select1_avg_ms": 0.1168,
+        "select1_stdev_ms": 0.0011,
+        "raw_load_sec": 1.081,
+        "raw_load_rows_per_sec": 18501.4,
+        "build_ik_all_sec": 12.479,
+        "build_ik_content_sec": 9.838,
+        "build_beng_en_sec": 5.007,
+        "build_total_sec": 27.358,
+        "tokenize_ik_avg_ms": 0.2199,
+        "tokenize_ik_median_ms": 0.2308,
+        "tokenize_ik_stdev_ms": 0.0283,
+        "tokenize_beng_avg_ms": 0.1646,
+        "tokenize_beng_median_ms": 0.159,
+        "tokenize_beng_stdev_ms": 0.0142,
+        "query_cn_hits": 8001.0,
+        "query_cn_avg_ms": 2.9668,
+        "query_cn_stdev_ms": 0.0342,
+        "query_beng_hits": 11000.0,
+        "query_beng_avg_ms": 4.355,
+        "query_beng_stdev_ms": 0.0302,
+        "query_mixed_hits": 7332.0,
+        "query_mixed_avg_ms": 3.2614,
+        "query_mixed_stdev_ms": 0.0309,
+        "query_limit_hits": 20.0,
+        "query_limit_avg_ms": 3.6492,
+        "query_limit_stdev_ms": 0.0326
+      },
+      {
+        "git_head": 712829893.0,
+        "git_dirty": 0.0,
+        "rows": 20000.0,
+        "batch": 500.0,
+        "rounds": 3000.0,
+        "query_rounds": 200.0,
+        "samples": 3.0,
+        "warmup": 30.0,
+        "skip_load": 0.0,
+        "select1_avg_ms": 0.1175,
+        "select1_stdev_ms": 0.0024,
+        "raw_load_sec": 0.963,
+        "raw_load_rows_per_sec": 20768.4,
+        "build_ik_all_sec": 12.354,
+        "build_ik_content_sec": 9.839,
+        "build_beng_en_sec": 5.002,
+        "build_total_sec": 27.228,
+        "tokenize_ik_avg_ms": 0.2456,
+        "tokenize_ik_median_ms": 0.2404,
+        "tokenize_ik_stdev_ms": 0.0094,
+        "tokenize_beng_avg_ms": 0.1826,
+        "tokenize_beng_median_ms": 0.1911,
+        "tokenize_beng_stdev_ms": 0.0176,
+        "query_cn_hits": 8001.0,
+        "query_cn_avg_ms": 3.2996,
+        "query_cn_stdev_ms": 0.3914,
+        "query_beng_hits": 11000.0,
+        "query_beng_avg_ms": 4.6055,
+        "query_beng_stdev_ms": 0.1442,
+        "query_mixed_hits": 7332.0,
+        "query_mixed_avg_ms": 3.2685,
+        "query_mixed_stdev_ms": 0.0243,
+        "query_limit_hits": 20.0,
+        "query_limit_avg_ms": 3.664,
+        "query_limit_stdev_ms": 0.014
+      },
+      {
+        "git_head": 712829893.0,
+        "git_dirty": 0.0,
+        "rows": 20000.0,
+        "batch": 500.0,
+        "rounds": 3000.0,
+        "query_rounds": 200.0,
+        "samples": 3.0,
+        "warmup": 30.0,
+        "skip_load": 0.0,
+        "select1_avg_ms": 0.1134,
+        "select1_stdev_ms": 0.0032,
+        "raw_load_sec": 1.125,
+        "raw_load_rows_per_sec": 17777.8,
+        "build_ik_all_sec": 12.956,
+        "build_ik_content_sec": 10.045,
+        "build_beng_en_sec": 5.311,
+        "build_total_sec": 28.345,
+        "tokenize_ik_avg_ms": 0.2437,
+        "tokenize_ik_median_ms": 0.2408,
+        "tokenize_ik_stdev_ms": 0.0127,
+        "tokenize_beng_avg_ms": 0.1825,
+        "tokenize_beng_median_ms": 0.1826,
+        "tokenize_beng_stdev_ms": 0.0017,
+        "query_cn_hits": 8001.0,
+        "query_cn_avg_ms": 2.9961,
+        "query_cn_stdev_ms": 0.0719,
+        "query_beng_hits": 11000.0,
+        "query_beng_avg_ms": 4.3401,
+        "query_beng_stdev_ms": 0.0371,
+        "query_mixed_hits": 7332.0,
+        "query_mixed_avg_ms": 3.2388,
+        "query_mixed_stdev_ms": 0.0213,
+        "query_limit_hits": 20.0,
+        "query_limit_avg_ms": 3.6308,
+        "query_limit_stdev_ms": 0.0229
+      }
+    ]
+  },
+  "categories": {
+    "build": {
+      "metrics": [
+        {
+          "metric": "build_ik_all_sec",
+          "before": [
+            12.804,
+            11.959,
+            12.524
+          ],
+          "after": [
+            12.479,
+            12.354,
+            12.956
+          ],
+          "before_mean": 12.429,
+          "after_mean": 12.596333333333332,
+          "before_median": 12.524,
+          "after_median": 12.479,
+          "time_reduction": -0.013463137286453599
+        },
+        {
+          "metric": "build_ik_content_sec",
+          "before": [
+            9.926,
+            9.43,
+            9.18
+          ],
+          "after": [
+            9.838,
+            9.839,
+            10.045
+          ],
+          "before_mean": 9.512,
+          "after_mean": 9.907333333333334,
+          "before_median": 9.43,
+          "after_median": 9.839,
+          "time_reduction": -0.041561536305018215
+        },
+        {
+          "metric": "build_beng_en_sec",
+          "before": [
+            5.197,
+            5.306,
+            5.101
+          ],
+          "after": [
+            5.007,
+            5.002,
+            5.311
+          ],
+          "before_mean": 5.201333333333333,
+          "after_mean": 5.1066666666666665,
+          "before_median": 5.197,
+          "after_median": 5.007,
+          "time_reduction": 0.018200461420148726
+        }
+      ],
+      "time_reduction": -0.01227473739044103
+    },
+    "tokenize": {
+      "metrics": [
+        {
+          "metric": "tokenize_ik_avg_ms",
+          "before": [
+            0.2511,
+            0.2384,
+            0.2493
+          ],
+          "after": [
+            0.2199,
+            0.2456,
+            0.2437
+          ],
+          "before_mean": 0.24626666666666666,
+          "after_mean": 0.2364,
+          "before_median": 0.2493,
+          "after_median": 0.2437,
+          "time_reduction": 0.04006497022198158
+        },
+        {
+          "metric": "tokenize_beng_avg_ms",
+          "before": [
+            0.1937,
+            0.1907,
+            0.1907
+          ],
+          "after": [
+            0.1646,
+            0.1826,
+            0.1825
+          ],
+          "before_mean": 0.1917,
+          "after_mean": 0.17656666666666668,
+          "before_median": 0.1907,
+          "after_median": 0.1825,
+          "time_reduction": 0.07894279255781603
+        }
+      ],
+      "time_reduction": 0.0595038813898988
+    },
+    "query": {
+      "metrics": [
+        {
+          "metric": "query_cn_avg_ms",
+          "before": [
+            2.9542,
+            3.1803,
+            2.9388
+          ],
+          "after": [
+            2.9668,
+            3.2996,
+            2.9961
+          ],
+          "before_mean": 3.0244333333333335,
+          "after_mean": 3.0875,
+          "before_median": 2.9542,
+          "after_median": 2.9961,
+          "time_reduction": -0.02085239108152482
+        },
+        {
+          "metric": "query_beng_avg_ms",
+          "before": [
+            4.8029,
+            4.3354,
+            4.2819
+          ],
+          "after": [
+            4.355,
+            4.6055,
+            4.3401
+          ],
+          "before_mean": 4.4734,
+          "after_mean": 4.433533333333333,
+          "before_median": 4.3354,
+          "after_median": 4.355,
+          "time_reduction": 0.008911938719244136
+        },
+        {
+          "metric": "query_mixed_avg_ms",
+          "before": [
+            3.3439,
+            3.2909,
+            3.2283
+          ],
+          "after": [
+            3.2614,
+            3.2685,
+            3.2388
+          ],
+          "before_mean": 3.2877,
+          "after_mean": 3.2562333333333333,
+          "before_median": 3.2909,
+          "after_median": 3.2614,
+          "time_reduction": 0.009571027364621697
+        },
+        {
+          "metric": "query_limit_avg_ms",
+          "before": [
+            3.7835,
+            3.6636,
+            3.6306
+          ],
+          "after": [
+            3.6492,
+            3.664,
+            3.6308
+          ],
+          "before_mean": 3.6925666666666666,
+          "after_mean": 3.648,
+          "before_median": 3.6636,
+          "after_median": 3.6492,
+          "time_reduction": 0.012069292362132868
+        }
+      ],
+      "time_reduction": 0.00242496684111847
+    }
+  },
+  "mean_category_time_reduction": 0.01655137028019208,
+  "query_hits": {
+    "query_cn_hits": 8001.0,
+    "query_beng_hits": 11000.0,
+    "query_mixed_hits": 7332.0,
+    "query_limit_hits": 20.0
+  },
+  "passed_mysqltest_cases": [
+    "tokenize_function",
+    "parser_hotpath",
+    "query_merge_hotpath",
+    "cn_word",
+    "parser_properties",
+    "simple_query",
+    "basic_dml_sequel",
+    "create_table_with_fts_index",
+    "create_fts_index_afterward",
+    "drop_index",
+    "domain_id_merge_with_compare_null",
+    "index_view",
+    "online_ddl_on_table_with_fts_index",
+    "offline_ddl_with_fts_index",
+    "load_data"
+  ],
+  "baseline_failures_reproduced_in_candidate": [
+    "basic_dml",
+    "partitioned_simple_query"
+  ],
+  "long_query_regressions": {
+    "source_commit": "be767177813b437f128dc4d7a526957c8d6a1c9d",
+    "cases": [
+      {
+        "case": "query_merge_hotpath",
+        "exit_code": 0
+      },
+      {
+        "case": "parser_hotpath",
+        "exit_code": 0
+      },
+      {
+        "case": "tokenize_function",
+        "exit_code": 0
+      }
+    ]
+  },
+  "limitations": [
+    "Local same-host measurements are not an official competition score.",
+    "cpu_count=4 is a server setting; no CPU affinity or cgroup quota was imposed.",
+    "Both original and candidate needed SIGKILL after the harness SIGTERM deadline; restart was not validated.",
+    "The original fixed CI baseline and all shipped test assertions are unchanged."
+  ]
+}

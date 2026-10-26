@@ -218,10 +218,8 @@ int ObSRTaaTIterImpl::init_chunk_stores()
         ret = OB_ALLOCATE_MEMORY_FAILED;
       } else {
         ObSRTaaTHashMap *hash_map = new (buf) ObSRTaaTHashMap();
-        if (OB_FAIL(hash_map->create(10, common::ObMemAttr("FTTaatMap")))) {
-        } else {
-          hash_maps_[i] = hash_map;
-        }
+        // Initialize buckets after the actual partition posting count is known.
+        hash_maps_[i] = hash_map;
       }
       if (OB_FAIL(ret)) {
       } else if (OB_FAIL(query::create_spill_row_store(
@@ -374,9 +372,18 @@ int ObSRTaaTIterImpl::load_next_hash_map()
   } else {
     ObSRTaaTHashMap *map = hash_maps_[cur_map_idx_];
     query::ObSpillRowStoreIterator *store_iter = datum_store_iters_[cur_map_idx_];
+    if (!map->created()) {
+      // Keep sparse queries small and bound memory by the existing partition
+      // target, instead of chaining hundreds of matching documents in 10 buckets.
+      const int64_t bucket_count = MAX(10, MIN(
+          query::spill_row_store_row_count(datum_stores_[cur_map_idx_]), OB_HASHMAP_DEFAULT_SIZE));
+      if (OB_FAIL(map->create(bucket_count, common::ObMemAttr("FTTaatMap")))) {
+      }
+    }
 
     ObSEArray<ObExpr *, 2> exprs;
-    if (OB_FAIL(exprs.push_back(iter_param_->id_proj_expr_))) {
+    if (OB_FAIL(ret)) {
+    } else if (OB_FAIL(exprs.push_back(iter_param_->id_proj_expr_))) {
     } else if (iter_param_->need_project_relevance()
         && OB_FAIL(exprs.push_back(iter_param_->relevance_expr_))) {
     }
@@ -386,7 +393,14 @@ int ObSRTaaTIterImpl::load_next_hash_map()
 
     ObDocIdExt id;
     double cur_relevance = 0.0;
-    double last_relevance = 0.0;
+    struct AddRelevance
+    {
+      double relevance_;
+      void operator()(common::hash::HashMapPair<ObDocIdExt, double> &entry) const
+      {
+        entry.second += relevance_;
+      }
+    };
     while (OB_SUCC(ret)) {
       if (OB_FAIL(query::spill_row_store_next_row(
           store_iter, *eval_ctx, exprs))) {
@@ -398,11 +412,8 @@ int ObSRTaaTIterImpl::load_next_hash_map()
         } else if (iter_param_->need_project_relevance()) {
           ObDatum &relevance_datum = iter_param_->relevance_expr_->locate_expr_datum(*eval_ctx);
           cur_relevance = relevance_datum.get_double();
-          if (OB_FAIL(map->get_refactored(id, last_relevance))) {
-            if (OB_HASH_NOT_EXIST != ret) {
-            } else if (OB_FAIL(map->set_refactored(id, cur_relevance, 1 /* overwrite */))) {
-            }
-          } else if (OB_FAIL(map->set_refactored(id, cur_relevance + last_relevance, 1 /* overwrite */))) {
+          AddRelevance add = {cur_relevance};
+          if (OB_FAIL(map->set_or_update(id, cur_relevance, add))) {
           }
         } else {
           if (OB_FAIL(map->set_refactored(id, 1.0, 0 /* overwrite */))) {

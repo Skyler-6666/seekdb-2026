@@ -382,7 +382,7 @@ int ObFTRangeDict::find_first_char_range(const ObString &single_word, ObIFTDict 
 {
   int ret = OB_SUCCESS;
   bool found = false;
-  for (int i = 0; OB_SUCC(ret) && !found && i < range_dicts_.size(); ++i) {
+  for (int64_t i = 0; OB_SUCC(ret) && !found && i < range_dicts_.count(); ++i) {
     if (ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
                           range_dicts_[i].start_.get_word(),
                           single_word)
@@ -419,6 +419,7 @@ int ObFTRangeDict::build_dict_from_cache(const ObFTCacheRangeContainer &range_co
       range.end_ = dat->end_word_;
       range.dict_ = dict;
       if (OB_FAIL(range_dicts_.push_back(range))) {
+        OB_DELETEx(ObFTCacheDict, &range_alloc_, dict);
       }
     }
   }

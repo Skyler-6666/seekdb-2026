@@ -1,0 +1,75 @@
+# Regression coverage for FTS character classification and word aggregation.
+
+--disable_warnings
+DROP DATABASE IF EXISTS fts_hotpath;
+CREATE DATABASE fts_hotpath;
+USE fts_hotpath;
+--enable_warnings
+SET NAMES utf8mb4;
+SET ob_query_timeout = 10000000000;
+
+# Keep token frequencies, case folding, fullwidth letters/digits and connectors.
+SELECT TOKENIZE('Database DATABASE database performance PERFORMANCE', 'beng', '[{"output":"all"}]');
+SELECT TOKENIZE('The THE the and AND with WITH without WITHOUT', 'beng', '[{"output":"all"}]');
+SELECT TOKENIZE('OceanBase oceanbase 123 １２３ ABC ＡＢＣ a-b a_b 3.14 ３．１４', 'ik', '[{"output":"all"}]');
+SELECT TOKENIZE('中华人民共和国人民大会堂 三百二十个 2026年 数据库性能优化', 'ik', '[{"output":"all"},{"additional_args":[{"ik_mode":"smart"}]}]');
+SELECT TOKENIZE('中华人民共和国人民大会堂 三百二十个 2026年 数据库性能优化', 'ik', '[{"output":"all"},{"additional_args":[{"ik_mode":"max_word"}]}]');
+
+# Boundaries between Chinese, Japanese, Korean, fullwidth and supplementary text.
+SELECT TOKENIZE('中文 ひらがな カタカナ 한글 㐀 豈 Ａ１＿！ 😀 𠀀 END', 'ik', '[{"output":"all"}]');
+SELECT TOKENIZE('abc@example.com A+B&C#D a-b_c 1,234.56 Ａ＋Ｂ １２，３４５．６', 'ik', '[{"output":"all"}]');
+SELECT TOKENIZE('！。，、 😀 𠀀 \n\t', 'ik', '[{"output":"all"}]');
+SELECT TOKENIZE('', 'ik', '[{"output":"all"}]');
+SELECT TOKENIZE('数据库 database 数据库 DATABASE 数据库', 'ik', '[{"output":"all"}]');
+
+# Cross the IK segment boundary, then switch document and mode on each row.
+CREATE TABLE texts (id INT PRIMARY KEY, body VARCHAR(16000)) CHARSET=utf8mb4;
+INSERT INTO texts VALUES
+  (1, REPEAT('数据库 ABC １２３ 中文分词。', 160)),
+  (2, ''),
+  (3, '数据库 数据库 数据库 database DATABASE'),
+  (4, 'The quick brown fox jumps over the lazy dog.'),
+  (5, '中华人民共和国人民大会堂 😀 한글 日本語 ＡＢＣ');
+SELECT id, JSON_EXTRACT(TOKENIZE(body, 'ik', '[{"output":"all"}]'), '$.doc_len') AS doc_len,
+       JSON_LENGTH(JSON_EXTRACT(TOKENIZE(body, 'ik', '[{"output":"all"}]'), '$.tokens')) AS distinct_tokens
+FROM texts ORDER BY id;
+SELECT id, JSON_EXTRACT(TOKENIZE(body, 'beng', '[{"output":"all"}]'), '$.doc_len') AS doc_len,
+       JSON_LENGTH(JSON_EXTRACT(TOKENIZE(body, 'beng', '[{"output":"all"}]'), '$.tokens')) AS distinct_tokens
+FROM texts ORDER BY id;
+
+# Exercise collation-equivalent words through indexes, DML and both IK modes.
+CREATE TABLE docs (
+  id INT PRIMARY KEY,
+  body TEXT COLLATE utf8mb4_general_ci,
+  FULLTEXT INDEX f_beng(body) WITH PARSER beng
+) CHARSET=utf8mb4;
+INSERT INTO docs VALUES (1, 'resume résumé RESUME café CAFE database DATABASE'),
+                       (2, 'database performance audit'),
+                       (3, '数据库 数据库 OceanBase oceanbase １２３'),
+                       (4, '中华人民共和国人民大会堂'), (5, '');
+SELECT id, MATCH(body) AGAINST('database resume café') AS score
+FROM docs WHERE MATCH(body) AGAINST('database resume café') ORDER BY id;
+SELECT id FROM docs WHERE MATCH(body) AGAINST('+database -audit' IN BOOLEAN MODE) ORDER BY id;
+UPDATE docs SET body='audit AUDIT audit' WHERE id=1;
+DELETE FROM docs WHERE id=2;
+SELECT id FROM docs WHERE MATCH(body) AGAINST('database resume café') ORDER BY id;
+SELECT id, MATCH(body) AGAINST('audit') AS score FROM docs WHERE MATCH(body) AGAINST('audit') ORDER BY id;
+DROP INDEX f_beng ON docs;
+CREATE FULLTEXT INDEX f_ik ON docs(body) WITH PARSER ik PARSER_PROPERTIES=(ik_mode='smart');
+SELECT id, MATCH(body) AGAINST('数据库 中华人民共和国') AS score
+FROM docs WHERE MATCH(body) AGAINST('数据库 中华人民共和国') ORDER BY id;
+DROP INDEX f_ik ON docs;
+CREATE FULLTEXT INDEX f_ik ON docs(body) WITH PARSER ik PARSER_PROPERTIES=(ik_mode='max_word');
+SELECT id, MATCH(body) AGAINST('数据库 中华人民共和国') AS score
+FROM docs WHERE MATCH(body) AGAINST('数据库 中华人民共和国') ORDER BY id;
+
+# Stopword lookup keeps the dictionary's collation for binary input columns.
+CREATE TABLE binary_docs (
+  id INT PRIMARY KEY,
+  body TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,
+  FULLTEXT INDEX f_beng(body) WITH PARSER beng
+);
+INSERT INTO binary_docs VALUES (1, 'The DATABASE with CAFÉ cafe'), (2, 'database audit'), (3, 'the with the');
+SELECT id, MATCH(body) AGAINST('database cafe') AS score
+FROM binary_docs WHERE MATCH(body) AGAINST('database cafe') ORDER BY id;
+DROP DATABASE fts_hotpath;

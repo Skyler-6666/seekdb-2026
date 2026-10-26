@@ -1,0 +1,90 @@
+# Dense and sparse postings, overlapping tokens and repeated executions.
+
+--disable_warnings
+DROP DATABASE IF EXISTS fts_query_hotpath;
+CREATE DATABASE fts_query_hotpath;
+USE fts_query_hotpath;
+--enable_warnings
+SET NAMES utf8mb4;
+SET ob_query_timeout = 10000000000;
+
+CREATE TABLE docs (
+  id INT PRIMARY KEY,
+  body VARCHAR(200),
+  FULLTEXT INDEX f_ik(body) WITH PARSER ik
+) CHARSET=utf8mb4;
+BEGIN;
+--disable_query_log
+let $i=1;
+while ($i <= 1280)
+{
+  eval INSERT INTO docs VALUES ($i, CASE MOD($i, 3)
+    WHEN 0 THEN 'database performance alpha alpha'
+    WHEN 1 THEN 'database audit beta beta'
+    ELSE '中文数据库 alpha beta' END);
+  inc $i;
+}
+--enable_query_log
+COMMIT;
+
+SELECT COUNT(*), SUM(id) FROM docs WHERE MATCH(body) AGAINST('database alpha beta');
+SELECT COUNT(*), SUM(id) FROM docs WHERE MATCH(body) AGAINST('database database alpha alpha beta beta');
+SELECT COUNT(*), SUM(id) FROM docs WHERE MATCH(body) AGAINST('alpha missingword');
+SELECT COUNT(*) FROM docs WHERE MATCH(body) AGAINST('missingword');
+SELECT COUNT(*) FROM docs WHERE MATCH(body) AGAINST('');
+SELECT COUNT(*), SUM(id) FROM docs WHERE MATCH(body) AGAINST('+database -audit' IN BOOLEAN MODE);
+
+SELECT id, ROUND(MATCH(body) AGAINST('database alpha beta'), 10) AS score
+FROM docs WHERE MATCH(body) AGAINST('database alpha beta') ORDER BY score DESC, id LIMIT 20;
+SELECT COUNT(*) FROM (SELECT id FROM docs WHERE MATCH(body) AGAINST('database alpha beta') LIMIT 20) t;
+
+# Reuse a prepared plan for dense, disjoint, missing and overlapping token sets.
+PREPARE fts_count FROM 'SELECT COUNT(*), SUM(id) FROM docs WHERE MATCH(body) AGAINST(?)';
+SET @query='database alpha beta';
+EXECUTE fts_count USING @query;
+SET @query='audit';
+EXECUTE fts_count USING @query;
+SET @query='missingword';
+EXECUTE fts_count USING @query;
+SET @query='中文数据库 alpha';
+EXECUTE fts_count USING @query;
+SET @query='database alpha beta';
+EXECUTE fts_count USING @query;
+DEALLOCATE PREPARE fts_count;
+
+BEGIN;
+UPDATE docs SET body='missingword' WHERE id BETWEEN 1 AND 30;
+DELETE FROM docs WHERE id BETWEEN 31 AND 60;
+SELECT COUNT(*), SUM(id) FROM docs WHERE MATCH(body) AGAINST('database alpha beta');
+SELECT COUNT(*), SUM(id) FROM docs WHERE MATCH(body) AGAINST('missingword');
+ROLLBACK;
+SELECT COUNT(*), SUM(id) FROM docs WHERE MATCH(body) AGAINST('database alpha beta');
+SELECT COUNT(*) FROM docs WHERE MATCH(body) AGAINST('missingword');
+
+# Bucket allocation should remain small for a query with only one matching row.
+INSERT INTO docs VALUES (2000, 'uniquetoken database');
+SELECT id FROM docs WHERE MATCH(body) AGAINST('uniquetoken');
+SELECT id, ROUND(MATCH(body) AGAINST('uniquetoken database'), 10) AS score
+FROM docs WHERE MATCH(body) AGAINST('uniquetoken database') ORDER BY score DESC, id LIMIT 3;
+
+# More than 256 distinct tokens select TaaT even when scores are projected.
+# Overlapping alpha/beta postings exercise in-place score aggregation; missing
+# terms keep the same result set while exercising empty posting partitions.
+SET @long_query='alpha beta';
+--disable_query_log
+let $j=1;
+while ($j <= 300)
+{
+  eval SET @long_query=CONCAT(@long_query, ' missingtoken', $j);
+  inc $j;
+}
+--enable_query_log
+PREPARE long_fts FROM 'SELECT COUNT(*), SUM(id) FROM docs WHERE MATCH(body) AGAINST(?)';
+EXECUTE long_fts USING @long_query;
+EXECUTE long_fts USING @long_query;
+DEALLOCATE PREPARE long_fts;
+PREPARE long_scores FROM 'SELECT id, ROUND(MATCH(body) AGAINST(?), 10) AS score FROM docs WHERE MATCH(body) AGAINST(?) ORDER BY score DESC, id LIMIT 5';
+EXECUTE long_scores USING @long_query, @long_query;
+DEALLOCATE PREPARE long_scores;
+
+DROP DATABASE fts_query_hotpath;

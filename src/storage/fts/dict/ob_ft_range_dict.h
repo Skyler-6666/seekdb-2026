@@ -21,6 +21,7 @@
 #include "lib/allocator/ob_allocator.h"
 #include "lib/allocator/page_arena.h"
 #include "lib/container/ob_vector.h"
+#include "lib/container/ob_se_array.h"
 #include "lib/utility/ob_macro_utils.h"
 #include "share/rc/ob_server_runtime.h"
 #include "storage/fts/dict/ob_ft_cache_container.h"
@@ -38,11 +39,11 @@ public:
   ObFTRangeDict(ObIAllocator &alloc,
                 ObFTCacheRangeContainer *range_container,
                 const ObFTDictDesc &desc)
-      : is_inited_(false), desc_(desc), range_alloc_(lib::ObMemAttr("Range Dict")),
-        range_dicts_(&range_alloc_), range_container_(range_container)
+      : is_inited_(false), desc_(desc), range_alloc_(alloc),
+        range_dicts_(OB_MALLOC_NORMAL_BLOCK_SIZE, alloc), range_container_(range_container)
   {
   }
-  ~ObFTRangeDict() override{};
+  ~ObFTRangeDict() override { destroy(); }
 
 public:
   struct ObFTRange final
@@ -90,11 +91,13 @@ private:
 private:
   void destroy()
   {
-    for (int64_t i = 0; i < range_dicts_.size(); i++) {
-      range_dicts_[i].dict_->~ObIFTDict(); // destroy dict
+    for (int64_t i = 0; i < range_dicts_.count(); i++) {
+      ObIFTDict *dict = range_dicts_[i].dict_;
+      dict->~ObIFTDict();
+      range_alloc_.free(dict);
     }
     range_dicts_.reset();
-    range_alloc_.reset();
+    is_inited_ = false;
   }
 
   int find_first_char_range(const ObString &single_word, ObIFTDict *&dict) const;
@@ -103,8 +106,10 @@ private:
   static constexpr int DEFAULT_KEY_PER_RANGE = 50000; // by estimated
   bool is_inited_;
   ObFTDictDesc desc_;
-  ObArenaAllocator range_alloc_;
-  ObVector<ObFTRange, ObArenaAllocator> range_dicts_;
+  // Range wrappers have the parser's lifetime. Use its allocator instead of
+  // acquiring and releasing three independent arenas for every IK document.
+  ObIAllocator &range_alloc_;
+  ObSEArray<ObFTRange, 4, ObIAllocator &> range_dicts_;
   ObFTCacheRangeContainer *range_container_; // only used to read cache
 
 private:

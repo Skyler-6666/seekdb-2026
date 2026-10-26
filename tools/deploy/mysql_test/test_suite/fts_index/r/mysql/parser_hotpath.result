@@ -1,0 +1,110 @@
+DROP DATABASE IF EXISTS fts_hotpath;
+CREATE DATABASE fts_hotpath;
+USE fts_hotpath;
+SET NAMES utf8mb4;
+SET ob_query_timeout = 10000000000;
+SELECT TOKENIZE('Database DATABASE database performance PERFORMANCE', 'beng', '[{"output":"all"}]');
+TOKENIZE('Database DATABASE database performance PERFORMANCE', 'beng', '[{"output":"all"}]')
+{"tokens": [{"database": 3}, {"performance": 2}], "doc_len": 5}
+SELECT TOKENIZE('The THE the and AND with WITH without WITHOUT', 'beng', '[{"output":"all"}]');
+TOKENIZE('The THE the and AND with WITH without WITHOUT', 'beng', '[{"output":"all"}]')
+{"tokens": [{"without": 2}, {"and": 2}], "doc_len": 4}
+SELECT TOKENIZE('OceanBase oceanbase 123 １２３ ABC ＡＢＣ a-b a_b 3.14 ３．１４', 'ik', '[{"output":"all"}]');
+TOKENIZE('OceanBase oceanbase 123 １２３ ABC ＡＢＣ a-b a_b 3.14 ３．１４', 'ik', '[{"output":"all"}]')
+{"tokens": [{"a-b": 1}, {"123": 1}, {"3.14": 1}, {"a_b": 1}, {"oceanbase": 2}, {"１２３": 1}, {"abc": 1}, {"ａｂｃ": 1}, {"３": 1}, {"１４": 1}], "doc_len": 11}
+SELECT TOKENIZE('中华人民共和国人民大会堂 三百二十个 2026年 数据库性能优化', 'ik', '[{"output":"all"},{"additional_args":[{"ik_mode":"smart"}]}]');
+TOKENIZE('中华人民共和国人民大会堂 三百二十个 2026年 数据库性能优化', 'ik', '[{"output":"all"},{"additional_args":[{"ik_mode":"smart"}]}]')
+{"tokens": [{"个": 1}, {"性能": 1}, {"三百二十": 1}, {"人民大会堂": 1}, {"2026年": 1}, {"优化": 1}, {"数据库": 1}, {"中华人民共和国": 1}], "doc_len": 8}
+SELECT TOKENIZE('中华人民共和国人民大会堂 三百二十个 2026年 数据库性能优化', 'ik', '[{"output":"all"},{"additional_args":[{"ik_mode":"max_word"}]}]');
+TOKENIZE('中华人民共和国人民大会堂 三百二十个 2026年 数据库性能优化', 'ik', '[{"output":"all"},{"additional_args":[{"ik_mode":"max_word"}]}]')
+{"tokens": [{"性能": 1}, {"数据": 1}, {"大会": 1}, {"三百二十": 1}, {"人民大会堂": 1}, {"大会堂": 1}, {"共和国": 1}, {"年": 1}, {"人民大会": 1}, {"人民共和国": 1}, {"中华人民": 1}, {"共和": 1}, {"十个": 1}, {"优化": 1}, {"百二": 1}, {"二十": 1}, {"数据库": 1}, {"会堂": 1}, {"中华": 1}, {"中华人民共和国": 1}, {"2026": 1}, {"国人": 1}, {"华人": 1}, {"库": 1}, {"人民": 2}], "doc_len": 26}
+SELECT TOKENIZE('中文 ひらがな カタカナ 한글 㐀 豈 Ａ１＿！ 😀 𠀀 END', 'ik', '[{"output":"all"}]');
+TOKENIZE('中文 ひらがな カタカナ 한글 㐀 豈 Ａ１＿！ 😀 𠀀 END', 'ik', '[{"output":"all"}]')
+{"tokens": [{"ら": 1}, {"ａ１": 1}, {"ひ": 1}, {"な": 1}, {"end": 1}, {"タ": 1}, {"ナ": 1}, {"豈": 1}, {"한": 1}, {"カ": 2}, {"㐀": 1}, {"글": 1}, {"中文": 1}, {"が": 1}], "doc_len": 15}
+SELECT TOKENIZE('abc@example.com A+B&C#D a-b_c 1,234.56 Ａ＋Ｂ １２，３４５．６', 'ik', '[{"output":"all"}]');
+TOKENIZE('abc@example.com A+B&C#D a-b_c 1,234.56 Ａ＋Ｂ １２，３４５．６', 'ik', '[{"output":"all"}]')
+{"tokens": [{"３４５": 1}, {"ａ": 1}, {"１２": 1}, {"ｂ": 1}, {"1,234.56": 1}, {"a-b_c": 1}, {"a+b&c#d": 1}, {"abc@example.com": 1}, {"６": 1}], "doc_len": 9}
+SELECT TOKENIZE('！。，、 😀 𠀀 \n\t', 'ik', '[{"output":"all"}]');
+TOKENIZE('！。，、 😀 𠀀 \n\t', 'ik', '[{"output":"all"}]')
+{"tokens": [], "doc_len": 0}
+SELECT TOKENIZE('', 'ik', '[{"output":"all"}]');
+TOKENIZE('', 'ik', '[{"output":"all"}]')
+{"tokens": [], "doc_len": 0}
+SELECT TOKENIZE('数据库 database 数据库 DATABASE 数据库', 'ik', '[{"output":"all"}]');
+TOKENIZE('数据库 database 数据库 DATABASE 数据库', 'ik', '[{"output":"all"}]')
+{"tokens": [{"database": 2}, {"数据库": 3}], "doc_len": 5}
+CREATE TABLE texts (id INT PRIMARY KEY, body VARCHAR(16000)) CHARSET=utf8mb4;
+INSERT INTO texts VALUES
+(1, REPEAT('数据库 ABC １２３ 中文分词。', 160)),
+(2, ''),
+(3, '数据库 数据库 数据库 database DATABASE'),
+(4, 'The quick brown fox jumps over the lazy dog.'),
+(5, '中华人民共和国人民大会堂 😀 한글 日本語 ＡＢＣ');
+SELECT id, JSON_EXTRACT(TOKENIZE(body, 'ik', '[{"output":"all"}]'), '$.doc_len') AS doc_len,
+JSON_LENGTH(JSON_EXTRACT(TOKENIZE(body, 'ik', '[{"output":"all"}]'), '$.tokens')) AS distinct_tokens
+FROM texts ORDER BY id;
+id	doc_len	distinct_tokens
+1	3040	12
+2	0	0
+3	5	2
+4	9	8
+5	7	7
+SELECT id, JSON_EXTRACT(TOKENIZE(body, 'beng', '[{"output":"all"}]'), '$.doc_len') AS doc_len,
+JSON_LENGTH(JSON_EXTRACT(TOKENIZE(body, 'beng', '[{"output":"all"}]'), '$.tokens')) AS distinct_tokens
+FROM texts ORDER BY id;
+id	doc_len	distinct_tokens
+1	481	5
+2	0	0
+3	5	2
+4	7	7
+5	5	5
+CREATE TABLE docs (
+id INT PRIMARY KEY,
+body TEXT COLLATE utf8mb4_general_ci,
+FULLTEXT INDEX f_beng(body) WITH PARSER beng
+) CHARSET=utf8mb4;
+INSERT INTO docs VALUES (1, 'resume résumé RESUME café CAFE database DATABASE'),
+(2, 'database performance audit'),
+(3, '数据库 数据库 OceanBase oceanbase １２３'),
+(4, '中华人民共和国人民大会堂'), (5, '');
+SELECT id, MATCH(body) AGAINST('database resume café') AS score
+FROM docs WHERE MATCH(body) AGAINST('database resume café') ORDER BY id;
+id	score
+1	4.000073474330379
+2	0.4714897583227188
+SELECT id FROM docs WHERE MATCH(body) AGAINST('+database -audit' IN BOOLEAN MODE) ORDER BY id;
+id
+1
+UPDATE docs SET body='audit AUDIT audit' WHERE id=1;
+DELETE FROM docs WHERE id=2;
+SELECT id FROM docs WHERE MATCH(body) AGAINST('database resume café') ORDER BY id;
+id
+SELECT id, MATCH(body) AGAINST('audit') AS score FROM docs WHERE MATCH(body) AGAINST('audit') ORDER BY id;
+id	score
+1	1.5664330192032336
+DROP INDEX f_beng ON docs;
+CREATE FULLTEXT INDEX f_ik ON docs(body) WITH PARSER ik PARSER_PROPERTIES=(ik_mode='smart');
+SELECT id, MATCH(body) AGAINST('数据库 中华人民共和国') AS score
+FROM docs WHERE MATCH(body) AGAINST('数据库 中华人民共和国') ORDER BY id;
+id	score
+3	1.355676576619526
+4	1.259496819494492
+DROP INDEX f_ik ON docs;
+CREATE FULLTEXT INDEX f_ik ON docs(body) WITH PARSER ik PARSER_PROPERTIES=(ik_mode='max_word');
+SELECT id, MATCH(body) AGAINST('数据库 中华人民共和国') AS score
+FROM docs WHERE MATCH(body) AGAINST('数据库 中华人民共和国') ORDER BY id;
+id	score
+3	3.596248153411925
+4	5.9453198019622135
+CREATE TABLE binary_docs (
+id INT PRIMARY KEY,
+body TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,
+FULLTEXT INDEX f_beng(body) WITH PARSER beng
+);
+INSERT INTO binary_docs VALUES (1, 'The DATABASE with CAFÉ cafe'), (2, 'database audit'), (3, 'the with the');
+SELECT id, MATCH(body) AGAINST('database cafe') AS score
+FROM binary_docs WHERE MATCH(body) AGAINST('database cafe') ORDER BY id;
+id	score
+1	1.0661250778886497
+2	0.37162162162162166
+DROP DATABASE fts_hotpath;
