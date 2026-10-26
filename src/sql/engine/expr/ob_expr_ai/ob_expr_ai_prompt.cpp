@@ -50,23 +50,24 @@ int ObExprAIPrompt::calc_result_typeN(ObExprResType &type,
                                     common::ObExprTypeCtx &type_ctx) const 
 {
   int ret = OB_SUCCESS;
-  bool is_null_res = false;
   ObExprResType template_type = types_stack[0];
-  // Accept string types including LOB (text/blob/longtext) as template
   if (!ob_is_string_type(template_type.get_type())) {
     ret = OB_ERR_INVALID_TYPE_FOR_OP;
   } else {
-    types_stack[0].set_calc_type(ObVarcharType);
+    if (ob_is_string_tc(template_type.get_type())) {
+      types_stack[0].set_calc_type(ObVarcharType);
+    }
     types_stack[0].set_calc_collation_type(CS_TYPE_UTF8MB4_BIN);
   }
 
   for (int64_t i = 1; i < param_num && OB_SUCC(ret); i++) {
-    // Accept string types including LOB (text/blob/longtext) as args
     if (ob_is_string_type(types_stack[i].get_type())) {
-      types_stack[i].set_calc_type(ObVarcharType);
+      if (ob_is_string_tc(types_stack[i].get_type())) {
+        types_stack[i].set_calc_type(ObVarcharType);
+      }
       types_stack[i].set_calc_collation_type(CS_TYPE_UTF8MB4_BIN);
     } else if (ob_is_json(types_stack[i].get_type())) {
-      // Accept JSON type args, pass through as JSON elements in args array
+      // Keep JSON arguments in their native representation.
     } else {
       ret = OB_ERR_INVALID_TYPE_FOR_OP;
     }
@@ -95,9 +96,9 @@ int ObExprAIPrompt::eval_ai_prompt(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &
   if (OB_FAIL(tmp_allocator.eval_arg(arg0, ctx, template_datum))) {
   } else if (template_datum->is_null()) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(ObTextStringHelper::read_real_string_data(
-                ctx.exec_ctx_, tmp_allocator, *template_datum,
-                arg0->datum_meta_, arg0->obj_meta_.has_lob_header(), template_str))) {
+  } else {
+    ret = ObTextStringHelper::read_real_string_data(ctx.exec_ctx_, tmp_allocator,
+        *template_datum, arg0->datum_meta_, arg0->obj_meta_.has_lob_header(), template_str);
   }
 
   if (OB_FAIL(ret)) {
@@ -107,27 +108,26 @@ int ObExprAIPrompt::eval_ai_prompt(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &
       ObDatum *datum = NULL;
       ObExpr *arg = expr.args_[i];
       ObString arg_str;
+      ObJsonString *arg_json_str = NULL;
       if (OB_FAIL(tmp_allocator.eval_arg(arg, ctx, datum))) {
       } else if (datum->is_null()) {
         ret = OB_ERR_INVALID_TYPE_FOR_OP;
-      } else if (ob_is_json(arg->datum_meta_.type_)) {
-        // Read JSON value directly and append to args array
-        ObIJsonBase *j_base = NULL;
-        bool is_null = false;
-        if (OB_FAIL(ObJsonExprHelper::get_json_doc(expr, ctx, tmp_allocator, i, j_base, is_null))) {
-        } else if (OB_ISNULL(j_base) || is_null) {
-          ret = OB_INVALID_ARGUMENT;
-        } else if (OB_FAIL(args_array->append(static_cast<ObJsonNode *>(j_base)))) {
-        }
-      } else if (OB_FAIL(ObTextStringHelper::read_real_string_data(
-                    ctx.exec_ctx_, tmp_allocator, *datum,
-                    arg->datum_meta_, arg->obj_meta_.has_lob_header(), arg_str))) {
-        // read string data, handles both plain string and out-of-line LOB
-      } else {
-        ObJsonString *arg_json_str = NULL;
-        if (OB_FAIL(ObAIFuncJsonUtils::get_json_string(tmp_allocator, arg_str, arg_json_str))) {
+      } else if (ob_is_string_type(arg->datum_meta_.type_)) {
+        if (OB_FAIL(ObTextStringHelper::read_real_string_data(ctx.exec_ctx_, tmp_allocator,
+              *datum, arg->datum_meta_, arg->obj_meta_.has_lob_header(), arg_str))) {
+        } else if (OB_FAIL(ObAIFuncJsonUtils::get_json_string(tmp_allocator, arg_str, arg_json_str))) {
         } else if (OB_FAIL(args_array->append(arg_json_str))) {
         }
+      } else if (ob_is_json(arg->datum_meta_.type_)) {
+        ObIJsonBase *json = nullptr;
+        bool is_null = false;
+        if (OB_FAIL(ObJsonExprHelper::get_json_doc(expr, ctx, tmp_allocator, i, json, is_null))) {
+        } else if (OB_ISNULL(json)) {
+          ret = OB_INVALID_ARGUMENT;
+        } else if (OB_FAIL(args_array->append(static_cast<ObJsonNode *>(json)))) {
+        }
+      } else {
+        ret = OB_ERR_INVALID_TYPE_FOR_OP;
       }
     }
   }
