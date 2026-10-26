@@ -412,9 +412,7 @@ int ObLobLocatorHelper::build_lob_locatorv2(ObLobLocatorV2 &locator,
         }
       } else if (has_extern) {
         ObMemLobRetryInfo retry_info;
-        retry_info.is_select_leader_ = !scan_flag_.is_select_follower_;
         retry_info.read_latest_ = scan_flag_.read_latest_;
-        retry_info.timeout_ = access_ctx.timeout_;
         // if scan with index, get data tablet id
         common::ObTabletID target_tablet_id(tablet_id_);
         if (is_access_index_) {

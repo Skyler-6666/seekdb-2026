@@ -864,15 +864,16 @@ struct ObMemLobLocationInfo
   char data_[0];
 };
 
+// Reserved fields keep the existing locator payload layout. Only read_latest_ is consumed.
 struct ObMemLobRetryInfo
 {
-  ObMemLobRetryInfo() : is_select_leader_(true), read_latest_(false), reserved_(0), addr_(), timeout_(0) {}
-  TO_STRING_KV(K_(is_select_leader), K_(read_latest), K_(reserved), K_(addr), K_(timeout));
-  int64_t is_select_leader_ : 1;
+  ObMemLobRetryInfo() : reserved_flag_(true), read_latest_(false), reserved_(0), reserved_addr_(), reserved_timeout_(0) {}
+  TO_STRING_KV(K_(reserved_flag), K_(read_latest), K_(reserved), K_(reserved_addr), K_(reserved_timeout));
+  int64_t reserved_flag_ : 1;
   int64_t read_latest_ : 1;
   int64_t reserved_ : 62;
-  ObAddr addr_;
-  uint64_t timeout_;
+  ObAddr reserved_addr_;
+  uint64_t reserved_timeout_;
 };
 
 OB_INLINE void validate_has_lob_header(const bool &has_header)
