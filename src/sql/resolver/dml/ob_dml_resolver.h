@@ -27,7 +27,6 @@ namespace oceanbase
 {
 namespace sql
 {
-struct TableFunctionCall;
 class ObEqualAnalysis;
 class ObChildStmtResolver;
 class ObDelUpdStmt;
@@ -204,24 +203,15 @@ public:
   int resolve_generate_table_item(ObSelectStmt *ref_query, const ObString &alias_name, TableItem *&tbl_item);
   int resolve_joined_table(const ParseNode &parse_node, JoinedTable *&joined_table);
   int resolve_joined_table_item(const ParseNode &parse_node, JoinedTable *&joined_table);
-  int resolve_registered_table_function(const ParseNode &node, TableItem *&item);
-  int bind_json_table_function(const TableFunctionCall &call, TableItem *&item);
-  int bind_fixed_table_function(const TableFunctionCall &call, TableItem *&item);
-  int bind_unnest_table_function(const TableFunctionCall &call, TableItem *&item);
-  int bind_generator_table_function(const TableFunctionCall &call, TableItem *&item);
-  int bind_hybrid_table_function(const TableFunctionCall &call, TableItem *&item);
-  // Binds a file SQL scan function (read_csv/read_json/read_ndjson/read_parquet).
-  int bind_file_table_function(const TableFunctionCall &call, TableItem *&item,
-                               int64_t file_type);
-  int bind_glob_table_function(const TableFunctionCall &call, TableItem *&item);
-  // Evaluates a bind-time constant argument of a file SQL table function.
-  int eval_file_table_function_const(const ParseNode &node, ObObj &value);
-  int apply_table_function_aliases(const TableFunctionCall &call, TableItem &item);
-  int create_function_scan_item(const TableFunctionCall &call, TableItem *&item);
-  int add_unnest_columns(TableItem &item, ObRawExpr &argument, int64_t argument_index,
-                        int64_t argument_count, int64_t &column_offset);
+  int resolve_file_table_item(const ParseNode &node, TableItem *&item);
+  int resolve_file_table_columns(const TableItem &table, common::ObIArray<ColumnItem> &columns);
+  int resolve_function_table_item(const ParseNode &table_node,
+                                  TableItem *&table_item);
   int resolve_json_table_item(const ParseNode &table_node,
                               TableItem *&table_item);
+  int resolve_unnest_item(const ParseNode &table_node, TableItem *&table_item);
+  int create_unnest_table_item(TableItem *&table_item, ObString table_name);
+  int unnest_table_add_column(TableItem *&table_item, ColumnItem *&col_item, ObString col_name);
   int resolve_hybrid_search_item(const ParseNode &parse_tree, TableItem *&table_item);
 
   int fill_same_column_to_using(JoinedTable* &joined_table);
@@ -686,6 +676,10 @@ protected:
   int resolve_match_against_expr(ObMatchFunRawExpr &expr);
   int resolve_es_match_expr(ObMatchFunRawExpr &expr);
 private:
+  int resolve_function_table_column_item_udf(const TableItem &table_item,
+                                             common::ObIArray<ColumnItem> &col_items);
+  int resolve_function_table_column_item_sys_func(const TableItem &table_item,
+                                                  common::ObIArray<ColumnItem> &col_items);
   int check_table_exist_or_not(uint64_t &database_id,
                                common::ObString &table_name,
                                common::ObString &db_name);
