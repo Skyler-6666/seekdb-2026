@@ -57,22 +57,22 @@ int file_kind_to_data_type(file_sql::ColumnKind kind, ObDataType &data_type)
   int ret = OB_SUCCESS;
   switch (kind) {
     case file_sql::COLUMN_KIND_BIGINT:
-      data_type.set_int();
+      data_type.set_obj_type(ObIntType);
       break;
     case file_sql::COLUMN_KIND_DOUBLE:
-      data_type.set_double();
+      data_type.set_obj_type(ObDoubleType);
       break;
     case file_sql::COLUMN_KIND_BOOLEAN:
-      data_type.set_tinyint();
+      data_type.set_obj_type(ObTinyIntType);
       break;
     case file_sql::COLUMN_KIND_DATE:
-      data_type.set_date();
+      data_type.set_obj_type(ObDateType);
       break;
     case file_sql::COLUMN_KIND_DATETIME:
-      data_type.set_datetime();
+      data_type.set_obj_type(ObDateTimeType);
       break;
     default:
-      data_type.set_varchar();
+      data_type.set_obj_type(ObVarcharType);
       break;
   }
   return ret;
@@ -127,7 +127,7 @@ int ObDMLResolver::bind_glob_table_function(const TableFunctionCall &call, Table
     ObDataType data_type;
     ObAccuracy accuracy;
     ColumnItem *column = NULL;
-    data_type.set_varchar();
+    data_type.set_obj_type(ObVarcharType);
     accuracy.set_length(65536);
     if (OB_FAIL(resolve_function_table_column_item(*item, data_type.get_meta_type(),
               accuracy, ObString::make_string("file"), OB_APP_MIN_COLUMN_ID, column))) {
