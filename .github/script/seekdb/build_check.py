@@ -106,11 +106,104 @@ def check_one(compiler, build_dir, target_dir, source):
     return proc.returncode == 0, output
 
 
+def unity_sources(build_dir, needles):
+    """Unity translation units that pull in one of ``needles`` (file basenames)."""
+    found = []
+    for root, _dirs, files in os.walk(build_dir):
+        for name in files:
+            if not (name.startswith("unity_") and name.endswith(".cxx")):
+                continue
+            path = os.path.join(root, name)
+            try:
+                with open(path, encoding="utf-8", errors="replace") as handle:
+                    text = handle.read()
+            except OSError:
+                continue
+            if any(needle in text for needle in needles):
+                found.append(path)
+    return found
+
+
+def check_unity(build_dir):
+    """Compile the Unity translation units containing file_sql sources.
+
+    Unity-only problems (anonymous-namespace symbol collisions between
+    concatenated files, macro leakage) cannot be reproduced by per-file checks,
+    so the real Unity object is compiled as well.
+    """
+    compile_db = os.path.join(build_dir, "compile_commands.json")
+    if not os.path.exists(compile_db):
+        log("=== CHECK-ERROR: %s is missing" % compile_db)
+        return 1
+    import json
+
+    with open(compile_db, encoding="utf-8", errors="replace") as handle:
+        entries = json.load(handle)
+    wanted = unity_sources(build_dir, ["file_sql_utils.cpp", "file_sql_scan.cpp", "file_sql_bind.cpp"])
+    if not wanted:
+        log("=== CHECK-ERROR: no unity source contains the file_sql sources")
+        return 1
+    wanted = {os.path.normpath(path) for path in wanted}
+    commands = {}
+    for entry in entries:
+        path = os.path.normpath(os.path.join(entry.get("directory", ""), entry["file"]))
+        if path in wanted:
+            commands[path] = entry
+    failures = []
+    for path in sorted(wanted):
+        name = os.path.basename(path)
+        entry = commands.get(path)
+        log("=== UNITY-START %s" % path)
+        if entry is None:
+            log("=== UNITY-END %s: FAIL (not in compile_commands.json)" % name)
+            failures.append(name)
+            continue
+        if "arguments" in entry:
+            argv = list(entry["arguments"])
+        else:
+            argv = shlex.split(entry["command"])
+        cleaned = []
+        skip_next = False
+        for arg in argv:
+            if skip_next:
+                skip_next = False
+                continue
+            if arg in ("-o", "-MF", "-MT"):
+                skip_next = True
+                continue
+            if arg in ("-c", "-MD", "-MMD"):
+                continue
+            cleaned.append(arg)
+        cleaned += ["-fsyntax-only", "-fno-color-diagnostics", "-Wno-error=unused-command-line-argument"]
+        start = time.time()
+        proc = subprocess.run(cleaned, cwd=entry.get("directory"), capture_output=True,
+                              text=True, errors="replace")
+        elapsed = time.time() - start
+        output = (proc.stdout or "") + (proc.stderr or "")
+        if output.strip():
+            lines = output.strip().splitlines()
+            if len(lines) > 1200:
+                lines = ["... %d lines omitted ..." % (len(lines) - 1200)] + lines[-1200:]
+            for line in lines:
+                log(line)
+        ok = proc.returncode == 0
+        log("=== UNITY-END %s: %s (%.1fs)" % (name, "PASS" if ok else "FAIL", elapsed))
+        if not ok:
+            failures.append(name)
+    log("")
+    log("=== UNITY-SUMMARY: units=%d failed=%d" % (len(wanted), len(failures)))
+    for item in failures:
+        log("=== UNITY-FAILED: %s" % item)
+    return 1 if failures else 0
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build-dir", default="build_release")
     parser.add_argument("--repo", default=os.getcwd())
     parser.add_argument("--only", nargs="*", default=None)
+    parser.add_argument("--unity", action="store_true",
+                        help="compile the unity translation units instead of single files")
     args = parser.parse_args()
 
     build_dir = os.path.abspath(args.build_dir)
@@ -120,6 +213,8 @@ def main():
     if not os.path.isdir(build_dir):
         log("=== CHECK-ERROR: build directory %s is missing" % build_dir)
         return 2
+    if args.unity:
+        return check_unity(build_dir)
     compiler = cxx_compiler(build_dir)
     if not os.path.isabs(compiler) and not os.path.exists(compiler):
         import shutil

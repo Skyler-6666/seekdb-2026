@@ -72,8 +72,8 @@ write_status() {
   end_epoch="$(date +%s)"
   duration=$((end_epoch - START_EPOCH))
   last_phase="$(grep -o '=== phase: .*' build.log 2>/dev/null | tail -1 | sed 's/=== phase: //')"
-  failed_files="$(grep '=== CHECK-FAILED:' build.log 2>/dev/null | sed 's/=== CHECK-FAILED: //' | paste -sd, -)"
-  summary="$(grep '=== CHECK-SUMMARY:' build.log 2>/dev/null | tail -1)"
+  failed_files="$(grep -E '=== (CHECK|UNITY)-FAILED:' build.log 2>/dev/null | sed -E 's/=== (CHECK|UNITY)-FAILED: //' | paste -sd, -)"
+  summary="$(grep -E '=== (CHECK|UNITY)-SUMMARY:' build.log 2>/dev/null | tr '\n' ' ')"
   {
     echo "STATUS=${status}"
     echo "EXIT_CODE=${rc}"
@@ -92,7 +92,7 @@ write_status() {
     echo "LOG_BRANCH=${LOG_BRANCH}"
   } > status.txt
   cat status.txt
-  grep -E 'error:|fatal error:|=== CHECK-FAILED:|=== CHECK-NO-TARGET:|FAILED:' build.log > errors.txt 2>/dev/null || true
+  grep -E 'error:|fatal error:|=== CHECK-FAILED:|=== CHECK-NO-TARGET:|=== UNITY-FAILED:|FAILED:' build.log > errors.txt 2>/dev/null || true
   if [[ -f errors.txt ]] && (( $(wc -l < errors.txt) > 300 )); then
     head -300 errors.txt > errors.tmp && mv errors.tmp errors.txt
   fi
@@ -121,6 +121,8 @@ set -o pipefail
   ./build.sh release -DNEED_PARSER_CACHE=OFF
   echo "=== phase: compile-check"
   python3 .github/script/seekdb/build_check.py --build-dir "$BUILD_DIR" --repo "$REPO_DIR" "${check_args[@]}"
+  echo "=== phase: unity-check"
+  python3 .github/script/seekdb/build_check.py --build-dir "$BUILD_DIR" --repo "$REPO_DIR" --unity
   echo "=== phase: done"
 ) 2>&1 | tee build.log
 rc=$?
