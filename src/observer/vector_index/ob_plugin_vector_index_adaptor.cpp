@@ -16,6 +16,9 @@
 
 #define USING_LOG_PREFIX SHARE
 
+#include <cstdlib>
+#include <cstring>
+
 #include "config_bridge.h"
 #include "query/vector/ob_vector_index_adaptor.h"
 #include "storage/tx/ob_ts_mgr.h"
@@ -1665,6 +1668,60 @@ int ObPluginVectorIndexAdaptor::parse_sparse_vector(char *data, int num, uint32_
   return ret;
 }
 
+/*
+ * Configuration of the optional GPU HNSW build path.
+ *
+ * OB_GPU_HNSW_BUILD       set to 0 to keep the plain CPU build
+ * OB_GPU_HNSW_BUILD_ALGO  0 auto, 1 ivf_pq, 2 nn_descent, 3 iterative_cagra
+ * OB_GPU_HNSW_MAX_BYTES   memory budget of the buffered vectors, default 4GB
+ */
+static bool gpu_hnsw_build_env_enabled()
+{
+  const char *value = getenv("OB_GPU_HNSW_BUILD");
+  return value == nullptr || value[0] == '\0' || strcmp(value, "0") != 0;
+}
+
+static int32_t gpu_hnsw_build_algo()
+{
+  const char *value = getenv("OB_GPU_HNSW_BUILD_ALGO");
+  if (value == nullptr || value[0] == '\0') {
+    return 0;
+  }
+  return static_cast<int32_t>(atoi(value));
+}
+
+static int64_t gpu_hnsw_max_bytes()
+{
+  static const int64_t max_bytes = []() {
+    const char *value = getenv("OB_GPU_HNSW_MAX_BYTES");
+    if (value == nullptr || value[0] == '\0') {
+      return 4LL * 1024 * 1024 * 1024;
+    }
+    return static_cast<int64_t>(atoll(value));
+  }();
+  return max_bytes;
+}
+
+static bool is_gpu_hnsw_build_available()
+{
+  static const bool available = gpu_hnsw_build_env_enabled()
+                                && obvectorutil::GpuHnswBuilder::instance().is_available();
+  return available;
+}
+
+/*
+ * The GPU path can only replace a dense float32 HNSW graph. A cosine index is
+ * excluded because VSAG normalizes the vectors of a cosine index on its own
+ * and the normalized vectors are not part of the serialized image, so the image
+ * of a GPU build could not be loaded into a cosine index.
+ */
+static bool gpu_hnsw_build_supported(const ObVectorIndexParam *param)
+{
+  return is_gpu_hnsw_build_available()
+         && param->dist_algorithm_ != ObVectorIndexDistAlgorithm::VIDA_COS
+         && param->extra_info_actual_size_ <= 0;
+}
+
 /**************************************************************************
 * Note:
 *  The number of vids must be equal to num;
@@ -1690,9 +1747,34 @@ int ObPluginVectorIndexAdaptor::add_snap_index(float *vectors, int64_t *vids, Ob
   } else if (OB_FALSE_IT(dim = param->dim_)) {
   } else if (OB_FAIL(get_extra_info_actual_size(extra_info_actual_size))) {
   } else {
-    if (param->type_ == ObVectorIndexAlgorithmType::VIAT_HNSW ||
-        param->type_ == ObVectorIndexAlgorithmType::VIAT_HGRAPH ||
-        param->type_ == ObVectorIndexAlgorithmType::VIAT_IPIVF) {
+    if (param->type_ == ObVectorIndexAlgorithmType::VIAT_HNSW) {
+      /*
+       * A plain HNSW index is accumulated instead of being extended row by row,
+       * because the whole graph is built in one shot on the GPU. The CPU path
+       * keeps the original incremental behaviour.
+       */
+      if (OB_FAIL(try_init_mem_data(VIRT_SNAP))) {
+      } else if (num == 0 || OB_ISNULL(vectors)) {
+        // do nothing
+      } else if (OB_ISNULL(vids)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (gpu_hnsw_build_supported(param)) {
+        if (OB_FAIL(accumulate_snap_hnsw_data(vectors, vids, dim, num))) {
+        }
+      } else {
+        char *extra_info_buf = nullptr;
+        if (OB_NOT_NULL(extra_objs) && extra_column_count > 0 && param->extra_info_actual_size_ > 0 &&
+            OB_FAIL(ObVecExtraInfo::extra_infos_to_buf(tmp_allocator, extra_objs, extra_column_count,
+                                                       param->extra_info_actual_size_, num, extra_info_buf))) {
+        } else {
+          lib::ObMallocHookAttrGuard malloc_guard(lib::ObMemAttr("VIndexVsagADP"));
+          lib::ObLightBacktraceGuard light_backtrace_guard(false);
+          if (OB_FAIL(obvectorutil::add_index(snap_data_->index_, vectors, vids, dim, extra_info_buf, num))) {
+          }
+        }
+      }
+    } else if (param->type_ == ObVectorIndexAlgorithmType::VIAT_HGRAPH ||
+               param->type_ == ObVectorIndexAlgorithmType::VIAT_IPIVF) {
       if (OB_FAIL(try_init_mem_data(VIRT_SNAP))) {
       } else if (num == 0 || OB_ISNULL(vectors)) {
         // do nothing
@@ -1843,6 +1925,180 @@ int ObPluginVectorIndexAdaptor::build_hnswsq_index(ObVectorIndexParam *param)
           snap_data_->mem_ctx_->~ObVsagMemContext();
         }
       }
+    }
+  }
+  return ret;
+}
+
+int ObPluginVectorIndexAdaptor::accumulate_snap_hnsw_data(float *vectors, int64_t *vids, int64_t dim, int num)
+{
+  int ret = OB_SUCCESS;
+  if (OB_ISNULL(snap_data_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (!is_gpu_hnsw_build_available() || snap_data_->gpu_build_fallback_
+             || snap_data_->snap_index_built_) {
+    /*
+     * Without a GPU, once the buffer overflowed, or once the snapshot index was
+     * already materialized, the index is extended row by row.
+     */
+    lib::ObMallocHookAttrGuard malloc_guard(lib::ObMemAttr("VIndexVsagADP"));
+    lib::ObLightBacktraceGuard light_backtrace_guard(false);
+    ret = obvectorutil::add_index(snap_data_->index_, vectors, vids, dim, nullptr, num);
+  } else if (OB_FAIL(init_hnswsq_mem_data())) {
+  } else {
+    TCWLockGuard lock_guard(snap_data_->mem_data_rwlock_);
+    const int64_t buffered = snap_data_->vid_array_->count();
+    const int64_t projected_bytes = (buffered + num) * dim * static_cast<int64_t>(sizeof(float));
+    if (projected_bytes > gpu_hnsw_max_bytes()) {
+      /*
+       * The buffered vectors do not fit into the memory budget any more. What
+       * was buffered so far is written into the index and the build continues
+       * with the incremental CPU path.
+       */
+      lib::ObMallocHookAttrGuard malloc_guard(lib::ObMemAttr("VIndexVsagADP"));
+      lib::ObLightBacktraceGuard light_backtrace_guard(false);
+      if (OB_SUCC(ret) && buffered > 0) {
+        ret = obvectorutil::add_index(snap_data_->index_, snap_data_->vec_array_->get_data(),
+                                       snap_data_->vid_array_->get_data(), dim, nullptr, buffered);
+      }
+      if (OB_SUCC(ret)) {
+        snap_data_->gpu_build_fallback_ = true;
+        free_hnswsq_array_data(snap_data_, get_allocator());
+        LOG_WARN("gpu hnsw build disabled, the buffered vectors exceed the memory budget",
+                 K(projected_bytes), K(gpu_hnsw_max_bytes()));
+      }
+      if (OB_SUCC(ret)) {
+        ret = obvectorutil::add_index(snap_data_->index_, vectors, vids, dim, nullptr, num);
+      }
+    } else {
+      for (int i = 0; OB_SUCC(ret) && i < num; i++) {
+        if (OB_FAIL(snap_data_->vid_array_->push_back(vids[i]))) {
+        }
+      }
+      for (int i = 0; OB_SUCC(ret) && i < num * dim; i++) {
+        if (OB_FAIL(snap_data_->vec_array_->push_back(vectors[i]))) {
+        }
+      }
+    }
+  }
+  return ret;
+}
+
+int ObPluginVectorIndexAdaptor::build_snap_hnsw_index(ObVectorIndexParam *param)
+{
+  int ret = OB_SUCCESS;
+  if (OB_ISNULL(param) || OB_ISNULL(snap_data_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    TCWLockGuard lock_guard(snap_data_->mem_data_rwlock_);
+    if (snap_data_->gpu_build_fallback_ || snap_data_->snap_index_built_) {
+      // The index was extended incrementally, there is nothing left to build.
+    } else if (OB_ISNULL(snap_data_->vid_array_) || snap_data_->vid_array_->count() == 0) {
+      // Nothing was buffered, the index is already up to date.
+    } else {
+      bool built = false;
+      ret = build_snap_hnsw_index_with_gpu(param, built);
+      if (OB_FAIL(ret)) {
+        LOG_WARN("build hnsw index with gpu failed, falling back to the cpu path", K(ret));
+        ret = OB_SUCCESS;
+      }
+      if (OB_SUCC(ret) && !built) {
+        ret = build_snap_hnsw_index_with_cpu(param);
+      }
+      if (OB_SUCC(ret)) {
+        /*
+         * The snapshot index is materialized now, no matter which path built it.
+         * Rows that arrive afterwards extend the index instead of replacing it.
+         */
+        snap_data_->snap_index_built_ = true;
+        free_hnswsq_array_data(snap_data_, get_allocator());
+      }
+    }
+  }
+  return ret;
+}
+
+int ObPluginVectorIndexAdaptor::build_snap_hnsw_index_with_gpu(ObVectorIndexParam *param, bool &built)
+{
+  int ret = OB_SUCCESS;
+  built = false;
+  ObVecIdxVidArray *vid_array = snap_data_->vid_array_;
+  ObVecIdxVecArray *vec_array = snap_data_->vec_array_;
+  if (OB_ISNULL(vid_array) || OB_ISNULL(vec_array) || vid_array->count() == 0) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    ObGpuHnswBuildResult gpu_result;
+    const int64_t count = vid_array->count();
+    const int64_t start_us = ObTimeUtility::fast_current_time();
+    /* VSAG clamps M into [8, 64], the GPU graph has to use the very same value. */
+    const int32_t max_degree = static_cast<int32_t>(MAX(MIN(param->m_, 64), 8));
+    if (OB_FAIL(obvectorutil::GpuHnswBuilder::instance().build(
+            vec_array->get_data(),
+            count,
+            param->dim_,
+            max_degree,
+            param->ef_construction_,
+            VEC_INDEX_ALGTH[param->dist_algorithm_],
+            gpu_hnsw_build_algo(),
+            0,
+            0,
+            gpu_result))) {
+    } else {
+      obvectorutil::HnswSerialHeader header;
+      if (OB_FAIL(obvectorutil::parse_hnsw_serial_header(gpu_result.data_, gpu_result.size_, header))) {
+      } else if (OB_FAIL(obvectorutil::check_hnsw_serial_header(header, gpu_result.size_, max_degree))) {
+      } else if (OB_FAIL(obvectorutil::patch_hnsw_serial_labels(gpu_result.data_, gpu_result.size_,
+                                                                 vid_array->get_data(), count))) {
+      } else if (OB_FAIL(obvectorutil::deserialize_index(snap_data_->index_, gpu_result.data_,
+                                                         gpu_result.size_))) {
+      } else {
+        built = true;
+        LOG_INFO("build hnsw index with gpu success", K(count), K(param->dim_),
+                 K((ObTimeUtility::fast_current_time() - start_us) / 1000000), K(max_degree),
+                 K(gpu_result.graph_degree_), K(gpu_result.build_seconds_));
+      }
+    }
+    obvectorutil::GpuHnswBuilder::instance().free_result(gpu_result);
+  }
+  return ret;
+}
+
+int ObPluginVectorIndexAdaptor::build_snap_hnsw_index_with_cpu(ObVectorIndexParam *param)
+{
+  int ret = OB_SUCCESS;
+  const char* const DATATYPE_FLOAT32 = "float32";
+  ObVecIdxVidArray *vid_array = snap_data_->vid_array_;
+  ObVecIdxVecArray *vec_array = snap_data_->vec_array_;
+  if (OB_ISNULL(vid_array) || OB_ISNULL(vec_array)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (vid_array->count() == 0) {
+    // nothing to build
+  } else {
+    lib::ObMallocHookAttrGuard malloc_guard(lib::ObMemAttr("VIndexVsagADP"));
+    lib::ObLightBacktraceGuard light_backtrace_guard(false);
+    const int64_t start_us = ObTimeUtility::fast_current_time();
+    if (OB_ISNULL(snap_data_->index_)) {
+      ret = obvectorutil::create_index(snap_data_->index_,
+                                       param->type_,
+                                       DATATYPE_FLOAT32,
+                                       VEC_INDEX_ALGTH[param->dist_algorithm_],
+                                       param->dim_,
+                                       param->m_,
+                                       param->ef_construction_,
+                                       param->ef_search_,
+                                       snap_data_->mem_ctx_,
+                                       param->extra_info_actual_size_,
+                                       param->refine_type_,
+                                       param->bq_bits_query_,
+                                       param->bq_use_fht_);
+    }
+    if (OB_SUCC(ret)) {
+      ret = obvectorutil::add_index(snap_data_->index_, vec_array->get_data(), vid_array->get_data(),
+                                     param->dim_, nullptr, vid_array->count());
+    }
+    if (OB_SUCC(ret)) {
+      LOG_INFO("build hnsw index with cpu success", K(vid_array->count()), K(param->dim_),
+               K((ObTimeUtility::fast_current_time() - start_us) / 1000000));
     }
   }
   return ret;
@@ -2011,7 +2267,18 @@ int ObPluginVectorIndexAdaptor::check_snap_hnswsq_index()
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_ISNULL(param = static_cast<ObVectorIndexParam*>(algo_data_))) {
     ret = OB_ERR_UNEXPECTED;
-  } else if (param->type_ == VIAT_HNSW || param->type_ == VIAT_HGRAPH || snap_data_->has_build_sq_ || param->type_ == VIAT_IPIVF) {
+  } else if (param->type_ == VIAT_HNSW) {
+    /*
+     * The rows of a plain HNSW index were accumulated instead of being added to
+     * the index one by one, so the whole graph is built here. Without a GPU the
+     * index was already extended incrementally and there is nothing left to do.
+     */
+    if (gpu_hnsw_build_supported(param)) {
+      if (OB_FAIL(build_snap_hnsw_index(param))) {
+        LOG_WARN("failed to build hnsw index", K(ret), K(param->dim_));
+      }
+    }
+  } else if (param->type_ == VIAT_HGRAPH || snap_data_->has_build_sq_ || param->type_ == VIAT_IPIVF) {
     // do nothing
   } else if (OB_ISNULL(snap_data_->index_)) {
     TCWLockGuard lock_guard(snap_data_->mem_data_rwlock_);

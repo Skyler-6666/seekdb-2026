@@ -13,6 +13,16 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "hnsw_serial_format_cases",
+    srcs = ["test_hnsw_serial_format.cpp"],
+    alwayslink = True,
+    deps = [
+        "//src/oblib:oblib_unit_test_internal_headers",
+        "//bazel/third_party:gtest",
+    ],
+)
+
 cc_test(
     name = "test_malloc_backend",
     linkstatic = True,
@@ -38,4 +48,11 @@ cc_test(
     name = "test_jemalloc_hook",
     linkstatic = True,
     deps = [":jemalloc_hook_cases", "//src/oblib:oblib_test_runtime"],
+)
+
+cc_test(
+    name = "test_hnsw_serial_format",
+    linkstatic = True,
+    deps = [":hnsw_serial_format_cases", "//src/oblib:oblib_test_runtime"],
+    target_compatible_with = ["@platforms//os:linux"],
 )
