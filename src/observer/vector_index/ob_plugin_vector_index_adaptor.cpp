@@ -20,6 +20,8 @@
 #include <cstring>
 
 #include "config_bridge.h"
+#include "lib/vector/ob_gpu_hnsw_builder.h"
+#include "lib/vector/ob_hnsw_serial_format.h"
 #include "query/vector/ob_vector_index_adaptor.h"
 #include "storage/tx/ob_ts_mgr.h"
 #include "share/rc/ob_server_runtime.h"
