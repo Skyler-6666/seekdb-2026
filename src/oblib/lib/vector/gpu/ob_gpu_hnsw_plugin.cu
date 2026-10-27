@@ -34,6 +34,7 @@
 #include <hip/hip_runtime.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
