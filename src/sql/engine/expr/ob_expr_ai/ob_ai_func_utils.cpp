@@ -1673,6 +1673,7 @@ int ObAIFuncPromptObjectUtils::replace_all_str_args_in_template(ObIAllocator &al
   } else {
     uint64_t args_count = args_array->element_count();
     int64_t max_result_len = template_str.length();
+    char *result_buf = NULL;
     // Pre-serialize all args (string args stay as-is; object/array args become JSON text)
     ObString arg_values[256]; // support up to 256 args
     int64_t arg_count = static_cast<int64_t>(args_count);
