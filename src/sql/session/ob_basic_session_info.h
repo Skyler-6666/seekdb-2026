@@ -540,6 +540,7 @@ public:
   int get_force_parallel_ddl_dop(uint64_t &v) const;
   int get_px_shared_hash_join(bool &shared_hash_join) const;
   int get_secure_file_priv(common::ObString &v) const;
+  int get_enable_file_sql(bool &v) const;
   int get_sql_safe_updates(bool &v) const;
   int get_opt_dynamic_sampling(uint64_t &v) const;
   int get_regexp_stack_limit(int64_t &v) const;
@@ -1022,14 +1023,14 @@ public:
   uint64_t get_last_plan_id() const { return last_plan_id_; }
   void set_last_plan_id(uint64_t plan_id) { last_plan_id_ = plan_id; }
   void set_current_execution_id(int64_t execution_id) { current_execution_id_ = execution_id; }
-  void set_last_trace_id(common::ObCurTraceId::TraceId *trace_id)
+  void set_last_trace_id(const common::ObCurTraceId::TraceId *trace_id)
   {
     if (OB_ISNULL(trace_id)) {
     } else {
       last_trace_id_ = *trace_id;
     }
   }
-  void set_current_trace_id(common::ObCurTraceId::TraceId *trace_id);
+  void set_current_trace_id(const common::ObCurTraceId::TraceId *trace_id);
 
   bool get_enable_exact_mode() const
   {
