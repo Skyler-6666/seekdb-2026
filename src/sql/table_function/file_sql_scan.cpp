@@ -22,6 +22,7 @@
 #include "common/object/ob_object.h"
 #include "lib/allocator/page_arena.h"
 #include "lib/container/ob_se_array.h"
+#include <new>
 #include <stdio.h>
 #include <string.h>
 #include <string>
@@ -178,8 +179,8 @@ public:
   explicit FileTableScan(const TableFunctionScanContext &context)
       : projection_(context.column_ids_),
         arguments_(context.arguments_),
-        row_allocator_("FileSqlRow"),
         reader_(NULL),
+        row_allocator_("FileSqlRow"),
         opened_(false) {}
 
   int open() override
