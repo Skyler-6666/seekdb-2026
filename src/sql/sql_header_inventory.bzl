@@ -155,6 +155,9 @@ SQL_PUBLIC_HEADER_ROOTS = [
     "session/ob_system_variable.h",
     "session/ob_user_resource_mgr.h",
     "table_function/table_function.h",
+    "table_function/file_sql_utils.h",
+    "table_function/file_sql_scan.h",
+    "table_function/file_sql_bind.h",
 ]
 
 SQL_INTERFACE_CLOSURE_HEADERS = [

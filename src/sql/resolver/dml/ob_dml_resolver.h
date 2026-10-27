@@ -210,6 +210,12 @@ public:
   int bind_unnest_table_function(const TableFunctionCall &call, TableItem *&item);
   int bind_generator_table_function(const TableFunctionCall &call, TableItem *&item);
   int bind_hybrid_table_function(const TableFunctionCall &call, TableItem *&item);
+  // Binds a file SQL scan function (read_csv/read_json/read_ndjson/read_parquet).
+  int bind_file_table_function(const TableFunctionCall &call, TableItem *&item,
+                               int64_t file_type);
+  int bind_glob_table_function(const TableFunctionCall &call, TableItem *&item);
+  // Evaluates a bind-time constant argument of a file SQL table function.
+  int eval_file_table_function_const(const ParseNode &node, ObObj &value);
   int apply_table_function_aliases(const TableFunctionCall &call, TableItem &item);
   int create_function_scan_item(const TableFunctionCall &call, TableItem *&item);
   int add_unnest_columns(TableItem &item, ObRawExpr &argument, int64_t argument_index,
