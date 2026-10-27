@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX LIB
 
 #include "ob_vsag_adaptor.h"
+#include <algorithm>
 #include <map>
 #include <set>
 #include <mutex>
@@ -75,6 +76,7 @@ struct ObCuvsEntry {
   std::vector<float> buf_vecs_; // accumulated vectors (row-major) from add_index
   std::vector<int64_t> buf_ids_;// accumulated external vids from add_index
   size_t built_n_ = 0;          // #vectors present when cuVS was last (re)built
+  bool vsag_materialized_ = false; // CPU fallback graph exists for buf_vecs_
 };
 static std::mutex g_ob_cuvs_mu;
 static std::map<void *, ObCuvsEntry *> g_ob_cuvs_reg;
@@ -123,6 +125,7 @@ static void ob_cuvs_register(void *key, const float *vectors, const int64_t *ids
   if (bridge == nullptr) { return; }
   ObCuvsEntry *ent = new ObCuvsEntry();
   ent->bridge_ = bridge; ent->dim_ = dim; ent->ids_.assign(ids, ids + size);
+  ent->vsag_materialized_ = true;
   std::lock_guard<std::mutex> guard(g_ob_cuvs_mu);
   ObCuvsEntry *&slot = g_ob_cuvs_reg[key];
   if (slot != nullptr) { seekdb_cuvs_free(slot->bridge_); delete slot; }
@@ -131,17 +134,51 @@ static void ob_cuvs_register(void *key, const float *vectors, const int64_t *ids
 // Buffer vectors arriving via add_index. Plain HNSW builds BOTH its delta and its
 // snapshot incrementally via add_index (one row at a time), so this is where the
 // real data flows -- unlike build_index which is only used by the HNSW_SQ bulk path.
-static void ob_cuvs_add(void *key, const float *vectors, const int64_t *ids,
-                        int dim, int size) {
-  if (vectors == nullptr || ids == nullptr || dim <= 0 || size <= 0) { return; }
+static bool ob_cuvs_add(void *key, const float *vectors, const int64_t *ids,
+                        int dim, int size, bool vsag_has_data) {
+  if (vectors == nullptr || ids == nullptr || dim <= 0 || size <= 0) { return false; }
   std::lock_guard<std::mutex> guard(g_ob_cuvs_mu);
   ObCuvsEntry *&slot = g_ob_cuvs_reg[key];
   if (slot == nullptr) { slot = new ObCuvsEntry(); slot->dim_ = dim; }
+  if (vsag_has_data) { slot->vsag_materialized_ = true; }
   if (slot->dim_ == 0) { slot->dim_ = dim; }
-  if (slot->dim_ != dim) { return; }
+  if (slot->dim_ != dim) { return false; }
+  const size_t needed_vecs = slot->buf_vecs_.size() + static_cast<size_t>(dim) * size;
+  if (slot->buf_vecs_.capacity() < needed_vecs) {
+    slot->buf_vecs_.reserve(std::max(needed_vecs, slot->buf_vecs_.capacity() * 2));
+  }
+  const size_t needed_ids = slot->buf_ids_.size() + size;
+  if (slot->buf_ids_.capacity() < needed_ids) {
+    slot->buf_ids_.reserve(std::max(needed_ids, slot->buf_ids_.capacity() * 2));
+  }
   slot->buf_vecs_.insert(slot->buf_vecs_.end(), vectors,
                          vectors + static_cast<size_t>(dim) * size);
   slot->buf_ids_.insert(slot->buf_ids_.end(), ids, ids + size);
+  // The GPU path does not need a second HNSW graph in the same build.
+  return !slot->vsag_materialized_;
+}
+static bool ob_cuvs_buffer_size(void *key, int64_t &size) {
+  std::lock_guard<std::mutex> guard(g_ob_cuvs_mu);
+  auto it = g_ob_cuvs_reg.find(key);
+  if (it == g_ob_cuvs_reg.end() || it->second->buf_ids_.empty()) {
+    return false;
+  }
+  size = static_cast<int64_t>(it->second->buf_ids_.size());
+  return true;
+}
+static bool ob_cuvs_buffer_vid_bound(void *key, int64_t &min_vid, int64_t &max_vid) {
+  std::lock_guard<std::mutex> guard(g_ob_cuvs_mu);
+  auto it = g_ob_cuvs_reg.find(key);
+  if (it == g_ob_cuvs_reg.end() || it->second->buf_ids_.empty()) {
+    return false;
+  }
+  min_vid = it->second->buf_ids_.front();
+  max_vid = it->second->buf_ids_.front();
+  for (int64_t vid : it->second->buf_ids_) {
+    min_vid = std::min(min_vid, vid);
+    max_vid = std::max(max_vid, vid);
+  }
+  return true;
 }
 static void ob_cuvs_erase(void *key) {
   { std::lock_guard<std::mutex> mg(g_ob_cuvs_marked_mu); g_ob_cuvs_marked.erase(key); }
@@ -1287,19 +1324,72 @@ int build_index(VectorIndexPtr &index_handler, uint32_t *lens, uint32_t *dims, f
   return ret;
 }
 
+// lib=cuvs uses the GPU graph as its primary build product. Materialize the
+// sidecar VSAG graph only when a filtered, stale, deleted, or GPU-unavailable
+// query actually needs the CPU fallback.
+static int ob_cuvs_materialize_vsag(void *key)
+{
+  int ret = OB_SUCCESS;
+  std::lock_guard<std::mutex> guard(g_ob_cuvs_mu);
+  auto it = g_ob_cuvs_reg.find(key);
+  if (it == g_ob_cuvs_reg.end()) {
+    ret = OB_ENTRY_NOT_EXIST;
+  } else if (OB_ISNULL(it->second)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (it->second->vsag_materialized_) {
+    // CPU fallback is already fresh for every vector currently in the buffer.
+  } else if (it->second->buf_ids_.empty()) {
+    it->second->vsag_materialized_ = true;
+  } else if (OB_ISNULL(key)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    HnswIndexHandler *hnsw = static_cast<HnswIndexHandler *>(key);
+    if (hnsw->get_index_number() > 0) {
+      // A restarted/deserialized VSAG graph already contains the persisted vectors.
+      it->second->vsag_materialized_ = true;
+    } else {
+      DatasetPtr dataset = vsag::Dataset::Make();
+      dataset->Dim(it->second->dim_)
+          ->NumElements(static_cast<int64_t>(it->second->buf_ids_.size()))
+          ->Ids(it->second->buf_ids_.data())
+          ->Float32Vectors(it->second->buf_vecs_.data())
+          ->Owner(false);
+      if (OB_FAIL(hnsw->build_index(dataset))) {
+      } else {
+        it->second->vsag_materialized_ = true;
+      }
+    }
+    if (OB_FAIL(ret)) {
+      LOG_WARN("[OBVSAG][cuVS] failed to materialize CPU fallback graph",
+               K(ret), KP(key), K(it->second->dim_), K(it->second->buf_ids_.size()));
+    } else if (it->second->vsag_materialized_) {
+      ob_vsag_trace("cuvs_vsag_materialize", key, it->second->dim_,
+                    static_cast<long>(it->second->buf_ids_.size()));
+      LOG_INFO("[OBVSAG][cuVS] materialized CPU fallback graph on demand",
+               KP(key), K(it->second->dim_), K(it->second->buf_ids_.size()));
+    }
+  }
+  return ret;
+}
+
 int add_index(VectorIndexPtr &index_handler, float *vector,
               int64_t *ids, int dim, int size,
               char *extra_info /* = nullptr*/)
 {
   int ret = OB_SUCCESS;
+  bool defer_vsag = false;
   ob_vsag_trace("add_dense", (const void*)index_handler, (long)(dim), (long)(size));
   if (ob_cuvs_marked(index_handler) && index_handler != nullptr &&
       strcmp(static_cast<HnswIndexHandler *>(index_handler)->get_metric(), "l2") == 0) {
-    ob_cuvs_add(index_handler, vector, ids, dim, size);
+    HnswIndexHandler *cuvs_hnsw = static_cast<HnswIndexHandler *>(index_handler);
+    defer_vsag = ob_cuvs_add(index_handler, vector, ids, dim, size,
+                             cuvs_hnsw->get_index_number() > 0);
   }
   if (index_handler == nullptr || vector == nullptr || ids == nullptr) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("[OBVSAG] null pointer addr", KP(index_handler), KP(vector), KP(ids));
+  } else if (defer_vsag) {
+    ob_vsag_trace("cuvs_vsag_defer", index_handler, static_cast<long>(dim), static_cast<long>(size));
   } else {
     HnswIndexHandler *hnsw = static_cast<HnswIndexHandler *>(index_handler);
     // add index
@@ -1379,6 +1469,8 @@ int get_index_number(VectorIndexPtr &index_handler, int64_t &size)
   if (index_handler == nullptr) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("[OBVSAG] null pointer addr", K(index_handler));
+  } else if (ob_cuvs_marked(index_handler) && ob_cuvs_buffer_size(index_handler, size)) {
+    // The deferred VSAG graph is empty by design; the CAGRA buffer is authoritative.
   } else {
     HnswIndexHandler *hnsw = static_cast<HnswIndexHandler *>(index_handler);
     size = hnsw->get_index_number();
@@ -1394,6 +1486,9 @@ int cal_distance_by_id(VectorIndexPtr &index_handler,
   if (index_handler == nullptr) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("[OBVSAG] null pointer addr", K(index_handler));
+  } else if (ob_cuvs_marked(index_handler) && OB_FAIL(ob_cuvs_materialize_vsag(index_handler))) {
+    LOG_WARN("[OBVSAG][cuVS] cannot calculate by id without CPU fallback",
+             K(ret), KP(index_handler));
   } else {
     HnswIndexHandler *hnsw = static_cast<HnswIndexHandler *>(index_handler);
     if (OB_FAIL(hnsw->cal_distance_by_id(vector, ids, count, distances))) {
@@ -1424,6 +1519,9 @@ int get_vid_bound(VectorIndexPtr &index_handler,
   if (nullptr == index_handler) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("[OBVSAG] null pointer addr", KP(index_handler));
+  } else if (ob_cuvs_marked(index_handler) &&
+             ob_cuvs_buffer_vid_bound(index_handler, min_vid, max_vid)) {
+    // Use the CAGRA buffer while the fallback VSAG graph is intentionally deferred.
   } else {
     HnswIndexHandler *hnsw = static_cast<HnswIndexHandler *>(index_handler);
     const IndexType index_type = static_cast<IndexType>(hnsw->get_index_type());
@@ -1458,6 +1556,9 @@ int knn_search(VectorIndexPtr &index_handler, float *query_vector,
           ob_cuvs_try_search(index_handler, cuvs_hnsw->get_allocator(),
                              query_vector, dim, topk, dist, ids, result_size, invalid, reverse_filter)) {
         return OB_SUCCESS;
+      } else if (OB_FAIL(ob_cuvs_materialize_vsag(index_handler))) {
+        LOG_WARN("[OBVSAG][cuVS] CPU fallback is unavailable", K(ret), KP(index_handler));
+        return ret;
       }
     }
     FilterInterface *bitmap = static_cast<FilterInterface *>(invalid);
@@ -1507,6 +1608,9 @@ int knn_search(VectorIndexPtr &index_handler, float *query_vector,
           ob_cuvs_try_search(index_handler, cuvs_hnsw->get_allocator(),
                              query_vector, dim, topk, dist, ids, result_size, invalid, reverse_filter)) {
         return OB_SUCCESS;
+      } else if (OB_FAIL(ob_cuvs_materialize_vsag(index_handler))) {
+        LOG_WARN("[OBVSAG][cuVS] CPU fallback is unavailable", K(ret), KP(index_handler));
+        return ret;
       }
     }
     FilterInterface *bitmap = static_cast<FilterInterface *>(invalid);
@@ -1694,6 +1798,9 @@ int get_extra_info_by_ids(VectorIndexPtr &index_handler,
   if (index_handler == nullptr) {
     ret = OB_INVALID_ARGUMENT;
     LOG_WARN("[OBVSAG] null pointer addr", K(index_handler));
+  } else if (ob_cuvs_marked(index_handler) && OB_FAIL(ob_cuvs_materialize_vsag(index_handler))) {
+    LOG_WARN("[OBVSAG][cuVS] cannot read extra info without CPU fallback",
+             K(ret), KP(index_handler));
   } else {
     HnswIndexHandler *hnsw = static_cast<HnswIndexHandler *>(index_handler);
     if (OB_FAIL(hnsw->get_extra_info_by_ids(ids, count, extra_infos))) {
