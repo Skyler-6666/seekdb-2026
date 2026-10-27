@@ -231,6 +231,11 @@ int fdeserialize(obvsag::VectorIndexPtr& index_handler, std::istream& in_stream)
     return obvsag::fdeserialize(index_handler,in_stream);
 }
 
+int deserialize_index(obvsag::VectorIndexPtr& index_handler, const char *data, int64_t size)
+{
+    return obvsag::deserialize_index(index_handler, data, size);
+}
+
 int delete_index(obvsag::VectorIndexPtr& index_handler)
 {
     return obvsag::delete_index(index_handler);

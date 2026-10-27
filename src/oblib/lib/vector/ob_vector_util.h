@@ -24,6 +24,8 @@
 #include <string>
 #include "lib/allocator/page_arena.h"
 #include "lib/vector/ob_vsag_adaptor.h"
+#include "lib/vector/ob_gpu_hnsw_builder.h"
+#include "lib/vector/ob_hnsw_serial_format.h"
 
 namespace oceanbase {
 namespace common {
@@ -142,6 +144,7 @@ int knn_search(obvsag::VectorIndexPtr index_handler, uint32_t len, uint32_t *dim
 int fserialize(obvsag::VectorIndexPtr index_handler, std::ostream& out_stream);
 
 int fdeserialize(obvsag::VectorIndexPtr& index_handler, std::istream& in_stream);
+int deserialize_index(obvsag::VectorIndexPtr& index_handler, const char *data, int64_t size);
 int delete_index(obvsag::VectorIndexPtr& index_handler);
 void delete_iter_ctx(void *iter_ctx);
 int immutable_optimize(obvsag::VectorIndexPtr& index_handler);

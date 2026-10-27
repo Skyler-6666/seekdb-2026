@@ -150,6 +150,7 @@ int serialize(VectorIndexPtr& index_handler, const std::string dir);
 int deserialize_bin(VectorIndexPtr& index_handler, const std::string dir);
 int fserialize(VectorIndexPtr& index_handler, std::ostream& out_stream);
 int fdeserialize(VectorIndexPtr& index_handler, std::istream& in_stream);
+int deserialize_index(VectorIndexPtr& index_handler, const char *data, int64_t size);
 int delete_index(VectorIndexPtr& index_handler);
 void delete_iter_ctx(void *iter_ctx);
 uint64_t estimate_memory(VectorIndexPtr& index_handler, const uint64_t row_count, const bool is_build);

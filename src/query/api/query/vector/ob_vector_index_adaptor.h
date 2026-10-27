@@ -421,6 +421,8 @@ struct ObVectorIndexMemData
     : is_init_(false),
       rb_flag_(true),
       has_build_sq_(false),
+      gpu_build_fallback_(false),
+      snap_index_built_(false),
       vid_array_(nullptr),
       vec_array_(nullptr),
       extra_info_buf_(nullptr),
@@ -469,6 +471,12 @@ public:
   bool is_init_;
   bool rb_flag_;
   bool has_build_sq_; // for hnsw+sq
+  // Set when the buffered vectors no longer fit into the memory budget and the
+  // build has to continue with the incremental CPU path.
+  bool gpu_build_fallback_;
+  // Set when the snapshot index was already materialized. Rows that arrive
+  // afterwards have to extend the index instead of replacing it.
+  bool snap_index_built_;
   ObVecIdxVidArray *vid_array_; // for hnsw+sq
   ObVecIdxVecArray *vec_array_; // for hnsw+sq
   ObVecExtraInfoBuffer *extra_info_buf_; // for hnsw+sq
@@ -752,6 +760,10 @@ public:
   int init_hnswsq_mem_data();
   int check_snap_hnswsq_index();
   int build_hnswsq_index(ObVectorIndexParam *param);
+  int build_snap_hnsw_index(ObVectorIndexParam *param);
+  int build_snap_hnsw_index_with_gpu(ObVectorIndexParam *param, bool &built);
+  int build_snap_hnsw_index_with_cpu(ObVectorIndexParam *param);
+  int accumulate_snap_hnsw_data(float *vectors, int64_t *vids, int64_t dim, int num);
   bool is_mem_data_init_atomic(ObVectorIndexRecordType type);
   int try_init_mem_data(ObVectorIndexRecordType type, ObVectorIndexAlgorithmType enforce_type = VIAT_MAX) {
     int ret = OB_SUCCESS;

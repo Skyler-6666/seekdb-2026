@@ -18,6 +18,7 @@
 
 #include "ob_vsag_adaptor.h"
 #include <map>
+#include <sstream>
 #include "vsag/vsag.h"
 #include "vsag/errors.h"
 #include "vsag/dataset.h"
@@ -1346,6 +1347,73 @@ int fdeserialize(VectorIndexPtr &index_handler,
       } else {
         ret = vsag_errcode2ob(index.error().type);
         LOG_WARN("[OBVSAG] create index error", K(ret), K(index.error().type));
+      }
+    }
+  }
+  return ret;
+}
+
+int deserialize_index(VectorIndexPtr &index_handler, const char *data, int64_t size)
+{
+  int ret = OB_SUCCESS;
+  if (index_handler == nullptr || data == nullptr || size <= 0) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    HnswIndexHandler *hnsw = static_cast<HnswIndexHandler *>(index_handler);
+    const char *metric = hnsw->get_metric();
+    const char *dtype = hnsw->get_dtype();
+    int max_degree = hnsw->get_max_degree();
+    int ef_construction = hnsw->get_ef_construction();
+    int ef_search = hnsw->get_ef_search();
+    int dim = hnsw->get_dim();
+    int index_type = hnsw->get_index_type();
+    uint64_t extra_info_size = hnsw->get_extra_info_size();
+    const char *index_type_str = get_index_type_str(index_type);
+    int16_t refine_type = hnsw->get_refine_type();
+    int16_t bq_bits_query = hnsw->get_bq_bits_query();
+    bool bq_use_fht = hnsw->get_bq_use_fht();
+    bool use_reorder = hnsw->get_use_reorder();
+    float doc_prune_ratio = hnsw->get_doc_prune_ratio();
+    int window_size = hnsw->get_window_size();
+
+    char result_param_str[1024] = {0};
+    if ((IndexType)index_type == IndexType::IPIVF_TYPE) {
+      if (OB_FAIL(construct_vsag_sindi_create_param(uint8_t(index_type),
+              dtype,
+              metric,
+              hnsw->get_allocator(),
+              extra_info_size,
+              use_reorder,
+              doc_prune_ratio,
+              window_size,
+              result_param_str))) {
+      }
+    } else {
+      if (OB_FAIL(construct_vsag_create_param(
+        uint8_t(index_type), dtype, metric, dim, max_degree,
+        ef_construction, ef_search, hnsw->get_allocator(),
+        extra_info_size, refine_type, bq_bits_query, bq_use_fht, result_param_str))) {
+      }
+    }
+    if (OB_FAIL(ret)) {
+    } else {
+      const std::string input_json_str(result_param_str);
+      tl::expected<std::shared_ptr<Index>, Error> index =
+          vsag::Factory::CreateIndex(index_type_str, input_json_str, hnsw->get_allocator());
+      if (index.has_value()) {
+        std::string buffer(data, static_cast<size_t>(size));
+        std::istringstream in_stream(buffer);
+        tl::expected<void, Error> bs = index.value()->Deserialize(in_stream);
+        if (bs.has_value()) {
+          hnsw->set_index(index.value());
+          LOG_INFO("[OBVSAG] deserialize index from memory success", KCSTRING(result_param_str), K(size));
+        } else {
+          ret = vsag_errcode2ob(bs.error().type);
+          LOG_WARN("[OBVSAG] deserialize index from memory error", K(ret), K(bs.error().type));
+        }
+      } else {
+        ret = vsag_errcode2ob(index.error().type);
+        LOG_WARN("[OBVSAG] create index for deserialize error", K(ret), K(index.error().type));
       }
     }
   }
