@@ -1,0 +1,19 @@
+name: Build Check
+on:
+  push:
+    branches: [ competition/ai-function-enhancement ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential cmake ninja-build ccache libaio-dev
+
+      - name: Build seekdb
+        run: |
+          bash build.sh release -DOB_USE_CCACHE=ON --init --make -j2
