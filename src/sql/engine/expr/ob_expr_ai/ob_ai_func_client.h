@@ -51,6 +51,7 @@ public:
   int get_batch_result(ObArray<ObJsonObject *> &responses);
 private:
   int error_handle(CURLcode res);
+  int add_batch_request(ObJsonObject *data);
   int send_post(ObJsonObject *data, ObJsonObject *&response);
   int send_post_batch(ObArray<ObJsonObject *> &data_array, ObArray<ObJsonObject *> &responses);
   int init_easy_handle(CURL *curl, ObJsonObject *data, ObStringBuffer &response_buf);
@@ -68,6 +69,7 @@ private:
   ObArray<ObStringBuffer *> response_buffers_;
   // atomic boolean value, used to check if the batch task is finished
   std::atomic<bool> is_finished_;
+  int batch_error_;
   int64_t max_retry_times_;
   int64_t abs_timeout_ts_;
   int64_t timeout_sec_;
