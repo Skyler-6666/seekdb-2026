@@ -47,3 +47,30 @@ to `127.0.0.1`; all SQL operations still run in seekdb.
 The added C++ unit cases have not been executed: the repository documents its
 CMake unit-test targets as Linux-only. Linux compilation, the official
 mysqltest runner and platform scoring remain for competition evaluation.
+
+## Cold-start AI management regression
+
+The system-package loader previously created its first admin job and returned
+without loading any packages. Loading only started on the next 3-second timer
+tick, while the first user CALL was already waiting within its query deadline.
+The loader now runs a newly created job in the same timer invocation. Failed
+loads still retain the in-progress job and retry on subsequent timer ticks.
+
+Run against an executable built from this revision, with an unused local port
+and an existing directory for fresh test instances (requires pymysql):
+
+```sh
+python -B unittest/sql/engine/expr/test_ai_package_cold_start.py \
+  --seekdb /absolute/path/to/seekdb --data-parent /absolute/path/to/test-data
+```
+
+The default query deadline is 3 seconds. The test starts three fresh instances,
+executes the preceding Prompt/DDL operations, checks the missing-model error
+instead of a timeout, then creates and drops a model. Instances stop after each
+attempt; data and logs remain for inspection. The unpatched Windows build
+failed with error 4012 under this deadline. The patched build passed three
+attempts, with first CALL durations of 1.31, 1.63 and 1.52 seconds.
+
+The reported competition failure used a 10-second deadline. Its server logs
+were unavailable; this local reproduction verifies removal of the extra timer
+wait, but a new platform submission is still needed to confirm that failure.
