@@ -1,19 +1,84 @@
-name: Build Check
+# Real Linux compile verification for the competition changes.
+#   job "modules": builds the bazel targets that contain the modified sources
+#     //src/share:share_runtime  (ai_service/ob_ai_service_struct.cpp)
+#     //src/sql:sql_runtime      (sql/engine/expr/ob_expr_ai/*.cpp)
+#   job "full": optional complete observer build (what the grader builds)
+name: Competition build check
+
 on:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: 'Also build the full observer binary'
+        type: boolean
+        default: false
   push:
-    branches: [ competition/ai-function-enhancement ]
+    branches:
+      - competition/**
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04
+  modules:
+    timeout-minutes: 350
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 30720
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-docker-images: 'true'
 
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y build-essential cmake ninja-build ccache libaio-dev
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-      - name: Build seekdb
+      - name: Install build tools
         run: |
-          bash build.sh release -DOB_USE_CCACHE=ON --init --make -j2
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses5 python3 unzip
+
+      - name: Prepare project dependencies
+        run: python3 build.py init
+
+      - name: Build share_runtime
+        env:
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+        run: python3 build.py build //src/share:share_runtime
+
+      - name: Build sql_runtime
+        env:
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+        run: python3 build.py build //src/sql:sql_runtime
+
+  full:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.full }}
+    timeout-minutes: 350
+    runs-on: ubuntu-latest
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 30720
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses5 python3 unzip
+
+      - name: Prepare project dependencies
+        run: python3 build.py init
+
+      - name: Build full observer
+        env:
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+        run: python3 build.py build //src/observer:seekdb
