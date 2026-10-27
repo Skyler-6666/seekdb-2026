@@ -223,3 +223,10 @@ TEST(TestHnswSerialFormat, patch_labels_rejects_wrong_count)
             patch_hnsw_serial_labels(image.bytes.data(), image.bytes.size(), ids, SerialImage::kCount - 1));
   ASSERT_NE(OB_SUCCESS, patch_hnsw_serial_labels(image.bytes.data(), image.bytes.size(), nullptr, SerialImage::kCount));
 }
+
+/* The third party header repository only ships libgtest, the test carries its own entry point. */
+int main(int argc, char **argv)
+{
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}
