@@ -27,6 +27,7 @@ namespace oceanbase
 {
 namespace sql
 {
+struct TableFunctionCall;
 class ObEqualAnalysis;
 class ObChildStmtResolver;
 class ObDelUpdStmt;
