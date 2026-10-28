@@ -205,6 +205,19 @@ cc_library(
     visibility = ["//src/sql:__subpackages__"],
 )
 
+# White-box unit tests include both the public SQL seam and implementation
+# headers. Keep the private header owner private while exposing one aggregate
+# target to the test packages.
+cc_library(
+    name = "sql_unit_test_interface",
+    deps = [
+        ":sql_runtime_internal_headers",
+        ":sql_runtime_interface",
+    ],
+    tags = ["manual"],
+    visibility = ["//unittest:__subpackages__"],
+)
+
 _SQL_RUNTIME_UNITY_GROUPS = groups_without(
     SQL_UNITY_GROUPS,
     OPTIMIZER_GROUP_NAMES,

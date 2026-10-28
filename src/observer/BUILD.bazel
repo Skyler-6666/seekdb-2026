@@ -208,6 +208,13 @@ cc_library(
     visibility = ["//src/wasm:__pkg__"],
 )
 
+alias(
+    name = "observer_unit_test_interface",
+    actual = ":observer_internal_interface",
+    tags = ["manual"],
+    visibility = ["//unittest:__subpackages__"],
+)
+
 
 _OBSERVER_RUNTIME_UNITY_GROUPS = OBSERVER_UNITY_GROUPS + singleton_unity_groups(
     OBSERVER_STANDALONE_SOURCES,
