@@ -1319,7 +1319,7 @@ int ObAIFuncUtils::get_json_number_value(const ObIJsonBase *node, double &value)
   return ret;
 }
 
-int ObAIFuncUtils::validate_embedding_result(const ObIJsonBase *result,
+int ObAIFuncUtils::validate_embedding_result(ObIJsonBase *result,
                                              const int64_t expected_count,
                                              const int64_t dimension)
 {
@@ -1332,7 +1332,7 @@ int ObAIFuncUtils::validate_embedding_result(const ObIJsonBase *result,
   } else if (result->element_count() != expected_count) {
     ret = OB_ERR_UNEXPECTED;
   } else {
-    ObJsonArray *result_array = static_cast<ObJsonArray *>(const_cast<ObIJsonBase *>(result));
+    ObJsonArray *result_array = static_cast<ObJsonArray *>(result);
     for (int64_t i = 0; OB_SUCC(ret) && i < expected_count; ++i) {
       ObJsonNode *embedding = result_array->get_value(i);
       if (OB_ISNULL(embedding)
@@ -1364,7 +1364,7 @@ int ObAIFuncUtils::validate_embedding_result(const ObIJsonBase *result,
   return ret;
 }
 
-int ObAIFuncUtils::validate_rerank_result(const ObIJsonBase *result,
+int ObAIFuncUtils::validate_rerank_result(ObIJsonBase *result,
                                           const int64_t expected_count)
 {
   int ret = OB_SUCCESS;
@@ -1374,7 +1374,7 @@ int ObAIFuncUtils::validate_rerank_result(const ObIJsonBase *result,
              || result->element_count() != expected_count) {
     ret = OB_ERR_UNEXPECTED;
   } else {
-    ObJsonArray *result_array = static_cast<ObJsonArray *>(const_cast<ObIJsonBase *>(result));
+    ObJsonArray *result_array = static_cast<ObJsonArray *>(result);
     for (int64_t i = 0; OB_SUCC(ret) && i < expected_count; ++i) {
       ObJsonNode *item = result_array->get_value(i);
       ObJsonNode *index_node = nullptr;
