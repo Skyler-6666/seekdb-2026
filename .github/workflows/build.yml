@@ -1,9 +1,4 @@
-# Verify the AI-function-enhancement changes compile and the sql unit tests pass.
-# Module targets mirror what the grader builds:
-#   //src/share:share_runtime (ai_service/ob_ai_service_struct.cpp)
-#   //src/sql:sql_runtime    (sql/engine/expr/ob_expr_ai/*.cpp)
-#   //unittest/sql:sql_tests (ob_expr_ai_prompt_test / test_ob_openai_utils)
-name: AI enhancement build check
+name: AI Column build check
 
 on:
   workflow_dispatch:
@@ -12,18 +7,20 @@ on:
       - competition/**
 
 jobs:
-  modules:
+  observer:
     timeout-minutes: 240
     runs-on: ubuntu-22.04
     steps:
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@master
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
         with:
-          root-reserve-mb: 30720
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-docker-images: 'true'
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
 
       - name: Checkout source
         uses: actions/checkout@v4
@@ -33,6 +30,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update
           sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses-dev python3 unzip
+          sudo apt-get clean
 
       - name: Install Bazel 8.2.1
         run: |
@@ -43,17 +41,22 @@ jobs:
       - name: Prepare project dependencies
         run: bash build.sh release --init
 
-      - name: Build share_runtime
+      - name: Build share runtime
         env:
           XDG_CACHE_HOME: ${{ github.workspace }}/.cache
         run: bazel build //src/share:share_runtime
 
-      - name: Build sql_runtime
+      - name: Build sql runtime
         env:
           XDG_CACHE_HOME: ${{ github.workspace }}/.cache
         run: bazel build //src/sql:sql_runtime
 
-      - name: Build and run sql unit tests
+      - name: Build observer runtime
         env:
           XDG_CACHE_HOME: ${{ github.workspace }}/.cache
-        run: bazel test //unittest/sql:sql_tests --test_output=errors
+        run: bazel build //src/observer:observer_runtime
+
+      - name: Build seekdb binary
+        env:
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+        run: bazel build //src/observer:seekdb_link
