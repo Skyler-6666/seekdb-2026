@@ -18,7 +18,10 @@ TEST(SystemVariableRegistration, competition_variables_are_resolvable)
   };
   for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
     const ObString name = ObString::make_string(names[i]);
+    int64_t store_idx = -1;
     EXPECT_EQ(ids[i], ObSysVarMeta::find_sys_var_id_by_name(name));
+    EXPECT_EQ(OB_SUCCESS, ObSysVarMeta::calc_sys_var_store_idx_by_name(name, store_idx));
+    EXPECT_TRUE(ObSysVarMeta::is_valid_sys_var_store_idx(store_idx));
     EXPECT_EQ(ObString::make_string(names[i]),
               ObSysVarMeta::get_sys_var_name_by_id(ids[i]));
   }
