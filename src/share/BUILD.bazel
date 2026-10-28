@@ -1669,7 +1669,7 @@ _SHARE_RUNTIME_COMPILE_DEPS = [
 cc_library(
     name = "_share_implementation_headers",
     hdrs = SHARE_IMPLEMENTATION_HEADERS,
-    deps = _SHARE_RUNTIME_COMPILE_DEPS,
+    deps = [":local_table_schema"] + _SHARE_RUNTIME_COMPILE_DEPS,
     implementation_deps = _SHARE_RUNTIME_OBLIB_DEPS,
     features = ["layering_check"],
     tags = ["manual"],
