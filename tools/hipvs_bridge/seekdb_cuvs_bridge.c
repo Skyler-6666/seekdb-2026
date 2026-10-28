@@ -18,8 +18,7 @@ typedef struct {
   long n, dim;
 } sk_cuvs_index;
 
-void* seekdb_cuvs_build_ex(const float* base, long n, long dim,
-                           long graph_degree, long intermediate_graph_degree)
+void* seekdb_cuvs_build(const float* base, long n, long dim)
 {
   sk_cuvs_index* h = (sk_cuvs_index*)calloc(1, sizeof(*h));
   if (!h) return NULL;
@@ -33,12 +32,6 @@ void* seekdb_cuvs_build_ex(const float* base, long n, long dim,
   dset.dl_tensor.shape = ds; dset.dl_tensor.strides = 0; dset.dl_tensor.byte_offset = 0;
 
   if (cuvsCagraIndexParamsCreate(&h->ip) != CUVS_SUCCESS) goto fail_res;
-  if (graph_degree > 0) {
-    h->ip->graph_degree = (size_t)graph_degree;
-  }
-  if (intermediate_graph_degree > 0) {
-    h->ip->intermediate_graph_degree = (size_t)intermediate_graph_degree;
-  }
   if (cuvsCagraIndexCreate(&h->idx)      != CUVS_SUCCESS) goto fail_ip;
   if (cuvsCagraBuild(h->res, h->ip, &dset, h->idx) != CUVS_SUCCESS) goto fail_idx;
   h->n = n; h->dim = dim;
@@ -49,11 +42,6 @@ fail_ip:  cuvsCagraIndexParamsDestroy(h->ip);
 fail_res: cuvsResourcesDestroy(h->res); free(h);
   fprintf(stderr, "[seekdb_cuvs] build failed: %s\n", cuvsGetLastErrorText());
   return NULL;
-}
-
-void* seekdb_cuvs_build(const float* base, long n, long dim)
-{
-  return seekdb_cuvs_build_ex(base, n, dim, 0, 0);
 }
 
 int seekdb_cuvs_search(void* handle, const float* query, long nq, long topk,

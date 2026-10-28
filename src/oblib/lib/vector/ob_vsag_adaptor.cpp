@@ -44,9 +44,6 @@ extern "C" int   seekdb_cuvs_cagra_knn(const float *base, long n, long dim,
                                        const float *query, long nq, long topk,
                                        unsigned int *out_ids);
 extern "C" void *seekdb_cuvs_build(const float *base, long n, long dim);
-extern "C" void *seekdb_cuvs_build_ex(const float *base, long n, long dim,
-                                      long graph_degree, long intermediate_graph_degree)
-    __attribute__((weak));
 extern "C" int   seekdb_cuvs_search(void *handle, const float *query, long nq, long topk,
                                     unsigned int *out_ids, float *out_dist);
 extern "C" void  seekdb_cuvs_free(void *handle);
@@ -56,7 +53,6 @@ extern "C" void  seekdb_cuvs_free(void *handle);
 // never reached at runtime; they exist only to satisfy the linker.
 static int   seekdb_cuvs_cagra_knn(const float *, long, long, const float *, long, long, unsigned int *) { return -1; }
 static void *seekdb_cuvs_build(const float *, long, long) { return nullptr; }
-static void *seekdb_cuvs_build_ex(const float *, long, long, long, long) { return nullptr; }
 static int   seekdb_cuvs_search(void *, const float *, long, long, unsigned int *, float *) { return -1; }
 static void  seekdb_cuvs_free(void *) {}
 #endif
@@ -81,7 +77,6 @@ struct ObCuvsEntry {
   std::vector<int64_t> buf_ids_;// accumulated external vids from add_index
   size_t built_n_ = 0;          // #vectors present when cuVS was last (re)built
   bool vsag_materialized_ = false; // CPU fallback graph exists for buf_vecs_
-  int max_degree_ = 0;          // SQL HNSW M, mapped to CAGRA graph degree
 };
 static std::mutex g_ob_cuvs_mu;
 static std::map<void *, ObCuvsEntry *> g_ob_cuvs_reg;
@@ -124,25 +119,15 @@ static inline void ob_vsag_trace(const char *fn, const void *h, long a, long b) 
   (void)fn; (void)h; (void)a; (void)b;
 #endif
 }
-static void* ob_cuvs_build_buffer(const float* vectors, int dim, long n, int max_degree) {
-  if (max_degree > 0 && seekdb_cuvs_build_ex != nullptr) {
-    const long graph_degree = static_cast<long>(max_degree) * 2;
-    const long intermediate_graph_degree = static_cast<long>(max_degree) * 3;
-    return seekdb_cuvs_build_ex(vectors, n, dim,
-                                graph_degree, intermediate_graph_degree);
-  }
-  return seekdb_cuvs_build(vectors, n, dim);
-}
 static void* ob_cuvs_build_entry(ObCuvsEntry* ent, long n) {
-  return ob_cuvs_build_buffer(ent->buf_vecs_.data(), ent->dim_, n, ent->max_degree_);
+  return seekdb_cuvs_build(ent->buf_vecs_.data(), n, ent->dim_);
 }
 static void ob_cuvs_register(void *key, const float *vectors, const int64_t *ids,
-                             int dim, int size, int max_degree) {
-  void *bridge = ob_cuvs_build_buffer(vectors, dim, size, max_degree);
+                             int dim, int size) {
+  void *bridge = seekdb_cuvs_build(vectors, size, dim);
   if (bridge == nullptr) { return; }
   ObCuvsEntry *ent = new ObCuvsEntry();
   ent->bridge_ = bridge; ent->dim_ = dim; ent->ids_.assign(ids, ids + size);
-  ent->max_degree_ = max_degree;
   ent->vsag_materialized_ = true;
   std::lock_guard<std::mutex> guard(g_ob_cuvs_mu);
   ObCuvsEntry *&slot = g_ob_cuvs_reg[key];
@@ -153,12 +138,11 @@ static void ob_cuvs_register(void *key, const float *vectors, const int64_t *ids
 // snapshot incrementally via add_index (one row at a time), so this is where the
 // real data flows -- unlike build_index which is only used by the HNSW_SQ bulk path.
 static bool ob_cuvs_add(void *key, const float *vectors, const int64_t *ids,
-                        int dim, int size, bool vsag_has_data, int max_degree) {
+                        int dim, int size, bool vsag_has_data) {
   if (vectors == nullptr || ids == nullptr || dim <= 0 || size <= 0) { return false; }
   std::lock_guard<std::mutex> guard(g_ob_cuvs_mu);
   ObCuvsEntry *&slot = g_ob_cuvs_reg[key];
   if (slot == nullptr) { slot = new ObCuvsEntry(); slot->dim_ = dim; }
-  if (slot->max_degree_ == 0) { slot->max_degree_ = max_degree; }
   if (vsag_has_data) { slot->vsag_materialized_ = true; }
   if (slot->dim_ == 0) { slot->dim_ = dim; }
   if (slot->dim_ != dim) { return false; }
@@ -1302,7 +1286,7 @@ int build_index(VectorIndexPtr &index_handler, float *vector_list,
     }
     if (OB_FAIL(hnsw->build_index(dataset))) {
     } else if (ob_cuvs_marked(index_handler)) {
-      ob_cuvs_register(index_handler, vector_list, ids, dim, size, hnsw->get_max_degree());
+      ob_cuvs_register(index_handler, vector_list, ids, dim, size);
       LOG_INFO("[OBVSAG][cuVS] built GPU CAGRA index alongside VSAG",
                KP(index_handler), K(dim), K(size));
     }
@@ -1400,8 +1384,7 @@ int add_index(VectorIndexPtr &index_handler, float *vector,
       strcmp(static_cast<HnswIndexHandler *>(index_handler)->get_metric(), "l2") == 0) {
     HnswIndexHandler *cuvs_hnsw = static_cast<HnswIndexHandler *>(index_handler);
     defer_vsag = ob_cuvs_add(index_handler, vector, ids, dim, size,
-                             cuvs_hnsw->get_index_number() > 0,
-                             cuvs_hnsw->get_max_degree());
+                             cuvs_hnsw->get_index_number() > 0);
   }
   if (index_handler == nullptr || vector == nullptr || ids == nullptr) {
     ret = OB_INVALID_ARGUMENT;

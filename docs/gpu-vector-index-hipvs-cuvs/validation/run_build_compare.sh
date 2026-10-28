@@ -60,6 +60,7 @@ done
 [[ "$BASELINE_PORT" != "$CANDIDATE_PORT" ]] ||
   { echo "baseline and candidate ports must differ" >&2; exit 2; }
 command -v mysql >/dev/null
+command -v paste >/dev/null
 command -v python3 >/dev/null
 command -v timeout >/dev/null
 
@@ -290,10 +291,8 @@ run_one()
   local start_ns end_ns ids
   start_ns=$(date +%s%N)
   ids=$(mysql_cmd "$port" -e "$INDEX_Q
-    select group_concat(id order by id) from (
-      select /*+ index(bench idx_bench) */ id from bench
-      order by l2_distance(v,'$QUERY') approximate limit 10
-    ) q;")
+    select /*+ index(bench idx_bench) */ id from bench
+    order by l2_distance(v,'$QUERY') approximate limit 100;" | paste -sd, -)
   end_ns=$(date +%s%N)
   local elapsed_ns=$((end_ns - start_ns))
   local builds serves deferred materialized
@@ -308,6 +307,10 @@ run_one()
       { echo "$version round $round unexpectedly built a CPU sidecar in the timed region" >&2; return 1; }
   fi
   [[ -n "$ids" ]] || { echo "$version round $round returned no IDs" >&2; return 1; }
+  local id_count
+  id_count=$(awk -F',' '{print NF}' <<<"$ids")
+  [[ "$id_count" -eq 100 ]] ||
+    { echo "$version round $round returned $id_count IDs, expected 100" >&2; return 1; }
   printf '%s\t%d\t%d\t%s\t%s\t%s\t%s\n' \
     "$version" "$round" "$elapsed_ns" "$ids" "$builds" "$deferred" "$materialized" >> "$RESULTS"
   mysql_cmd "$port" -e 'use cuvs_build_bench; drop index idx_bench on bench;' >/dev/null
@@ -337,14 +340,16 @@ results_path, truth_path, summary_path = map(pathlib.Path, sys.argv[1:4])
 rows, dim = map(int, sys.argv[4:6])
 truth = struct.unpack("<100i", truth_path.read_bytes())
 truth10 = set(truth[:10])
+truth100 = set(truth)
 runs = {"baseline": [], "candidate": []}
 for line in results_path.read_text().splitlines():
     version, round_id, elapsed_ns, ids, builds, deferred, materialized = line.split("\t")
-    returned = {int(value) for value in ids.split(",") if value}
+    returned = [int(value) for value in ids.split(",") if value]
     runs[version].append({
         "round": int(round_id),
         "seconds": int(elapsed_ns) / 1e9,
-        "recall_at_10": len(returned & truth10) / 10.0,
+        "recall_at_10": len(set(returned[:10]) & truth10) / 10.0,
+        "recall_at_100": len(set(returned[:100]) & truth100) / 100.0,
         "cuvs_builds": int(builds),
         "deferred_vsag": int(deferred),
         "vsag_materializations": int(materialized),
@@ -355,14 +360,17 @@ if any(len(items) < 3 for items in runs.values()):
 
 medians = {name: statistics.median(item["seconds"] for item in items)
            for name, items in runs.items()}
-recalls = {name: statistics.median(item["recall_at_10"] for item in items)
-           for name, items in runs.items()}
+recalls10 = {name: statistics.median(item["recall_at_10"] for item in items)
+             for name, items in runs.items()}
+recalls100 = {name: statistics.median(item["recall_at_100"] for item in items)
+              for name, items in runs.items()}
 summary = {
     "rows": rows,
     "dim": dim,
     "runs": runs,
     "median_seconds": medians,
-    "median_recall_at_10": recalls,
+    "median_recall_at_10": recalls10,
+    "median_recall_at_100": recalls100,
     "build_speedup": medians["baseline"] / medians["candidate"],
 }
 summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
