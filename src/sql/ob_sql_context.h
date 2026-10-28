@@ -585,7 +585,8 @@ public:
       injected_random_status_(false),
       ori_question_marks_count_(0),
       type_demotion_flag_(0),
-      disable_plan_cache_(false)
+      disable_plan_cache_(false),
+      has_hybrid_search_(false)
   {
   }
   TO_STRING_KV(N_PARAM_NUM, question_marks_count_,
@@ -629,6 +630,7 @@ public:
     filter_ds_stat_cache_.reuse();
     type_demotion_flag_ = 0;
     disable_plan_cache_ = false;
+    has_hybrid_search_ = false;
   }
 
   int64_t get_new_stmt_id() { return stmt_count_++; }
@@ -739,6 +741,7 @@ public:
     };
   };
   bool disable_plan_cache_;
+  bool has_hybrid_search_;
 };
 
 } /* ns sql*/
