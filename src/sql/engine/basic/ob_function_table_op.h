@@ -37,7 +37,7 @@ public:
   ObFunctionTableSpec(common::ObIAllocator &alloc, const ObPhyOperatorType type)
     : ObOpSpec(alloc, type), value_expr_(nullptr), column_exprs_(alloc), has_correlated_expr_(false),
       function_id_(0), argument_exprs_(alloc), column_ids_(alloc), argument_column_counts_(alloc), lookup_exprs_(alloc), lookup_column_ids_(alloc),
-      file_column_ids_(alloc)
+      file_column_ids_(alloc), file_table_(false)
   {}
   ObExpr *value_expr_;
   common::ObFixedArray<ObExpr*, common::ObIAllocator> column_exprs_;
@@ -50,6 +50,7 @@ public:
   common::ObFixedArray<ObExpr*, common::ObIAllocator> lookup_exprs_;
   common::ObFixedArray<uint64_t, common::ObIAllocator> lookup_column_ids_;
   common::ObFixedArray<int64_t, common::ObIAllocator> file_column_ids_;
+  bool file_table_;
 };
 
 class ObFunctionTableOp : public ObOperator

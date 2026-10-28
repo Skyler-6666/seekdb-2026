@@ -33,7 +33,7 @@ namespace sql
 
 OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_,
                     function_id_, argument_exprs_, column_ids_, argument_column_counts_, lookup_exprs_, lookup_column_ids_, options_,
-                    file_column_ids_);
+                    file_column_ids_, file_table_);
 
 int ObFunctionTableOp::inner_open()
 {
@@ -49,21 +49,27 @@ int ObFunctionTableOp::inner_open()
   file_scan_.reset();
   file_definition_.reset();
   if (MY_SPEC.value_expr_ != nullptr) {
-    ObDatum *datum = nullptr;
-    if (OB_FAIL(MY_SPEC.value_expr_->eval(eval_ctx_, datum))) {
-    } else if (datum != nullptr && !datum->is_null()
-               && MY_SPEC.value_expr_->datum_meta_.type_ == ObVarcharType
-               && file_sql::Definition::is_descriptor(datum->ptr_, datum->len_)) {
-      std::string root;
-      if (OB_FAIL(check_file_sql_access(ctx_.get_my_session(), root))) {
+    // The generator value expr is stateful per eval, so only the const file
+    // descriptor may be evaluated here.
+    if (MY_SPEC.file_table_) {
+      ObDatum *datum = nullptr;
+      if (OB_FAIL(MY_SPEC.value_expr_->eval(eval_ctx_, datum))) {
+      } else if (datum != nullptr && !datum->is_null()
+                 && MY_SPEC.value_expr_->datum_meta_.type_ == ObVarcharType
+                 && file_sql::Definition::is_descriptor(datum->ptr_, datum->len_)) {
+        std::string root;
+        if (OB_FAIL(check_file_sql_access(ctx_.get_my_session(), root))) {
+        } else {
+          try {
+            file_definition_.reset(new file_sql::Definition(file_sql::Definition::deserialize(std::string(datum->ptr_, datum->len_))));
+            std::vector<size_t> projection;
+            for (int64_t index : MY_SPEC.file_column_ids_) projection.push_back(index);
+            file_scan_.reset(new file_sql::Scan(*file_definition_, root, projection));
+          } catch (const std::bad_alloc &) { ret = OB_ALLOCATE_MEMORY_FAILED; }
+          catch (const std::exception &error) { ret = OB_INVALID_ARGUMENT; LOG_USER_ERROR(OB_INVALID_ARGUMENT, error.what()); }
+        }
       } else {
-        try {
-          file_definition_.reset(new file_sql::Definition(file_sql::Definition::deserialize(std::string(datum->ptr_, datum->len_))));
-          std::vector<size_t> projection;
-          for (int64_t index : MY_SPEC.file_column_ids_) projection.push_back(index);
-          file_scan_.reset(new file_sql::Scan(*file_definition_, root, projection));
-        } catch (const std::bad_alloc &) { ret = OB_ALLOCATE_MEMORY_FAILED; }
-        catch (const std::exception &error) { ret = OB_INVALID_ARGUMENT; LOG_USER_ERROR(OB_INVALID_ARGUMENT, error.what()); }
+        next_row_func_ = &ObFunctionTableOp::inner_get_next_row_sys_func;
       }
     } else if (ObExtendType == MY_SPEC.value_expr_->datum_meta_.type_) {
       next_row_func_ = &ObFunctionTableOp::inner_get_next_row_udf;
@@ -122,13 +128,14 @@ int ObFunctionTableOp::open_scan()
 int ObFunctionTableOp::inner_rescan()
 {
   int ret = OB_SUCCESS;
+  OZ (ObOperator::inner_rescan());
+  if (OB_FAIL(ret)) return ret;
   if (file_scan_ != nullptr) {
     file_scan_.reset();
     file_definition_.reset();
     return inner_open();
   }
   if (next_row_func_ != nullptr) {
-    OZ (ObOperator::inner_rescan());
     node_idx_ = 0;
     if (MY_SPEC.has_correlated_expr_) {
       row_count_ = 0;
@@ -138,8 +145,7 @@ int ObFunctionTableOp::inner_rescan()
     }
     return ret;
   }
-  OZ (ObOperator::inner_rescan());
-  if (OB_SUCC(ret) && scan_ != nullptr) {
+  if (scan_ != nullptr) {
     clear_evaluated_flag();
     OZ (evaluate_arguments());
     OZ (scan_->rescan(arguments_));

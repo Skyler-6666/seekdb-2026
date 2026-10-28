@@ -5529,6 +5529,7 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
     if (file_table) {
       OZ (generate_rt_expr(*value_raw_expr, value_expr));
       OX (spec.value_expr_ = value_expr);
+      OX (spec.file_table_ = true);
       OZ (spec.file_column_ids_.init(op.get_stmt()->get_column_size()));
     } else if (table->table_function_id_ != 0) {
       spec.function_id_ = table->table_function_id_;
