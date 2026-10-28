@@ -112,7 +112,7 @@ def _bazel_options(bazel: Path, command: str) -> Tuple[Dict[str, bool], Dict[str
     with tempfile.TemporaryDirectory(prefix="options.", dir=bazel.parent) as directory:
         result = subprocess.run([
             str(bazel), "--batch", "--ignore_all_rc_files", "--output_base=" + directory,
-            "help", "completion",
+            "help", "--repo_contents_cache=", "completion",
         ], cwd=directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
     if result.returncode:
         raise BuildError("cannot read Bazel options: " + result.stderr.strip())
