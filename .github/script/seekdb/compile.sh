@@ -60,6 +60,9 @@ else
     ccache -M "${SEEKDB_CCACHE_MAX_SIZE:-3G}" || true
     ccache -c || true
   fi
+  # Downloaded rpm archives are kept in deps/3rd/pkg/ after extraction;
+  # drop them to stay within the resized workspace volume.
+  rm -rf "$WORKSPACE/deps/3rd/pkg"/*.rpm 2>/dev/null || true
   CACHE_SCRIPT="$WORKSPACE/.github/script/seekdb/cache.sh"
   if [[ -f "$CACHE_SCRIPT" && -n "${SEEKDB_CACHE_NFS_ROOT:-}" ]]; then
     bash "$CACHE_SCRIPT" baseline-ccache || echo "[compile.sh] failed to record ccache baseline"

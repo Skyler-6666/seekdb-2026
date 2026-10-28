@@ -20,6 +20,9 @@ env:
   XDG_CACHE_HOME: ${{ github.workspace }}/.cache
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   SEEKDB_CCACHE_MAX_SIZE: 4G
+  # rustup would otherwise install to ~/.rustup on the (full) root fs
+  RUSTUP_HOME: ${{ github.workspace }}/.rustup
+  CARGO_HOME: ${{ github.workspace }}/.cargo
 
 jobs:
   # Fast compile sanity of the sql side with the Bazel module targets.
@@ -53,6 +56,9 @@ jobs:
 
       - name: Prepare project dependencies
         run: bash build.sh release --init
+
+      - name: Trim dependency archives
+        run: rm -rf deps/3rd/pkg/*.rpm || true
 
       - name: Build share_runtime
         run: bazel build //src/share:share_runtime
