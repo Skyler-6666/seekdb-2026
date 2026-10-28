@@ -216,6 +216,7 @@ def main(arguments: List[str]) -> int:
     if output_base == root:
         raise BuildError("--output_base must not name the workspace root")
     output_base.mkdir(parents=True, exist_ok=True)
+    build_cache = _cache_directory()
 
     # Build policy lives in .bazelrc; paths and explicit local concurrency go
     # here. Bazel flags on the command line override these defaults.
@@ -229,10 +230,17 @@ def main(arguments: List[str]) -> int:
     )
     lines = [
         "common --downloader_config=" + _quote((root / "bazel/downloader.cfg").as_posix()),
-        "build --disk_cache=" + _quote((_cache_directory() / "disk-cache").as_posix()),
+        "build --disk_cache=" + _quote((build_cache / "disk-cache").as_posix()),
         "build --symlink_prefix=" + _quote(output_base.as_posix() + "/"),
         "build --workspace_status_command=" + _quote(status_command),
     ]
+    try:
+        build_cache.resolve().relative_to(root)
+    except ValueError:
+        pass
+    else:
+        # Bazel 9 rejects a repository contents cache inside the source tree.
+        lines.append("common --repo_contents_cache=")
     lines.extend(concurrency_defaults)
     if os.name == "nt":
         lines.append("build --repo_env=" + _quote(
