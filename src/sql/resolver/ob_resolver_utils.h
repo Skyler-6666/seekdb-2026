@@ -143,6 +143,7 @@ public:
   static int check_function_table_column_exist(const TableItem &table_item,
                                                ObResolverParams &params,
                                                const ObString &column_name);
+  static bool is_expr_can_be_used_in_table_function(const ObRawExpr &expr);
   static int check_json_table_column_exists(const TableItem &table_item,
                                            ObResolverParams &params,
                                            const ObString &column_name,

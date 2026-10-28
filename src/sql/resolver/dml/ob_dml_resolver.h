@@ -27,7 +27,6 @@ namespace oceanbase
 {
 namespace sql
 {
-struct TableFunctionCall;
 class ObEqualAnalysis;
 class ObChildStmtResolver;
 class ObDelUpdStmt;
@@ -214,8 +213,15 @@ public:
   int create_function_scan_item(const TableFunctionCall &call, TableItem *&item);
   int add_unnest_columns(TableItem &item, ObRawExpr &argument, int64_t argument_index,
                         int64_t argument_count, int64_t &column_offset);
+  int resolve_file_table_item(const ParseNode &node, TableItem *&item);
+  int resolve_file_table_columns(const TableItem &table, common::ObIArray<ColumnItem> &columns);
+  int resolve_function_table_item(const ParseNode &table_node,
+                                  TableItem *&table_item);
   int resolve_json_table_item(const ParseNode &table_node,
                               TableItem *&table_item);
+  int resolve_unnest_item(const ParseNode &table_node, TableItem *&table_item);
+  int create_unnest_table_item(TableItem *&table_item, ObString table_name);
+  int unnest_table_add_column(TableItem *&table_item, ColumnItem *&col_item, ObString col_name);
   int resolve_hybrid_search_item(const ParseNode &parse_tree, TableItem *&table_item);
 
   int fill_same_column_to_using(JoinedTable* &joined_table);
@@ -680,6 +686,10 @@ protected:
   int resolve_match_against_expr(ObMatchFunRawExpr &expr);
   int resolve_es_match_expr(ObMatchFunRawExpr &expr);
 private:
+  int resolve_function_table_column_item_udf(const TableItem &table_item,
+                                             common::ObIArray<ColumnItem> &col_items);
+  int resolve_function_table_column_item_sys_func(const TableItem &table_item,
+                                                  common::ObIArray<ColumnItem> &col_items);
   int check_table_exist_or_not(uint64_t &database_id,
                                common::ObString &table_name,
                                common::ObString &db_name);

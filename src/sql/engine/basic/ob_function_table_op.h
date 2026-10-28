@@ -21,9 +21,11 @@
 #include "sql/engine/basic/ob_chunk_datum_store.h"
 #include "lib/charset/ob_charset.h"
 #include "sql/table_function/table_function.h"
+#include "sql/engine/basic/ob_file_scan_utils.h"
 
 namespace oceanbase
 {
+namespace pl { class ObPLCollection; }
 namespace sql
 {
 
@@ -34,7 +36,8 @@ OB_UNIS_VERSION_V(1);
 public:
   ObFunctionTableSpec(common::ObIAllocator &alloc, const ObPhyOperatorType type)
     : ObOpSpec(alloc, type), value_expr_(nullptr), column_exprs_(alloc), has_correlated_expr_(false),
-      function_id_(0), argument_exprs_(alloc), column_ids_(alloc), argument_column_counts_(alloc), lookup_exprs_(alloc), lookup_column_ids_(alloc)
+      function_id_(0), argument_exprs_(alloc), column_ids_(alloc), argument_column_counts_(alloc), lookup_exprs_(alloc), lookup_column_ids_(alloc),
+      file_column_ids_(alloc)
   {}
   ObExpr *value_expr_;
   common::ObFixedArray<ObExpr*, common::ObIAllocator> column_exprs_;
@@ -46,6 +49,7 @@ public:
   common::ObFixedArray<int64_t, common::ObIAllocator> argument_column_counts_;
   common::ObFixedArray<ObExpr*, common::ObIAllocator> lookup_exprs_;
   common::ObFixedArray<uint64_t, common::ObIAllocator> lookup_column_ids_;
+  common::ObFixedArray<int64_t, common::ObIAllocator> file_column_ids_;
 };
 
 class ObFunctionTableOp : public ObOperator
@@ -53,23 +57,38 @@ class ObFunctionTableOp : public ObOperator
 public:
   ObFunctionTableOp(ObExecContext &exec_ctx, const ObOpSpec &spec, ObOpInput *input)
     : ObOperator(exec_ctx, spec, input),
-    scan_(nullptr), opened_(false), arguments_()
+    scan_(nullptr), opened_(false), arguments_(), node_idx_(0), already_calc_(false),
+    row_count_(0), col_count_(0), value_table_(NULL), next_row_func_(nullptr), file_row_bytes_(0)
   {}
 
   virtual int inner_open() override;
   virtual int inner_rescan() override;
   virtual int inner_get_next_row() override;
-  //virtual int inner_get_next_batch(int64_t max_row_cnt) override;
+  virtual int inner_get_next_batch(int64_t max_row_cnt) override;
   virtual int inner_close() override;
   virtual void destroy() override;
 private:
   int open_scan();
   int evaluate_arguments();
+  int inner_get_next_row_udf();
+  int inner_get_next_row_sys_func();
+  int inner_get_next_row_file();
+  int read_file_row();
+  int get_current_result(common::ObObj &result);
   ITableFunctionScan *scan_;
   bool opened_;
   common::ObSEArray<common::ObObj, 4> arguments_;
   common::ObSEArray<TableFunctionLookup, 4> lookups_;
-
+  int64_t node_idx_;
+  bool already_calc_;
+  int64_t row_count_;
+  int64_t col_count_;
+  common::ObObj value_;
+  pl::ObPLCollection *value_table_;
+  int (ObFunctionTableOp::*next_row_func_)();
+  std::unique_ptr<file_sql::Definition> file_definition_;
+  std::unique_ptr<file_sql::Scan> file_scan_;
+  int64_t file_row_bytes_;
 };
 
 } // end namespace sql
