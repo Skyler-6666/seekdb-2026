@@ -136,10 +136,14 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
 
 bool ObTextWhitespaceTokenizer::found_delimiter()
 {
-  bool found = false;
+  const unsigned char c = static_cast<unsigned char>(*(input_doc_->ptr_ + trav_pos_));
+  if (c < 0x80) {
+    // For ASCII, every non-alphanumeric byte is a delimiter under the
+    // supported text collations. Avoid three collation-aware calls per byte.
+    return !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
+  }
   const char *curr_char = input_doc_->ptr_ + trav_pos_;
-  found = ob_isspace(cs_, *curr_char) || ob_iscntrl(cs_, *curr_char) || ob_ispunct(cs_, *curr_char);
-  return found;
+  return ob_isspace(cs_, *curr_char) || ob_iscntrl(cs_, *curr_char) || ob_ispunct(cs_, *curr_char);
 }
 
 ObTokenNormalizer::ObTokenNormalizer()
@@ -244,7 +248,6 @@ int ObBasicEnglishNormalizer::get_next(ObDatum &next_token, int64_t &token_freq)
   } else {
     next_token.reset();
     token_freq = 0;
-    norm_allocator_.reuse();
     ObDatum tmp_datum;
     bool found_alnum = false;
     uint32_t norm_token_len = 0;
@@ -293,11 +296,23 @@ int ObBasicEnglishNormalizer::get_next(ObDatum &next_token, int64_t &token_freq)
     } else if (OB_UNLIKELY(!found_alnum)) {
       ret = OB_ERR_UNEXPECTED;
     } else {
-      ObString norm_alnum_token(norm_token_len, norm_token_ptr);
-      ObString norm_lower_token;
-      if (OB_FAIL(ObCharset::tolower(cs_, norm_alnum_token, norm_lower_token, norm_allocator_))) {
+      bool need_lower = false;
+      for (uint32_t i = 0; i < norm_token_len; ++i) {
+        const unsigned char c = static_cast<unsigned char>(norm_token_ptr[i]);
+        if (c >= 0x80 || (c >= 'A' && c <= 'Z')) {
+          need_lower = true;
+          break;
+        }
+      }
+      if (!need_lower) {
+        next_token.set_string(norm_token_ptr, norm_token_len);
       } else {
-        next_token.set_string(norm_lower_token);
+        ObString norm_alnum_token(norm_token_len, norm_token_ptr);
+        ObString norm_lower_token;
+        if (OB_FAIL(ObCharset::tolower(cs_, norm_alnum_token, norm_lower_token, norm_allocator_))) {
+        } else {
+          next_token.set_string(norm_lower_token);
+        }
       }
     }
   }

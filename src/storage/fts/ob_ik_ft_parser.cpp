@@ -248,17 +248,11 @@ int ObIKFTParser::init_dict(const ObFTParserParam &param)
                               ObCharsetType::CHARSET_UTF8MB4,
                               ObCollationType::CS_TYPE_UTF8MB4_BIN);
 
-  ObFTDictDesc stopword_dict_desc("stopword",
-                                  ObFTDictType::DICT_IK_STOP,
-                                  ObCharsetType::CHARSET_UTF8MB4,
-                                  ObCollationType::CS_TYPE_UTF8MB4_BIN);
-
   if (should_read_newest_table()) {
     // clear dict cache, always false now
   } else {
     if (OB_FAIL(init_single_dict(main_dict_desc, cache_main_))) {
     } else if (OB_FAIL(init_single_dict(quan_dict_desc, cache_quan_))) {
-    } else if (OB_FAIL(init_single_dict(stopword_dict_desc, cache_stop_))) {
     }
   }
 
@@ -266,8 +260,9 @@ int ObIKFTParser::init_dict(const ObFTParserParam &param)
     // already logged.
   } else if (OB_FAIL(build_dict_from_cache(main_dict_desc, cache_main_, dict_main_))) {
   } else if (OB_FAIL(build_dict_from_cache(quan_dict_desc, cache_quan_, dict_quan_))) {
-  } else if (OB_FAIL(build_dict_from_cache(stopword_dict_desc, cache_stop_, dict_stop_))) {
   }
+  // IK stop-word filtering is disabled in get_next_token(); avoid pinning and
+  // constructing the unused stop-word dictionary on every parser instance.
 
   return ret;
 }
