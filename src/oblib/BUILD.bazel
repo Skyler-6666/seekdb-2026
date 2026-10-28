@@ -680,6 +680,9 @@ cc_library(
 cc_library(
     name = "oblib_vector",
     hdrs = [
+        "lib/vector/gpu/ob_gpu_hnsw_plugin.h",
+        "lib/vector/ob_gpu_hnsw_builder.h",
+        "lib/vector/ob_hnsw_serial_format.h",
         "lib/vector/ob_vector_util.h",
         "lib/vector/ob_vsag_adaptor.h",
     ],
@@ -977,6 +980,7 @@ grouped_unity_cc_library(
     implementation_deps = [
         ":_oblib_implementation_headers",
         ":oblib_foundation",
+        ":oblib_vector",
         "//bazel/third_party:vsag_headers",
     ],
     copts = OBLIB_CXX_COPTS + openmp_copts(),
