@@ -1,0 +1,59 @@
+# Verify the AI-function-enhancement changes compile and the sql unit tests pass.
+# Module targets mirror what the grader builds:
+#   //src/share:share_runtime (ai_service/ob_ai_service_struct.cpp)
+#   //src/sql:sql_runtime    (sql/engine/expr/ob_expr_ai/*.cpp)
+#   //unittest/sql:sql_tests (ob_expr_ai_prompt_test / test_ob_openai_utils)
+name: AI enhancement build check
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - competition/**
+
+jobs:
+  modules:
+    timeout-minutes: 240
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 30720
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses-dev python3 unzip
+
+      - name: Install Bazel 8.2.1
+        run: |
+          sudo curl -sSL -o /usr/local/bin/bazel https://github.com/bazelbuild/bazel/releases/download/8.2.1/bazel-8.2.1-linux-x86_64
+          sudo chmod +x /usr/local/bin/bazel
+          bazel --version
+
+      - name: Prepare project dependencies
+        run: bash build.sh release --init
+
+      - name: Build share_runtime
+        env:
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+        run: bazel build //src/share:share_runtime
+
+      - name: Build sql_runtime
+        env:
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+        run: bazel build //src/sql:sql_runtime
+
+      - name: Build and run sql unit tests
+        env:
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+        run: bazel test //unittest/sql:sql_tests --test_output=errors
