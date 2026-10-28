@@ -1,0 +1,46 @@
+name: Competition unit verification
+
+on:
+  workflow_dispatch:
+
+jobs:
+  unit:
+    timeout-minutes: 350
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses-dev python3 unzip
+
+      - name: Prepare project dependencies
+        run: python3 build.py init
+
+      - name: HNSW serialization tests
+        env:
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+        run: python3 build.py test --test_output=errors //unittest/oblib:test_hnsw_serial_format
+
+      - name: SQL, file SQL and AI function tests
+        env:
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+        run: python3 build.py test --test_output=errors //unittest/sql:sql_tests
+
+      - name: AI COLUMN share-schema tests
+        env:
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+        run: python3 build.py test --test_output=errors //unittest/share:share_tests
+
+      - name: Observer module tests
+        env:
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+        run: python3 build.py test --test_output=errors //unittest/observer:observer_tests
+
+      - name: Observer runtime compile
+        env:
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+        run: python3 build.py build //src/observer:observer_runtime
