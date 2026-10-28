@@ -37,8 +37,8 @@
 }
 
 %{
-#include "../../../src/sql/parser/sql_parser_mysql_mode_lex.h"
-#include "../../../src/sql/parser/sql_parser_base.h"
+#include "sql/parser/sql_parser_mysql_mode_lex.h"
+#include "sql/parser/sql_parser_base.h"
 
 #define GEN_EXPLAN_STMT(no_use, explain_stmt, explain_type, display_type, stmt, into_table, set_statement_id) \
   (void)(no_use); \
