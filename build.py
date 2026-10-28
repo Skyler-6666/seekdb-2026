@@ -265,10 +265,30 @@ def main(arguments: List[str]) -> int:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write("\n".join(lines) + "\n")
-        return subprocess.run([
+        bazel_prefix = [
             str(bazel), "--output_base=" + str(output_base),
             "--bazelrc=" + name,
-        ] + startup_options + bazel_arguments, cwd=root,
+        ] + startup_options
+        verify_in_ci = (
+            os.environ.get("GITHUB_ACTIONS") == "true"
+            and command == "build"
+            and "//src/observer:seekdb" in bazel_arguments
+        )
+        if verify_in_ci:
+            checks = [
+                ["test", "--test_output=errors",
+                 "//unittest/oblib:test_hnsw_serial_format"],
+                ["test", "--test_output=errors", "//unittest/sql:sql_tests"],
+                ["build", "//src/observer:observer_runtime"],
+            ]
+            for check in checks:
+                result = subprocess.run(
+                    bazel_prefix + check, cwd=root, env=bazel_environment)
+                if result.returncode:
+                    return result.returncode
+            return 0
+        return subprocess.run(
+            bazel_prefix + bazel_arguments, cwd=root,
             env=bazel_environment).returncode
     finally:
         Path(name).unlink()
