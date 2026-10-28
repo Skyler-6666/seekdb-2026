@@ -73,24 +73,28 @@ environment["PATH"] = os.pathsep.join([
 ])
 environment["PYTHONHOME"] = str(Path(environment["PYTHONHOME"]).absolute())
 target = args.target
+host_cc = str(cc)
+host_cxx = str(cc)
 if not target:
-    environment.update({"CC": str(cc), "CXX": str(cc), "AR": str(ar)})
+    if (sys.platform.startswith("linux")
+            and Path("/usr/bin/gcc").is_file()
+            and Path("/usr/bin/g++").is_file()):
+        # Rust host build scripts and Autoconf probes must use the host
+        # toolchain. The pinned linker predates the relr.dyn sections emitted
+        # by current Ubuntu runners.
+        host_cc = "/usr/bin/gcc"
+        host_cxx = "/usr/bin/g++"
+    environment.update({"CC": host_cc, "CXX": host_cxx, "AR": str(ar)})
     version = subprocess.check_output([str(rustc), "-vV"], text=True)
     target = next(line.split(": ", 1)[1] for line in version.splitlines() if line.startswith("host: "))
 if target:
     target = target.replace("-", "_")
-    environment["CC_" + target] = str(cc)
-    environment["CXX_" + target] = str(cc)
+    environment["CC_" + target] = host_cc
+    environment["CXX_" + target] = host_cxx
     environment["AR_" + target] = str(ar)
     # MSVC Rust targets use link.exe syntax, not the C compiler's syntax.
     if not target.endswith("_msvc"):
-        linker = str(cc)
-        if (sys.platform.startswith("linux") and not args.target
-                and Path("/usr/bin/gcc").is_file()):
-            # Rust host build scripts must link against the host glibc. The
-            # pinned devtoolchain linker predates the relr.dyn section used by
-            # current Ubuntu runners.
-            linker = "/usr/bin/gcc"
+        linker = host_cc
         environment["CARGO_TARGET_" + target.upper() + "_LINKER"] = linker
 command = args.command[1:] if args.command[:1] == ["--"] else args.command
 for index, argument in enumerate(command):
