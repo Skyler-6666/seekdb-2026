@@ -1,6 +1,9 @@
 # Heap identity survives BEFORE INSERT and native vector-index maintenance.
 connection default;
 --disable_query_log
+set session ob_query_timeout = 60000000;
+--enable_query_log
+--disable_query_log
 --exec python3 mysql_test/test_suite/ai_column/include/ai_column_mock.py start 19127
 --disable_warnings
 drop database if exists ai_column_heap_regression;

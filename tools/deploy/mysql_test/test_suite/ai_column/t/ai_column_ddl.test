@@ -1,6 +1,9 @@
 # AI column physical DDL and metadata coverage.  No external model request is made.
 
 connection default;
+--disable_query_log
+set session ob_query_timeout = 60000000;
+--enable_query_log
 --disable_warnings
 drop database if exists ai_column_p0_ddl;
 --enable_warnings

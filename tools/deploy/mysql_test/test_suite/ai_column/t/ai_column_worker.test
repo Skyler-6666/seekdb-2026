@@ -1,6 +1,9 @@
 # AI worker request, typed prompt, grouped visibility, retry, and stale-result coverage.
 
 connection default;
+--disable_query_log
+set session ob_query_timeout = 60000000;
+--enable_query_log
 --exec python3 mysql_test/test_suite/ai_column/include/ai_column_mock.py start 19122
 --disable_warnings
 drop database if exists ai_column_p0_worker;

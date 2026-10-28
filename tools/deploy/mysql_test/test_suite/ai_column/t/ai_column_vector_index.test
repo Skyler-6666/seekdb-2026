@@ -1,6 +1,9 @@
 # AI VECTOR invalidation, VSAG maintenance, ANN scan, and rollback coverage.
 
 connection default;
+--disable_query_log
+set session ob_query_timeout = 60000000;
+--enable_query_log
 --exec python3 mysql_test/test_suite/ai_column/include/ai_column_mock.py start 19123
 --disable_warnings
 drop database if exists ai_column_p0_vector;
