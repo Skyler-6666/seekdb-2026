@@ -168,6 +168,11 @@ public:
   common::ObIArray<ObRawExpr*> &get_select_exprs() { return select_exprs_; }
   virtual int est_cost() override;
   virtual int compute_plan_type() override;
+  // COPY must run even when a child's startup predicate produces no rows.
+  virtual int allocate_startup_expr_post() override
+  {
+    return into_type_ == T_COPY_FILE_SQL ? common::OB_SUCCESS : ObLogicalOperator::allocate_startup_expr_post();
+  }
   virtual int get_op_exprs(ObIArray<ObRawExpr*> &all_exprs) override;
   virtual int inner_replace_op_exprs(ObRawExprReplacer &replacer);
   static const int64_t DEFAULT_MAX_FILE_SIZE = 256*1024*1024;

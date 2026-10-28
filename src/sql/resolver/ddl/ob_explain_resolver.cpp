@@ -17,6 +17,8 @@
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/resolver/ddl/ob_explain_resolver.h"
 #include "sql/resolver/ob_resolver.h"
+#include "sql/resolver/dml/ob_select_resolver.h"
+#include "sql/parser/ob_parser.h"
 
 using namespace oceanbase;
 using namespace sql;
@@ -26,8 +28,72 @@ const static int64_t EXPLAIN_DISPLAY_OPTION = 1;
 const static int64_t EXPLAIN_INTO_TABLE = 2;
 const static int64_t EXPLAIN_STMT_ID = 3;
 const static int64_t EXPLAIN_CHILD_STMT = 4;
+namespace {
+bool contains_file_table(const ParseNode &node)
+{
+  if (node.type_ == T_FILE_TABLE_EXPRESSION) return true;
+  for (int64_t i = 0; i < node.num_child_; ++i) {
+    if (node.children_[i] != nullptr && contains_file_table(*node.children_[i])) return true;
+  }
+  return false;
+}
+}
+int ObExplainResolver::resolve_file_schema(const ParseNode &node)
+{
+  int ret = OB_SUCCESS;
+  ObSelectResolver source_resolver(params_);
+  if (OB_FAIL(source_resolver.resolve(node))) {
+  } else if (OB_ISNULL(source_resolver.get_select_stmt())) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    ObSqlString metadata;
+    const ObSelectStmt &source = *source_resolver.get_select_stmt();
+    for (int64_t i = 0; OB_SUCC(ret) && i < source.get_select_item_size(); ++i) {
+      const SelectItem &item = source.get_select_item(i);
+      const ObString &name = item.alias_name_.empty() ? item.expr_name_ : item.alias_name_;
+      const char *type = "VARCHAR";
+      switch (item.expr_->get_result_type().get_type()) {
+        case ObNullType: type = "NULL"; break;
+        case ObTinyIntType: type = "BOOLEAN"; break;
+        case ObSmallIntType: case ObMediumIntType: case ObInt32Type: case ObIntType: type = "BIGINT"; break;
+        case ObFloatType: case ObDoubleType: case ObNumberType: type = "DOUBLE"; break;
+        case ObDateType: type = "DATE"; break;
+        case ObDateTimeType: type = "DATETIME"; break;
+        default: break;
+      }
+      if (i != 0) OZ (metadata.append(" UNION ALL "));
+      OZ (metadata.append("SELECT CONVERT(X'"));
+      for (int64_t j = 0; OB_SUCC(ret) && j < name.length(); ++j) {
+        OZ (metadata.append_fmt("%02X", static_cast<unsigned char>(name.ptr()[j])));
+      }
+      OZ (metadata.append_fmt("' USING utf8mb4) AS column_name,'%s' AS column_type,'%s' AS `null`,"
+          "NULL AS `key`,NULL AS `default`,NULL AS extra", type,
+          item.expr_->get_result_type().has_result_flag(NOT_NULL_FLAG) ? "NO" : "YES"));
+    }
+    ParseResult parsed;
+    ObParser parser(*allocator_, session_info_->get_sql_mode());
+    if (OB_SUCC(ret) && OB_FAIL(parser.parse(metadata.string(), parsed))) {
+    } else if (OB_SUCC(ret)) {
+      ObResolver resolver(params_);
+      ObStmt *result = nullptr;
+      if (OB_ISNULL(parsed.result_tree_) || parsed.result_tree_->num_child_ != 1
+          || OB_ISNULL(parsed.result_tree_->children_[0])) ret = OB_ERR_UNEXPECTED;
+      else if (OB_FAIL(resolver.resolve(ObResolver::IS_NOT_PREPARED_STMT,
+                                       *parsed.result_tree_->children_[0], result))) {
+      } else stmt_ = result;
+    }
+  }
+  return ret;
+}
+
 int ObExplainResolver::resolve(const ParseNode &parse_tree)
 {
+  if (parse_tree.type_ == T_EXPLAIN && parse_tree.num_child_ == 5
+      && parse_tree.children_[0] != nullptr && parse_tree.children_[0]->type_ == T_SHOW_COLUMNS
+      && parse_tree.children_[4] != nullptr && parse_tree.children_[4]->type_ == T_SELECT
+      && contains_file_table(*parse_tree.children_[4])) {
+    return resolve_file_schema(*parse_tree.children_[4]);
+  }
   int ret = OB_SUCCESS;
   ObExplainStmt *explain_stmt = NULL;
   if (!(T_EXPLAIN == parse_tree.type_  && 5 == parse_tree.num_child_)) {
@@ -67,6 +133,7 @@ int ObExplainResolver::resolve(const ParseNode &parse_tree)
         ParseNode *format = parse_tree.children_[EXPLAIN_FORMAT];
         if (NULL != format) {
           switch (format->type_) {
+          case T_SHOW_COLUMNS: break;
           case T_OUTLINE:
           {
             explain_stmt->set_explain_format(EXPLAIN_OUTLINE);
