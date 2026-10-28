@@ -103,6 +103,18 @@ def _cache_directory() -> Path:
     return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "bazel"
 
 
+def _bazel_environment() -> Dict[str, str]:
+    """Ignore a stale NDK path instead of failing every non-Android build."""
+    environment = os.environ.copy()
+    ndk = environment.get("ANDROID_NDK_HOME")
+    if ndk:
+        host = "darwin-x86_64" if platform.system() == "Darwin" else "linux-x86_64"
+        compiler = Path(ndk) / "toolchains" / "llvm" / "prebuilt" / host / "bin" / "clang"
+        if not compiler.is_file():
+            environment.pop("ANDROID_NDK_HOME")
+    return environment
+
+
 def _quote(value: str) -> str:
     return '"' + value.replace('"', '\\"') + '"'
 
@@ -217,6 +229,7 @@ def main(arguments: List[str]) -> int:
         raise BuildError("--output_base must not name the workspace root")
     output_base.mkdir(parents=True, exist_ok=True)
     build_cache = _cache_directory()
+    bazel_environment = _bazel_environment()
 
     # Build policy lives in .bazelrc; paths and explicit local concurrency go
     # here. Bazel flags on the command line override these defaults.
@@ -241,6 +254,8 @@ def main(arguments: List[str]) -> int:
     else:
         # Bazel 9 rejects a repository contents cache inside the source tree.
         lines.append("common --repo_contents_cache=")
+    if "ANDROID_NDK_HOME" in os.environ and "ANDROID_NDK_HOME" not in bazel_environment:
+        lines.append("common --repo_env=ANDROID_NDK_HOME=")
     lines.extend(concurrency_defaults)
     if os.name == "nt":
         lines.append("build --repo_env=" + _quote(
@@ -253,7 +268,8 @@ def main(arguments: List[str]) -> int:
         return subprocess.run([
             str(bazel), "--output_base=" + str(output_base),
             "--bazelrc=" + name,
-        ] + startup_options + bazel_arguments, cwd=root).returncode
+        ] + startup_options + bazel_arguments, cwd=root,
+            env=bazel_environment).returncode
     finally:
         Path(name).unlink()
 
