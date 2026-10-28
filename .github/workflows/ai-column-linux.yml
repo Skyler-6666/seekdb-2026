@@ -1,0 +1,52 @@
+name: AI column Linux regression
+on:
+  push:
+    branches: [ai-column-enhancement-2026]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  typed-results:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y g++-12 rapidjson-dev
+      - name: Compile and validate persisted definitions and typed results
+        run: |
+          mkdir -p build-ai-check
+          g++-12 -std=c++20 -O2 -Wall -Wextra -Werror -Wno-error=class-memaccess \
+            -DAI_COLUMN_STANDALONE_TEST -Isrc src/share/ai_service/ai_column_definition.cpp \
+            unittest/sql/resolver/test_ai_column_resolver.cpp -o build-ai-check/test_ai_column
+          ./build-ai-check/test_ai_column
+  native-sql:
+    needs: typed-results
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Make room for the native build
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses5 python3 python3-pip
+          python3 -m pip install pymysql
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache: 'false'
+      - name: Configure native release and generate parser with SDK Bison
+        run: |
+          ./build.sh release --init -DOB_BUILD_PACKAGE=OFF -DOB_BUILD_RPM=OFF -DOB_BUILD_DEB=OFF -DOB_BUILD_TGZ=OFF || {
+            find build_release/src/sql src/sql -name '_gen_parser.error' -exec cat {} \;
+            exit 1
+          }
+      - name: Build native seekdb
+        run: cmake --build build_release --parallel 2 --target seekdb
+      - name: Run public SQL, transaction and crash recovery regressions
+        run: python3 -B unittest/sql/engine/basic/run_ai_column_native.py --base-dir /tmp/ai-column-native
+      - name: Show diagnostic errors
+        if: failure()
+        run: |
+          tail -100 /tmp/ai-column-native/console.log 2>/dev/null || true
+          find build_release/src/sql -name '_gen_parser.error' -exec cat {} \;

@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/resolver/ob_resolver.h"
+#include "sql/engine/basic/ai_column_sql.h"
 #include "lib/utility/ob_smart_call.h"
 #include "lib/stat/ob_diagnostic_info_guard.h"
 #include "sql/resolver/cmd/ob_alter_system_resolver.h"
@@ -146,8 +147,13 @@ int ObResolver::resolve(IsPrepared if_prepared, const ParseNode &parse_tree, ObS
 
 #define REGISTER_SELECT_STMT_RESOLVER(name)                                   \
   do {                                                                        \
-    ret = select_stmt_resolver_func<Ob##name##Resolver>(params_, parse_tree, stmt); \
+    ret = select_stmt_resolver_func<Ob##name##Resolver>(params_, *real_parse_tree, stmt); \
   } while (0)
+  struct RetryScope {
+    bool previous;
+    explicit RetryScope(bool retry):previous(ai_column::resolving_retry) { if(retry) ai_column::resolving_retry=true; }
+    ~RetryScope(){ai_column::resolving_retry=previous;}
+  } retry_scope(parse_tree.type_ == T_AI_COLUMN_RETRY);
   ACTIVE_SESSION_FLAG_SETTER_GUARD(in_resolve);
   int ret = OB_SUCCESS;
   const ParseNode *real_parse_tree = NULL;
@@ -161,6 +167,7 @@ int ObResolver::resolve(IsPrepared if_prepared, const ParseNode &parse_tree, ObS
     ret = OB_NOT_INIT;
   } else {
     real_parse_tree = &parse_tree;
+    ret = ai_column::rewrite(params_, parse_tree, real_parse_tree);
   }
 
   if (OB_SUCC(ret)) {

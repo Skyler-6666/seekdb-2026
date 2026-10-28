@@ -17,6 +17,7 @@
 
 #include "observer/ob_system_package_load_service.h"
 #include "share/rc/ob_server_runtime.h"
+#include "sql/engine/basic/ai_column_runtime.h"
 
 namespace oceanbase
 {
@@ -61,6 +62,7 @@ int ObSystemPackageLoadService::start()
       && OB_FAIL(timer_.init("SystemPkgLoad", common::ObMemAttr("SystemPkgLoad")))) {
   } else if (OB_FAIL(timer_.start())) {
   } else if (OB_FAIL(task_.start(timer_))) {
+  } else if (OB_FAIL(sql::ai_column::start_worker())) {
   }
   return ret;
 }
@@ -69,6 +71,7 @@ void ObSystemPackageLoadService::stop()
 {
   const int64_t start_time = ObTimeUtility::fast_current_time();
   FLOG_INFO("start to stop system package load service");
+  sql::ai_column::stop_worker();
   if (timer_.inited()) {
     task_.stop(timer_);
     timer_.stop();
@@ -82,6 +85,7 @@ int ObSystemPackageLoadService::wait()
   int ret = OB_SUCCESS;
   const int64_t start_time = ObTimeUtility::fast_current_time();
   FLOG_INFO("start to wait system package load service");
+  sql::ai_column::wait_worker();
   if (timer_.inited()) {
     timer_.wait();
   }

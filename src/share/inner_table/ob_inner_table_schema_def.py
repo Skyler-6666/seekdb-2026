@@ -342,7 +342,8 @@ all_column_def = dict(
       ('sub_data_type', 'int', 'false', '0'),
       ('skip_index_attr', 'int', 'false', '0'),
       ('lob_chunk_size', 'int', 'false', 'OB_DEFAULT_LOB_CHUNK_SIZE'),
-      ('local_session_vars', 'longtext', 'true')
+      ('local_session_vars', 'longtext', 'true'),
+      ('ai_column_info', 'longtext', 'true')
   ]
   )
 
@@ -2447,6 +2448,7 @@ all_ai_model_endpoint_def = dict(
 def_table_schema(**all_ai_model_endpoint_def)
 
 
+
 all_objauth_mysql_def = dict(
     owner = 'cjl476581',
     table_name     = '__all_objauth_mysql',
@@ -2466,6 +2468,24 @@ all_objauth_mysql_def = dict(
   )
 def_table_schema(**all_objauth_mysql_def)
 def_table_schema(**gen_history_table_def(1134, all_objauth_mysql_def))
+
+# Durable AI work rows are written by native DML triggers in the business transaction.
+def_table_schema(
+  owner='seekdb-ai-column', table_name='__all_ai_column_task', table_id='1135',
+  table_type='SYSTEM_TABLE', gm_columns=['gmt_create','gmt_modified'],
+  rowkey_columns=[('table_id','int'),('column_id','int'),('rowkey_hash','varchar:64')],
+  is_cluster_private=False, meta_record_in_sys=False,
+  normal_columns=[
+    ('request_id','varchar:64','false'), ('definition_version','varchar:128','false'),
+    ('rowkey_predicate','varchar:16384','false'), ('input_value','longtext','true'),
+    ('config_value','longtext','true'), ('input_is_null','int','false',0),
+    ('state','int','false',1), ('retry_count','int','false',0),
+    ('eligible_ts','timestamp','false'), ('owner_id','varchar:128','true'),
+    ('lease_until','timestamp','true'), ('result_value','longtext','true'),
+    ('result_is_null','int','false',0), ('error_code','int','false',0)
+  ])
+
+
 
 
 # Reserved position (placeholder before this line)
@@ -13897,6 +13917,33 @@ def_table_schema(
 #       * # 100001: idx_data_table_id
 #       * # 100001: __all_table
 ################################################################################
+
+# The definition view is derived from column schema rows, so metadata commits
+# atomically with CREATE/ALTER and disappears atomically with DROP.
+def_table_schema(
+  owner='seekdb-ai-column', table_name='__all_ai_column', table_id='24590',
+  table_type='SYSTEM_VIEW', gm_columns=[], rowkey_columns=[], normal_columns=[],
+  view_definition="""
+    SELECT c.table_id,c.column_id,c.column_name,c.schema_version,
+      JSON_UNQUOTE(JSON_EXTRACT(NULLIF(c.ai_column_info,''),'$.expression')) AS expression,
+      JSON_UNQUOTE(JSON_EXTRACT(NULLIF(c.ai_column_info,''),'$.normalized_expr')) AS normalized_expr,
+      JSON_UNQUOTE(JSON_EXTRACT(NULLIF(c.ai_column_info,''),'$.model')) AS model_name,
+      JSON_UNQUOTE(JSON_EXTRACT(NULLIF(c.ai_column_info,''),'$.version')) AS definition_version,
+      CAST(JSON_UNQUOTE(JSON_EXTRACT(NULLIF(c.ai_column_info,''),'$.max_retries')) AS SIGNED) AS max_retries,
+      CAST(JSON_UNQUOTE(JSON_EXTRACT(NULLIF(c.ai_column_info,''),'$.dimension')) AS SIGNED) AS dimension,
+      JSON_EXTRACT(NULLIF(c.ai_column_info,''),'$.dependencies') AS dependencies,
+      'async' AS sync_mode,s.column_id AS state_column_id,r.column_id AS request_column_id,
+      v.column_id AS result_spec_column_id,c.ai_column_info AS definition
+    FROM oceanbase.__all_column c
+    JOIN oceanbase.__all_column s ON s.table_id=c.table_id
+      AND s.column_name=JSON_UNQUOTE(JSON_EXTRACT(NULLIF(c.ai_column_info,''),'$.state_name'))
+    JOIN oceanbase.__all_column r ON r.table_id=c.table_id
+      AND r.column_name=JSON_UNQUOTE(JSON_EXTRACT(NULLIF(c.ai_column_info,''),'$.request_name'))
+    JOIN oceanbase.__all_column v ON v.table_id=c.table_id
+      AND v.column_name=JSON_UNQUOTE(JSON_EXTRACT(NULLIF(c.ai_column_info,''),'$.spec_name'))
+    WHERE c.ai_column_info IS NOT NULL AND c.ai_column_info<>''
+  """.replace('\n',' '))
+
 
 ################################################################################
 # Extended System View (25000, 30000]

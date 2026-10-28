@@ -526,6 +526,9 @@ private:
   bool need_switch_to_table_lock_worker_; // for table lock switch worker thread
   bool data_complement_gen_doc_id_;
 private:
+public:
+  common::ObSEArray<uint64_t, 8> ai_column_references_;
+private:
   bool insertup_can_do_gts_opt_;
   int64_t px_worker_share_plan_enabled_;
 };

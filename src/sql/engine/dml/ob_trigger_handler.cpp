@@ -707,7 +707,22 @@ int TriggerHandle::do_handle_after_row(
 {
   int ret = OB_SUCCESS;
   if (trig_ctdef.all_tm_points_.has_after_row()) {
-    if (OB_FAIL(do_handle_rowid_after_row(dml_op, trig_ctdef, trig_rtdef, tg_event))) {
+    // Heap-table keys are allocated after BEFORE ROW. Refresh their exposed
+    // trigger cells before AFTER ROW queues an AI-column task.
+    if (ObTriggerEvents::is_insert_event(tg_event) &&
+        OB_NOT_NULL(trig_rtdef.new_record_)) {
+      for (int64_t i = 0; OB_SUCC(ret) && i < trig_ctdef.new_row_exprs_.count(); ++i) {
+        ObExpr *expr = trig_ctdef.new_row_exprs_.at(i);
+        if (expr->type_ == T_TABLET_AUTOINC_NEXTVAL) {
+          ObDatum *datum = nullptr;
+          OZ (expr->eval(dml_op.get_eval_ctx(), datum));
+          OV (OB_NOT_NULL(datum));
+          OZ (datum->to_obj(trig_rtdef.new_record_->get_element()[i], expr->obj_meta_));
+        }
+      }
+    }
+    if (OB_FAIL(ret)) {
+    } else if (OB_FAIL(do_handle_rowid_after_row(dml_op, trig_ctdef, trig_rtdef, tg_event))) {
     } else {
       bool need_fire = false;
       for (int64_t i = 0; OB_SUCC(ret) && i < trig_ctdef.tg_args_.count(); i++) {

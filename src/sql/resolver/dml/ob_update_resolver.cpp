@@ -64,6 +64,12 @@ int ObUpdateResolver::resolve(const ParseNode &parse_tree)
     }
   }
 
+  if (OB_SUCC(ret) && ai_column::resolving_retry) {
+    ObObj visible; visible.set_varchar("true");
+    auto &hint=const_cast<ObGlobalHint&>(params_.query_ctx_->get_global_hint());
+    OZ(hint.opt_params_.add_opt_param_hint(ObOptParamHint::HIDDEN_COLUMN_VISIBLE,visible));
+    hint.plan_cache_policy_=OB_USE_PLAN_CACHE_NONE;
+  }
   // resolve with clause before resolve table items
   if (OB_SUCC(ret)) {
     if (OB_FAIL(resolve_with_clause(parse_tree.children_[WITH_MYSQL]))) {

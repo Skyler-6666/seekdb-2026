@@ -57,6 +57,7 @@
 %destructor {destroy_tree($$);}<node>
 %destructor {oceanbase::common::ob_free($$);}<str_value_>
 
+%token <non_reserved_keyword> AI_RETRY
 %token <node> NAME_OB
 %token <node> STRING_VALUE
 %token <node> NATIONAL_LITERAL
@@ -420,6 +421,7 @@ END_P SET_VAR DELIMITER
 %type <node> opt_float_precision opt_number_precision
 %type <node> opt_equal_mark opt_default_mark read_only_or_write not not2
 %type <node> int_or_decimal
+%type <node> ai_column_attribute ai_column_options ai_column_option_list ai_column_option
 %type <node> opt_column_attribute_list column_attribute column_attribute_list opt_column_default_value opt_column_default_value_list
 %type <node> show_stmt from_or_in columns_or_fields database_or_schema index_or_indexes_or_keys opt_from_or_in_database_clause opt_show_condition opt_desc_column_option opt_status opt_storage opt_show_engine check_table_options check_table_option
 %type <node> prepare_stmt stmt_name preparable_stmt
@@ -6119,6 +6121,27 @@ collation
 { $$ = NULL; }
 ;
 
+ai_column_attribute:
+  AI COLUMN '(' expr ')' ai_column_options
+  {
+    dup_expr_string($4, result, @4.first_column, @4.last_column);
+    malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN, 2, $4, $6);
+    $$->is_tree_not_param_ = true;
+  }
+;
+ai_column_options:
+  /* empty */ { $$ = NULL; }
+| WITH '(' ai_column_option_list ')' { merge_nodes($$, result, T_EXPR_LIST, $3); }
+;
+ai_column_option_list:
+  ai_column_option { $$ = $1; }
+| ai_column_option_list ',' ai_column_option { malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3); }
+;
+ai_column_option:
+  relation_name COMP_EQ literal { malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN_OPTION, 2, $1, $3); }
+;
+
+
 opt_column_attribute_list:
 column_attribute_list
 {
@@ -6139,7 +6162,8 @@ column_attribute_list column_attribute
 }
 
 column_attribute:
-not NULLX
+ai_column_attribute { $$ = $1; }
+| not NULLX
 {
   (void)($1) ;
   (void)($2) ; /* make bison mute */
@@ -12625,7 +12649,12 @@ CLASS_ORIGIN
  *
  *****************************************************************************/
 show_stmt:
-SHOW opt_extended_or_full TABLES opt_from_or_in_database_clause opt_show_condition
+SHOW AI COLUMNS FROM relation_factor
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_SHOW_AI_COLUMNS, 1, $5);
+  $$->is_tree_not_param_ = true;
+}
+| SHOW opt_extended_or_full TABLES opt_from_or_in_database_clause opt_show_condition
 {
   ParseNode *value = NULL;
   malloc_terminal_node(value, result->malloc_pool_, T_INT);
@@ -14657,8 +14686,14 @@ alter_with_opt_hint TABLE relation_factor alter_table_actions
 {
   ParseNode *table_actions = NULL;
   merge_nodes(table_actions, result, T_ALTER_TABLE_ACTION_LIST, $4);
-  malloc_non_terminal_node($$, result->malloc_pool_, T_ALTER_TABLE, 4, $3, table_actions, NULL, $1);
-  $$->value_ = 0;
+  if (table_actions != NULL && table_actions->num_child_ == 1 && table_actions->children_[0] != NULL && table_actions->children_[0]->type_ == T_AI_COLUMN_RETRY) {
+    ParseNode *retry = table_actions->children_[0];
+    malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN_RETRY, 3, $3, retry->children_[0], retry->children_[1]);
+    $$->is_tree_not_param_ = true;
+  } else {
+    malloc_non_terminal_node($$, result->malloc_pool_, T_ALTER_TABLE, 4, $3, table_actions, NULL, $1);
+    $$->value_ = 0;
+  }
 }
 ;
 
@@ -14692,7 +14727,11 @@ alter_table_action
 ;
 
 alter_table_action:
-opt_set table_option_list_space_seperated
+AI_RETRY AI COLUMN relation_name opt_where
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_AI_COLUMN_RETRY, 2, $4, $5);
+}
+| opt_set table_option_list_space_seperated
 {
   (void)$1;
   merge_nodes($$, result, T_TABLE_OPTION_LIST, $2);
@@ -17491,7 +17530,8 @@ unreserved_keyword_normal { $$=$1;}
 ;
 
 unreserved_keyword_normal:
-ACCOUNT
+AI_RETRY
+| ACCOUNT
 |       ACTION
 |       ACTIVE
 |       ADDDATE

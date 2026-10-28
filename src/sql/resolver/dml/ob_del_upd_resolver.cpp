@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "ob_del_upd_resolver.h"
+#include "sql/engine/basic/ai_column_sql.h"
 #include "sql/resolver/dml/ob_default_value_utils.h"
 #include "sql/resolver/dml/ob_update_stmt.h"
 #include "sql/resolver/dml/ob_insert_stmt.h"
@@ -122,6 +123,9 @@ int ObDelUpdResolver::resolve_assignments(const ParseNode &parse_node,
       if (OB_SUCC(ret) && T_INSERT_SCOPE == scope) {
         if (OB_FAIL(mock_values_column_ref(ref_expr))) {
         }
+      }
+      if (OB_SUCC(ret)) {
+        OZ(ai_column::check_write(*session_info_, ref_expr->get_column_flags()));
       }
       // process expression
       if (OB_SUCC(ret)) {
@@ -439,6 +443,10 @@ int ObDelUpdResolver::check_update_vector_col_with_vector_index(const ObTableSch
 {
   int ret = OB_SUCCESS;
   update_with_vector_index = false;
+  bool before_trigger = false;
+  if (OB_FAIL(table_schema->has_before_update_row_trigger(*schema_guard, before_trigger))) {
+  } else if (before_trigger && OB_FAIL(ObVectorIndexUtil::check_table_has_vector_index(*table_schema, *schema_guard, update_with_vector_index))) {
+  }
   ObIndexType index_type = INDEX_TYPE_MAX;
   ObArray<uint64_t> part_key_col_ids;
   ObArray<uint64_t> row_key_col_ids;
@@ -2158,6 +2166,7 @@ int ObDelUpdResolver::resolve_insert_columns(const ParseNode *node,
         ret = OB_ERR_UNEXPECTED;
       } else if (FALSE_IT(column_expr = static_cast<ObColumnRefRawExpr*>(ref_expr))) {
         //do nothing
+      } else if (OB_FAIL(ai_column::check_write(*session_info_, column_expr->get_column_flags()))) {
       } else if (OB_FAIL(check_insert_column_duplicate(column_expr->get_column_id(), is_duplicate))) {
       } else if (is_duplicate) {
         ret = OB_ERR_FIELD_SPECIFIED_TWICE;
@@ -2194,7 +2203,8 @@ int ObDelUpdResolver::resolve_insert_columns(const ParseNode *node,
       for (int64_t i = 0; OB_SUCC(ret) && i < N; i++) {
         uint64_t column_id = column_items.at(i).column_id_;
         bool is_duplicate = false;
-        if (OB_FAIL(check_insert_column_duplicate(column_id, is_duplicate))) {
+        if (OB_FAIL(ai_column::check_write(*session_info_, column_items.at(i).expr_->get_column_flags()))) {
+        } else if (OB_FAIL(check_insert_column_duplicate(column_id, is_duplicate))) {
         } else if (is_duplicate) {
           ret = OB_ERR_FIELD_SPECIFIED_TWICE;
           ObCStringHelper helper;

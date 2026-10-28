@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX SQL_RESV
 #include "config_bridge.h"
 #include "ob_dml_resolver.h"
+#include "sql/engine/basic/ai_column_sql.h"
 #include "sql/resolver/dml/ob_view_table_resolver.h"
 #include "sql/optimizer/ob_optimizer_util.h"
 #include "sql/resolver/dml/ob_default_value_utils.h"
@@ -1958,6 +1959,19 @@ int ObDMLResolver::resolve_basic_column_item(const TableItem &table_item,
       } else {
         col_item = stmt->get_column_item(stmt->get_column_size() - 1);
       }
+    }
+  }
+  if (OB_SUCC(ret) && !include_hidden && current_scope_ != T_INSERT_SCOPE &&
+      !ai_column::resolving_retry && (!session_info_->is_inner() || session_info_->is_user_session()) && col_item != nullptr && col_item->expr_ != nullptr &&
+      (col_item->expr_->get_column_flags() & AI_COLUMN_FLAG) != 0) {
+    bool present = false;
+    auto &references = params_.query_ctx_->ai_column_references_;
+    for (int64_t i = 0; i + 1 < references.count(); i += 2) {
+      present |= references.at(i) == table_item.ref_id_ && references.at(i + 1) == col_item->column_id_;
+    }
+    if (!present) {
+      OZ(references.push_back(table_item.ref_id_));
+      OZ(references.push_back(col_item->column_id_));
     }
   }
   return ret;

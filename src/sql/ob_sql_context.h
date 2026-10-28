@@ -550,6 +550,7 @@ public:
 struct ObQueryCtx
 {
 public:
+  common::ObSEArray<uint64_t, 8> ai_column_references_;
   ObQueryCtx()
     : question_marks_count_(0),
       calculable_items_(),
@@ -594,6 +595,7 @@ public:
 
   void reset()
   {
+    ai_column_references_.reset();
     question_marks_count_ = 0;
     calculable_items_.reset();
     fetch_cur_time_ = true;

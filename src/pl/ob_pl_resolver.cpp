@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX PL
 
+#include "share/schema/ai_column_trigger_columns.h"
 #include "config_bridge.h"
 #include "ob_pl_resolver.h"
 #include "share/rc/ob_server_runtime.h"
@@ -1233,7 +1234,7 @@ int ObPLResolver::build_record_type_by_table_schema(ObSchemaGetterGuard &schema_
     ObTableSchema::const_column_iterator cs_iter_end = table_schema->column_end();
     for (; OB_SUCC(ret) && cs_iter != cs_iter_end; cs_iter++) {
       const ObColumnSchemaV2 &column_schema = **cs_iter;
-      if (!column_schema.is_hidden()) {
+      if (share::schema::ai_column_trigger_visible(*table_schema, column_schema)) {
         ObPLDataType pl_type;
         ObDataType data_type;
         data_type.set_meta_type(column_schema.get_meta_type());

@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/engine/basic/ai_column_ddl.h"
 #include "sql/resolver/ddl/ob_create_table_resolver.h"
 #include "sql/resolver/dml/ob_select_resolver.h"
 #include "sql/resolver/ddl/ob_fts_index_builder_util.h"
@@ -398,6 +399,7 @@ int ObCreateTableResolver::resolve(const ParseNode &parse_tree)
     }
 
   }
+  if (OB_SUCC(ret)) ret = ai_column::finalize_schema(static_cast<ObCreateTableStmt *>(stmt_)->get_create_table_arg().schema_);
   return ret;
 }
 // Generate array of primary key column names
