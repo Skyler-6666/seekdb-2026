@@ -60,7 +60,7 @@
 %destructor {destroy_tree($$);}<node>
 %destructor {oceanbase::common::ob_free($$);}<str_value_>
 
-%token READ_CSV READ_JSON READ_NDJSON READ_PARQUET FILE_GLOB
+%token <non_reserved_keyword> READ_CSV READ_JSON READ_NDJSON READ_PARQUET FILE_GLOB
 %token <node> NAME_OB
 %token <node> STRING_VALUE
 %token <node> NATIONAL_LITERAL
@@ -17509,7 +17509,7 @@ copy_file_option:
 ;
 copy_file_option_name:
   relation_name { $$ = $1; }
-| NULLX { make_name_node($$, result->malloc_pool_, "nullstr"); }
+| NULLX { (void)$1; make_name_node($$, result->malloc_pool_, "nullstr"); }
 ;
 
 
