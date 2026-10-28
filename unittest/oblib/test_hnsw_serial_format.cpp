@@ -101,7 +101,10 @@ struct SerialImage
     write_f64(mult_);
     write_u64(ef_construction_);
 
-    ASSERT_EQ(OB_HNSW_SERIAL_HEADER_SIZE, pos);
+    // ASSERT_* expands to a return statement and is therefore invalid in a
+    // constructor. EXPECT_* still reports a malformed test fixture without
+    // skipping the remaining label setup.
+    EXPECT_EQ(OB_HNSW_SERIAL_HEADER_SIZE, pos);
 
     /* The labels of a freshly built index are the insertion order. */
     for (int64_t i = 0; i < static_cast<int64_t>(cur_element_count_); ++i) {
