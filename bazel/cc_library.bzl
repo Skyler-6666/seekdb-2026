@@ -77,6 +77,8 @@ def _dedupe(values):
     return {value: None for value in values}.keys()
 
 def _package_relative_source(owner_package, source):
+    if type(source) != "string":
+        source = source.path
     prefix = owner_package + "/"
     if not source.startswith(prefix):
         fail(
