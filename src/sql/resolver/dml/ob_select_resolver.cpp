@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/engine/basic/file_sql_engine.h"
 #include "sql/resolver/dml/ob_select_resolver.h"
 #include "sql/resolver/dml/ob_del_upd_resolver.h"
 #include "share/ob_time_utility2.h"
@@ -3081,6 +3082,39 @@ int ObSelectResolver::resolve_into_outfile_without_format(const ParseNode *node,
   return ret;
 }
 
+int ObSelectResolver::resolve_file_copy(const ParseNode &node, ObSelectIntoItem &item)
+{
+  int ret = OB_SUCCESS;
+  ObString root;
+  if (node.num_child_ != 2) ret = OB_ERR_UNEXPECTED;
+  else if (OB_FAIL(file_sql::access_root(*session_info_, *allocator_, root))) {
+  } else {
+    try {
+      ParseNode format = {};
+      format.type_ = T_VARCHAR; format.str_value_ = "csv"; format.str_len_ = 3;
+      ParseNode *parts[] = {&format, node.children_[0], node.children_[1], nullptr};
+      ParseNode source = {};
+      source.type_ = T_FILE_TABLE_EXPRESSION; source.num_child_ = 4; source.children_ = parts;
+      file_sql::Plan plan = file_sql::source_from_node(source);
+      for (int64_t i = 0; i < get_select_stmt()->get_select_item_size(); ++i) {
+        const SelectItem &column = get_select_stmt()->get_select_item(i);
+        ObString name = column.alias_name_.empty() ? column.expr_name_ : column.alias_name_;
+        plan.columns.push_back({std::string(name.ptr(), name.length()), "", file_sql::Type::Varchar, true});
+      }
+      std::string encoded = file_sql::encode(plan);
+      ObString definition;
+      OZ (ob_write_string(*allocator_, ObString(encoded.size(), encoded.data()), definition));
+      if (OB_SUCC(ret)) {
+        item.outfile_name_.set_varchar(definition);
+        item.outfile_name_.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+        item.into_type_ = T_COPY_FILE_SQL;
+      }
+    } catch (const std::bad_alloc &) { ret = OB_ALLOCATE_MEMORY_FAILED; }
+    catch (const std::exception &error) { ret = OB_INVALID_ARGUMENT; LOG_USER_ERROR(OB_INVALID_ARGUMENT, error.what()); }
+  }
+  return ret;
+}
+
 int ObSelectResolver::resolve_into_clause(const ParseNode *node)
 {
   int ret = OB_SUCCESS;
@@ -3104,7 +3138,9 @@ int ObSelectResolver::resolve_into_clause(const ParseNode *node)
     } else {
       new(into_item) ObSelectIntoItem();
       into_item->into_type_ = node->type_;
-      if (T_INTO_OUTFILE == node->type_) { // into outfile
+      if (T_COPY_FILE_SQL == node->type_) {
+        OZ (resolve_file_copy(*node, *into_item));
+      } else if (T_INTO_OUTFILE == node->type_) { // into outfile
         if (is_in_set_query()) {
           ret = OB_INAPPROPRIATE_INTO;
         } else if (node->num_child_ == 3 && NULL != node->children_[1]

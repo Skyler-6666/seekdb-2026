@@ -15,6 +15,8 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "sql/engine/basic/file_sql_engine.h"
+#include "sql/engine/basic/file_scan_utils.h"
 #include "config_bridge.h"
 #include "ob_dml_resolver.h"
 #include "sql/engine/basic/ai_column_sql.h"
@@ -2719,6 +2721,10 @@ int ObDMLResolver::resolve_table(const ParseNode &parse_tree,
         OZ (resolve_json_table_item(*table_node, table_item));
         break;
       }
+      case T_FILE_TABLE_EXPRESSION: {
+        OZ (resolve_file_table_item(*table_node, table_item));
+        break;
+      }
       case T_UNNEST_EXPRESSION: {
         if (OB_ISNULL(session_info_)) {
           ret = OB_INVALID_ARGUMENT;
@@ -3506,6 +3512,82 @@ int ObDMLResolver::resolve_str_const(const ParseNode &parse_tree, ObString& path
   } else {
     MEMCPY(buf, val.get_string().ptr(), val.get_string().length());
     path_str.assign_ptr(buf, val.get_string().length());
+  }
+  return ret;
+}
+
+int ObDMLResolver::resolve_file_table_item(const ParseNode &node, TableItem *&item)
+{
+  int ret = OB_SUCCESS;
+  ObString secure_root;
+  if (OB_ISNULL(session_info_) || OB_ISNULL(allocator_) || OB_ISNULL(get_stmt())) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(file_sql::access_root(*session_info_, *allocator_, secure_root))) {
+  } else {
+    try {
+      file_sql::Plan source;
+      if (node.children_[2] != nullptr) {
+        for (int64_t i = 0; OB_SUCC(ret) && i < node.children_[2]->num_child_; ++i) {
+          const ParseNode &option = *node.children_[2]->children_[i];
+          ObString key(option.children_[0]->str_len_, option.children_[0]->str_value_);
+          const ParseNode &value = *option.children_[1];
+          if (key.case_compare("sample_size") == 0 && !(value.type_ == T_INT && value.value_ == -1)
+              && !(value.type_ == T_OP_NEG && value.num_child_ == 1 && value.children_[0]->type_ == T_INT && value.children_[0]->value_ == 1)) {
+            ret = OB_NOT_SUPPORTED;
+            LOG_USER_ERROR(OB_NOT_SUPPORTED, "file SQL: sample_size only supports -1");
+          }
+        }
+      }
+      if (OB_SUCC(ret)) {
+        // Files have no catalog schema version: rebind each statement, including DESCRIBE.
+        ObQueryHint &query_hint = get_stmt()->get_query_ctx()->get_query_hint_for_update();
+        const_cast<ObGlobalHint &>(query_hint.get_global_hint()).merge_plan_cache_hint(OB_USE_PLAN_CACHE_NONE);
+        source = file_sql::source_from_node(node);
+        source = file_sql::infer(source, std::string(secure_root.ptr(), secure_root.length()), [&] {
+          if (session_info_->get_cur_exec_ctx() != nullptr
+              && OB_FAIL(session_info_->get_cur_exec_ctx()->check_status())) throw file_sql::FileSqlError("file SQL: query canceled during schema inference");
+        });
+        ObString name("file_scan");
+        if (node.children_[3] != nullptr) name.assign_ptr(node.children_[3]->str_value_, node.children_[3]->str_len_);
+        OZ (create_unnest_table_item(item, name));
+        if (OB_SUCC(ret)) {
+          item->json_table_def_->table_type_ = OB_FILE_TABLE_TYPE;
+          std::string encoded = file_sql::encode(source);
+          ObString definition;
+          ObConstRawExpr *input = nullptr;
+          OZ (ob_write_string(*allocator_, ObString(encoded.size(), encoded.data()), definition));
+          OZ (ObRawExprUtils::build_const_string_expr(*params_.expr_factory_, ObVarcharType, definition, CS_TYPE_UTF8MB4_BIN, input));
+          OZ (item->json_table_def_->doc_exprs_.push_back(input));
+          for (size_t i = 0; OB_SUCC(ret) && i < source.columns.size(); ++i) {
+            const auto &column = source.columns[i];
+            ObJtColBaseInfo *info = OB_NEWx(ObJtColBaseInfo, allocator_);
+            ColumnItem *col_item = nullptr;
+            if (OB_ISNULL(info)) ret = OB_ALLOCATE_MEMORY_FAILED;
+            else {
+              info->col_type_ = i == 0 ? COL_TYPE_FILE : COL_TYPE_VALUE;
+              info->parent_id_ = 0;
+              info->id_ = i + 1;
+              info->output_column_idx_ = OB_APP_MIN_COLUMN_ID + i;
+              info->data_type_ = file_sql::engine_type(column);
+              OZ (ob_write_string(*allocator_, ObString(column.name.size(), column.name.data()), info->col_name_));
+              OZ (generate_json_table_output_column_item(item, info->data_type_, info->col_name_, OB_APP_MIN_COLUMN_ID + i, col_item));
+              if (OB_SUCC(ret)) {
+                col_item->col_idx_ = i + 1;
+                if (!column.nullable) col_item->expr_->set_result_flag(NOT_NULL_FLAG);
+              }
+              OZ (item->json_table_def_->all_cols_.push_back(info));
+            }
+          }
+        }
+      }
+    } catch (const file_sql::FileSqlError &error) {
+      if (OB_SUCC(ret)) { ret = OB_INVALID_ARGUMENT; LOG_USER_ERROR(OB_INVALID_ARGUMENT, error.what()); }
+    } catch (const std::bad_alloc &) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } catch (const std::exception &error) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT, error.what());
+    }
   }
   return ret;
 }

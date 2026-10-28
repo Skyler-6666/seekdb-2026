@@ -195,6 +195,7 @@ public:
   virtual void destroy() override;
 
 private:
+  int run_file_copy(bool batch);
   int init_env_common();
   int init_csv_env();
   void set_csv_format_options();

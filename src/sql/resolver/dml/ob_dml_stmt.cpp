@@ -1556,7 +1556,7 @@ int ObDMLStmt::formalize_stmt_expr_reference(ObRawExprFactory *expr_factory,
           OB_ISNULL(table_item = get_table_item_by_id(column_item.table_id_))) {
         ret = OB_ERR_UNEXPECTED;
       } else if (table_item->is_function_table() ||
-                 table_item->is_json_table() ||
+                 (table_item->is_json_table() && table_item->json_table_def_->table_type_ != OB_FILE_TABLE_TYPE) ||
                  table_item->for_update_ ||
                  table_item->is_values_table()) {
         if (OB_FAIL(set_sharable_expr_reference(*column_item.expr_, ExplicitedRefType::REF_BY_NORMAL))) {

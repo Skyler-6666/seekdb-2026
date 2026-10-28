@@ -2,7 +2,10 @@
 
 This implementation extends the native MySQL parser, resolver, schema, DML,
 transaction manager and background worker. It builds on AI function commit
-`18207bd9ac16d63d03b0e71782974e2983f665ab`; it does not include the file-SQL branch.
+`18207bd9ac16d63d03b0e71782974e2983f665ab`. This integration branch also includes
+the file-SQL repair at `76b6be1a8006161287d0e8d4b9325e837c4ff683`.
+AI-column strict read retains system-variable ID 10754; file SQL uses ID 10755.
+Their parser node IDs are distinct as well.
 
 After registering a completion model and endpoint with DBMS_AI_SERVICE:
 
@@ -90,3 +93,19 @@ Parser and schema GTest cases are in `unittest/sql/parser` and
 `unittest/share/schema`. `.github/workflows/ai-column-linux.yml` supplies the
 Linux native build and SQL regression entry point. Local Windows native build,
 SQL and recovery execution do not replace Linux compilation or judge acceptance.
+
+## Combined submission regression
+
+To check both tasks in the same executable and server instance, use a fresh
+file-data directory under secure_file_priv:
+
+```sh
+python3 unittest/sql/engine/basic/run_ai_column_native.py \
+  --binary build_release/src/observer/seekdb \
+  --base-dir /tmp/seekdb-contest-regression \
+  --file-data-dir /tmp/seekdb-contest-fixtures/public
+```
+
+This checks both system variables default to OFF before running the supplied
+file-SQL cases, file-SQL edge cases, five AI-column cases and AI-column recovery
+checks. It does not select a different executable between suites.

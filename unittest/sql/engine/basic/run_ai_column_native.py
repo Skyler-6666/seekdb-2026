@@ -13,9 +13,12 @@ options = argparse.ArgumentParser()
 options.add_argument('--binary', type=Path, default=ROOT/'build_release/src/observer'/('seekdb.exe' if os.name == 'nt' else 'seekdb'))
 options.add_argument('--base-dir', type=Path)
 options.add_argument('--port', type=int, default=2885)
+options.add_argument('--file-data-dir', type=Path, help='also run file SQL on this same server; directory must not exist')
+options.add_argument('--git', default='git')
 args = options.parse_args()
 base = args.base_dir or Path(tempfile.mkdtemp(prefix='seekdb-ai-column-native-'))
 base.mkdir(parents=True, exist_ok=True)
+if args.file_data_dir:args.file_data_dir.resolve().parent.mkdir(parents=True,exist_ok=True)
 os.environ['SEEKDB_TEST_PORT'] = str(args.port)
 os.environ['SEEKDB_AI_COLUMN_TEST_STATE'] = str(base/'mock')
 regression = Path(__file__).with_name('run_ai_column_regression.py')
@@ -28,7 +31,8 @@ def start():
  with (base/'console.log').open('ab') as log:
   process = subprocess.Popen([str(args.binary.resolve()),'--nodaemon','--base-dir',str(base.resolve()),'--port',str(args.port),
    '--parameter','memory_budget=2G','--parameter','cpu_count=2','--parameter','datafile_size=128M',
-   '--parameter','datafile_maxsize=1G','--parameter','log_disk_size=2G','--log-level','INFO'],
+   '--parameter','datafile_maxsize=1G','--parameter','log_disk_size=2G','--log-level','INFO'] +
+   (['--variable','secure_file_priv='+str(args.file_data_dir.resolve().parent)] if args.file_data_dir else []),
    stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
  for attempt in range(900):
   if process.poll() is not None:raise RuntimeError('seekdb exited; inspect '+str(base/'console.log'))
@@ -65,6 +69,13 @@ def wait_empty(table,seconds=30):
   time.sleep(.1)
  raise AssertionError('tasks did not drain for '+table)
 try:
+ if args.file_data_dir:
+  connection=connect()
+  assert query('SELECT @@session.enable_file_sql,@@session.ai_column_strict_read')==((0,0),)
+  print('PASS same native server registers enable_file_sql and ai_column_strict_read, both default OFF',flush=True)
+  connection.close();connection=None
+  subprocess.run([sys.executable,str(Path(__file__).with_name('run_file_sql_regression.py')),
+   '--port',str(args.port),'--prepare-data','--data-dir',str(args.file_data_dir.resolve()),'--git',args.git],check=True)
  subprocess.run([sys.executable,str(regression)],check=True)
  connection=connect();runner=helpers['Runner'](connection);runner.command('python ai_column_mock.py start 19124')
  query('DROP DATABASE IF EXISTS ai_column_edges');query('CREATE DATABASE ai_column_edges');query('USE ai_column_edges')

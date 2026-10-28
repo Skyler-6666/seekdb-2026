@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL
 #include "ob_dml_stmt_printer.h"
+#include "sql/engine/basic/file_scan_utils.h"
 #include "sql/printer/ob_select_stmt_printer.h"
 #include "sql/ob_sql_context.h"
 #include "sql/resolver/dml/ob_del_upd_stmt.h"
@@ -317,6 +318,25 @@ int ObDMLStmtPrinter::print_table(const TableItem *table_item,
           OZ (print_json_table(table_item));
           DATA_PRINTF(")");
           DATA_PRINTF(" %.*s", LEN_AND_PTR(table_item->alias_name_));
+          break;
+        }
+        case MulModeTableType::OB_FILE_TABLE_TYPE : {
+          try {
+            ObRawExpr *expression = table_item->json_table_def_->doc_exprs_.at(0);
+            if (OB_ISNULL(expression) || !expression->is_const_expr()) ret = OB_ERR_UNEXPECTED;
+            else {
+              ObString encoded = static_cast<ObConstRawExpr *>(expression)->get_value().get_string();
+              file_sql::Plan plan = file_sql::decode(std::string(encoded.ptr(), encoded.length()));
+              DATA_PRINTF("%s('", plan.format == "csv" ? "read_csv" : plan.format == "json" ? "read_json" : plan.format == "parquet" ? "read_parquet" : "glob");
+              for (char c : plan.path) {
+                if (c == '\'' || c == '\\') DATA_PRINTF("%c", c);
+                DATA_PRINTF("%c", c);
+              }
+              DATA_PRINTF("') ");
+              PRINT_IDENT_WITH_QUOT(table_item->alias_name_);
+            }
+          } catch (const std::bad_alloc &) { ret = OB_ALLOCATE_MEMORY_FAILED; }
+          catch (const std::exception &) { ret = OB_INVALID_ARGUMENT; }
           break;
         }
         case MulModeTableType::OB_UNNEST_TABLE_TYPE : {

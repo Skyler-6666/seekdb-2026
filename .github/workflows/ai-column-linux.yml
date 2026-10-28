@@ -1,7 +1,7 @@
 name: AI column Linux regression
 on:
   push:
-    branches: [ai-column-enhancement-2026]
+    branches: [ai-column-enhancement-2026, ai-column-file-sql-integration-2026]
   workflow_dispatch:
 permissions:
   contents: read
@@ -44,7 +44,7 @@ jobs:
       - name: Build native seekdb
         run: cmake --build build_release --parallel 2 --target seekdb
       - name: Run public SQL, transaction and crash recovery regressions
-        run: python3 -B unittest/sql/engine/basic/run_ai_column_native.py --base-dir /tmp/ai-column-native
+        run: python3 -B unittest/sql/engine/basic/run_ai_column_native.py --base-dir /tmp/ai-column-native --file-data-dir /tmp/contest-fixtures/public
       - name: Show diagnostic errors
         if: failure()
         run: |

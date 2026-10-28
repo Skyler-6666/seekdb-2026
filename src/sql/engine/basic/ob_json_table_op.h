@@ -18,6 +18,7 @@
 #define OCEANBASE_BASIC_OB_JSON_TABLE_OP_H_
 
 #include "sql/engine/ob_operator.h"
+#include "file_scan_utils.h"
 #include "lib/charset/ob_charset.h"
 #include "common/json_type/ob_json_tree.h"
 #include "common/json_type/ob_json_base.h"
@@ -221,6 +222,8 @@ public:
 private:
   int init();
   int reset_variable();  // reset var in rescan 
+  int open_file_scan();
+  int next_file_row();
   int init_data_obj(); // allocate data_ array
   int generate_column_trees(JtColTreeNode*& root);
   int find_column(int32_t id, JtColTreeNode* root, JtColTreeNode*& col);
@@ -243,6 +246,9 @@ public:
   void reset_columns();
 
 private:
+  std::unique_ptr<file_sql::Reader> file_reader_;
+  file_sql::Plan file_plan_;
+  file_sql::Row file_row_;
   ObJsonNull j_null_;
   ObJsonArray j_arr_;
   ObJsonObject j_obj_;
