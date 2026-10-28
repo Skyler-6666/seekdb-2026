@@ -272,16 +272,23 @@ def main(arguments: List[str]) -> int:
         verify_in_ci = (
             os.environ.get("GITHUB_ACTIONS") == "true"
             and command == "build"
-            and "//src/observer:seekdb" in bazel_arguments
+            and ("//src/observer:seekdb" in bazel_arguments
+                 or "//src/sql:sql_runtime" in bazel_arguments)
         )
         if verify_in_ci:
+            if "//src/sql:sql_runtime" in bazel_arguments:
+                result = subprocess.run(
+                    bazel_prefix + bazel_arguments,
+                    cwd=root, env=bazel_environment)
+                if result.returncode:
+                    return result.returncode
             checks = [
-                ["test", "--test_output=errors",
-                 "//unittest/oblib:test_hnsw_serial_format"],
                 ["test", "--test_output=errors", "//unittest/sql:sql_tests"],
                 ["test", "--test_output=errors", "//unittest/share:share_tests"],
                 ["test", "--test_output=errors",
                  "//unittest/observer:observer_tests"],
+                ["test", "--test_output=errors",
+                 "//unittest/oblib:test_hnsw_serial_format"],
                 ["build", "//src/observer:observer_runtime"],
             ]
             for check in checks:
