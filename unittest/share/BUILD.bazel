@@ -7,5 +7,6 @@ seekdb_module_cc_test(
     srcs = glob(["**/*.cpp"]),
     test_hdrs = glob(["**/*.h"], allow_empty = True),
     module_interface = "//src/share:share_unit_test_interface",
+    unity_size = 1,
     shard_count = 1,
 )
