@@ -72,11 +72,11 @@ void regressions()
   check(json_reader.next(row) && row[1] == Cell("1") && !row[3]);
   check(json_reader.next(row) && !row[2] && row[3] == Cell("世界"));
   Plan bad = json;
-  for (const std::string &data : {"{\"a\":{}}\n", "{\"a\":[]}\n", "{\"a\":1,\"a\":2}\n", "[1,2]\n", "{\"a\":\n"}) {
+  for (const char *data : {"{\"a\":{}}\n", "{\"a\":[]}\n", "{\"a\":1,\"a\":2}\n", "[1,2]\n", "{\"a\":\n"}) {
     bad.path = write("bad.jsonl", data); rejects([&] { infer(bad, allowed); });
   }
   bad = csv;
-  for (const std::string &data : {"a,b\n1\n", "a,b\n\"unterminated\n", "a\n\xff\n"}) {
+  for (const char *data : {"a,b\n1\n", "a,b\n\"unterminated\n", "a\n\xff\n"}) {
     bad.path = write("bad.csv", data); rejects([&] { infer(bad, allowed); });
   }
   Plan changed;
