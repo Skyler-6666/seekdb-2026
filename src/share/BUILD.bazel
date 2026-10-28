@@ -1675,15 +1675,6 @@ cc_library(
     visibility = ["//visibility:private"],
 )
 
-cc_library(
-    name = "share_unit_test_interface",
-    deps = [
-        ":_share_implementation_headers",
-    ] + _SHARE_RUNTIME_DEPS,
-    tags = ["manual"],
-    visibility = ["//unittest:__subpackages__"],
-)
-
 _SHARE_UNIT_TEST_DEPS = [
     ":autoincrement_runtime",
     ":max_id_allocation",
