@@ -1,9 +1,7 @@
-# Verify the AI-function-enhancement changes compile and the sql unit tests pass.
-# Module targets mirror what the grader builds:
-#   //src/share:share_runtime (ai_service/ob_ai_service_struct.cpp)
-#   //src/sql:sql_runtime    (sql/engine/expr/ob_expr_ai/*.cpp)
-#   //unittest/sql:sql_tests (ob_expr_ai_prompt_test / test_ob_openai_utils)
-name: AI enhancement build check
+# Verify the file-as-database (file_sql) implementation: compile the sql
+# modules with Bazel, produce the seekdb binary with the CMake toolchain,
+# and run the file_sql mysqltest cases against it.
+name: file_sql build and test
 
 on:
   workflow_dispatch:
@@ -11,7 +9,20 @@ on:
     branches:
       - competition/**
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  SEEKDB_CCACHE_MAX_SIZE: 9G
+
 jobs:
+  # Fast compile sanity of the sql side with the Bazel module targets.
   modules:
     timeout-minutes: 240
     runs-on: ubuntu-22.04
@@ -44,16 +55,177 @@ jobs:
         run: bash build.sh release --init
 
       - name: Build share_runtime
-        env:
-          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
         run: bazel build //src/share:share_runtime
 
       - name: Build sql_runtime
-        env:
-          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
         run: bazel build //src/sql:sql_runtime
 
-      - name: Build and run sql unit tests
+  # Produce the seekdb binary with the CMake toolchain (ccache is persisted
+  # so the test job below can warm up quickly).
+  build:
+    timeout-minutes: 360
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 30720
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses-dev python3 unzip ccache
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-seekdb-${{ github.ref_name }}-${{ github.run_number }}
+          restore-keys: |
+            ccache-seekdb-${{ github.ref_name }}-
+            ccache-seekdb-
+
+      - name: Compile seekdb
         env:
-          XDG_CACHE_HOME: ${{ github.workspace }}/.cache
-        run: bazel test //unittest/sql:sql_tests --test_output=errors
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          SEEKDB_TASK_DIR: ${{ github.workspace }}/seekdb_build
+          MAKE_ARGS: -j2
+        run: .github/script/seekdb/compile.sh
+
+      - name: Verify artifacts
+        run: |
+          test -x build_release/src/observer/seekdb
+          test -x deps/3rd/u01/obclient/bin/obclient
+          test -x deps/3rd/u01/obclient/bin/mysqltest
+          build_release/src/observer/seekdb --help >/dev/null 2>&1 || true
+          echo "seekdb binary: $(stat -c%s build_release/src/observer/seekdb) bytes"
+
+  # Run only the file_sql mysqltest cases against a local instance. The
+  # fixture include copies test data over ssh to 127.0.0.1, so a local
+  # sshd with key auth must be running.
+  test:
+    needs: build
+    timeout-minutes: 360
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 30720
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses-dev python3 unzip ccache openssh-server
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-seekdb-${{ github.ref_name }}-${{ github.run_number }}
+          restore-keys: |
+            ccache-seekdb-${{ github.ref_name }}-
+            ccache-seekdb-
+
+      - name: Compile seekdb (ccache warm)
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          SEEKDB_TASK_DIR: ${{ github.workspace }}/seekdb_build
+          MAKE_ARGS: -j4
+        run: .github/script/seekdb/compile.sh
+
+      - name: Start local sshd with key auth
+        run: |
+          sudo mkdir -p /run/sshd
+          sudo service ssh start
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N '' -q
+          cat ~/.ssh/id_ed25519.pub > ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          ssh-keyscan -H 127.0.0.1 >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -o ConnectTimeout=10 127.0.0.1 'echo sshd-ok'
+
+      - name: Run file_sql mysqltest cases
+        run: python3 - <<'PYEOF'
+        import argparse
+        import sys
+        from pathlib import Path
+
+        repo = Path.cwd().resolve()
+        sys.path.insert(0, str(repo / ".github" / "script" / "seekdb"))
+        import mysqltest_for_seekdb as runner
+
+        args = argparse.Namespace(
+            seekdb=str(repo / "build_release" / "src" / "observer" / "seekdb"),
+            obclient=str(repo / "deps" / "3rd" / "u01" / "obclient" / "bin" / "obclient"),
+            mysqltest=str(repo / "deps" / "3rd" / "u01" / "obclient" / "bin" / "mysqltest"),
+            base_dir=str(repo / ".seekdb_test" / "instance"),
+            work_dir=str(repo / ".seekdb_test" / "work"),
+            host="127.0.0.1",
+            port=2881,
+            slice_index=0,
+            slice_count=1,
+        )
+        deploy_dir = repo / "tools" / "deploy"
+        sdb_script = repo / ".github" / "script" / "seekdb" / "sdb.py"
+
+        cases = [case for case in runner.discover_cases(repo) if case.name.startswith("file_sql.")]
+        if not cases:
+            raise SystemExit("no file_sql cases discovered")
+        print("file_sql cases: {}".format([case.name for case in cases]), flush=True)
+
+        args.work_dir.mkdir(parents=True, exist_ok=True)
+        runner.prepare_instance(args, repo, sdb_script, deploy_dir)
+        tmp_dir = args.work_dir / "tmp"
+        log_dir = args.work_dir / "mysqltest_log"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        failed = []
+        for index, case in enumerate(cases):
+            code = None
+            output = ""
+            for retry_index in range(runner.MAX_CASE_RETRIES + 1):
+                if retry_index > 0:
+                    print("[ RETRY   ] {} ({}/{})".format(
+                        case.name, retry_index, runner.MAX_CASE_RETRIES), flush=True)
+                    runner.prepare_instance(args, repo, sdb_script, deploy_dir)
+                code, output = runner.run_case(args, deploy_dir, case, tmp_dir, log_dir)
+                if code == 0:
+                    break
+            if code != 0:
+                failed.append(case.name)
+                runner.save_case_failure(args, case.name, output)
+                if index + 1 < len(cases):
+                    runner.prepare_instance(args, repo, sdb_script, deploy_dir)
+
+        runner.destroy_instance(sdb_script, args.base_dir, repo, check=False)
+        print("file_sql failed cases: {}".format(failed), flush=True)
+        sys.exit(1 if failed else 0)
+        PYEOF
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: file-sql-failures
+          path: |
+            .seekdb_test/work/failures/
+            .seekdb_test/instance/log/
+          if-no-files-found: ignore
+          retention-days: 7
