@@ -44,3 +44,28 @@ unity_source = _unity_source
 localized_partial_link = _localized_partial_link
 grouped_unity_cc_library = _grouped_unity_cc_library
 version_source = _version_source
+
+def seekdb_module_cc_test(
+    name,
+    srcs,
+    module_interface,
+    test_hdrs = [],
+    shard_count = 1,
+    **kwargs):
+  """Builds a white-box module test against the server test runtime.
+
+  Module tests link the shared oceanbase test runtime so the cases exercise
+  the same C++ objects as the server without duplicating the final link.
+  """
+  native.cc_test(
+      name = name,
+      srcs = ["//unittest:all_tests_main.cpp"] + srcs,
+      hdrs = test_hdrs,
+      deps = [
+          module_interface,
+          "//bazel/third_party:gtest",
+          "//src/observer:liboceanbase",
+      ],
+      shard_count = shard_count,
+      **kwargs
+  )
