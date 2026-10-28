@@ -1769,6 +1769,7 @@ seekdb_semantic_unity_cc_library(
     implementation_deps = [
         ":_share_implementation_headers",
         "//rust:config_headers",
+        "//src/oblib:oblib_mysql_client_services",
     ] + _SHARE_RUNTIME_COMPILE_DEPS,
     features = ["layering_check"],
     tags = ["manual"],
