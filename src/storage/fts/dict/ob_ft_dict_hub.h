@@ -93,13 +93,22 @@ private:
 };
 
 class ObFTCacheRangeContainer;
+class ObFTRangeDict;
 class ObFTDictHub
 {
 public:
-  ObFTDictHub() : is_inited_(false), dict_map_(), rw_dict_lock_() {}
+  ObFTDictHub()
+      : is_inited_(false),
+        allocator_(nullptr),
+        main_entry_(),
+        quan_entry_(),
+        dict_map_(),
+        rw_dict_lock_(),
+        builtin_dict_lock_()
+  {}
   ~ObFTDictHub() {}
 
-  int init();
+  int init(common::ObIAllocator *allocator);
 
   int destroy();
 
@@ -107,17 +116,36 @@ public:
 
   int load_cache(const ObFTDictDesc &desc, ObFTCacheRangeContainer &container);
 
+  // Built-in dictionaries are immutable in one process lifetime: cache the
+  // constructed range dict (with its kvcache pins) in the hub so that every
+  // parser instance only borrows the pointer instead of re-loading the cache
+  // and rebuilding the range wrappers.
+  int get_builtin_range_dict(const ObFTDictType type, ObFTRangeDict *&dict);
+
 private:
   int get_dict_info(const ObFTDictInfoKey &key, ObFTDictInfo &info);
 
   int put_dict_info(const ObFTDictInfoKey &key, const ObFTDictInfo &info);
 
+  int ensure_builtin_range_dict(const ObFTDictType type, ObFTRangeDict *&dict);
+
 
 private:
+  struct BuiltinRangeDictEntry
+  {
+    ObFTCacheRangeContainer *container_;
+    ObFTRangeDict *dict_;
+    BuiltinRangeDictEntry() : container_(nullptr), dict_(nullptr) {}
+  };
+
   bool is_inited_;
+  common::ObIAllocator *allocator_;
+  BuiltinRangeDictEntry main_entry_;
+  BuiltinRangeDictEntry quan_entry_;
   // holds info of dict
   hash::ObHashMap<ObFTDictInfoKey, ObFTDictInfo> dict_map_;
   ObBucketLock rw_dict_lock_;
+  ObBucketLock builtin_dict_lock_;
 };
 
 } //  namespace storage

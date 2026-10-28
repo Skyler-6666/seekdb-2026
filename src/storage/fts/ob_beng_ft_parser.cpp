@@ -61,6 +61,25 @@ int ObBEngFTParser::get_next_token(
   return ret;
 }
 
+int ObBEngFTParser::reuse(const ObFTParserParam &param)
+{
+  // The analyzer pipeline is reused as-is; analyze() resets the whole token
+  // stream chain internally, so only the document has to be re-pointed.
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = OB_NOT_INIT;
+  } else if (OB_ISNULL(param.cs_) || OB_UNLIKELY(UINT32_MAX < param.ft_length_)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_UNLIKELY(param.cs_ != analysis_ctx_.cs_)) {
+    ret = OB_NOT_SUPPORTED;
+  } else {
+    doc_.set_string(param.fulltext_, param.ft_length_);
+    if (OB_FAIL(segment(doc_, token_stream_))) {
+    }
+  }
+  return ret;
+}
+
 int ObBEngFTParser::init(ObFTParserParam *param)
 {
   int ret = OB_SUCCESS;

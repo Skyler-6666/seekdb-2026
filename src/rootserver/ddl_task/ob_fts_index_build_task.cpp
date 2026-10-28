@@ -31,6 +31,7 @@
 #include "storage/fts/dict/ob_gen_dic_loader.h"
 #include "storage/fts/dict/ob_dic_loader.h"
 #include "storage/fts/dict/ob_dic_lock.h"
+#include "lib/cpu/ob_cpu_topology.h"
 
 using namespace oceanbase::share;
 
@@ -38,6 +39,7 @@ namespace oceanbase
 {
 namespace rootserver
 {
+static constexpr int64_t FTS_INDEX_BUILD_DEFAULT_PARALLELISM_MAX = 12;
 /***************         ObFtsIndexBuildTask        *************/
 
 ObFtsIndexBuildTask::ObFtsIndexBuildTask()
@@ -119,9 +121,18 @@ int ObFtsIndexBuildTask::init(
   } else if (OB_FAIL(deep_copy_index_arg(allocator_,
                                          create_index_arg,
                                          create_index_arg_))) {
-  } else if (OB_FAIL(ObFtsIndexBuilderUtil::decide_parallelism(create_index_arg.index_type_, parallelism, parallelism_))) {
   } else {
-    LOG_INFO("create_index_arg.index_type_x", K(create_index_arg.index_type_), K(create_index_arg.index_key_));
+    int64_t eff_parallelism = parallelism;
+    if (eff_parallelism <= 1 && share::schema::is_fts_index(create_index_arg.index_type_)) {
+      // Fulltext index build is CPU-bound on tokenization; without an explicit
+      // parallel hint the build would run single-threaded. Default to the
+      // available CPU count so the aux-table sub-tasks can work concurrently.
+      eff_parallelism = MIN(common::get_cpu_count(), FTS_INDEX_BUILD_DEFAULT_PARALLELISM_MAX);
+      LOG_INFO("fts index build default parallelism", K(parallelism), K(eff_parallelism));
+    }
+    if (OB_FAIL(ObFtsIndexBuilderUtil::decide_parallelism(create_index_arg.index_type_, eff_parallelism, parallelism_))) {
+    } else {
+      LOG_INFO("create_index_arg.index_type_x", K(create_index_arg.index_type_), K(create_index_arg.index_key_));
 
     if (INDEX_TYPE_NORMAL_MULTIVALUE_LOCAL == create_index_arg.index_type_ ||
         INDEX_TYPE_UNIQUE_MULTIVALUE_LOCAL == create_index_arg.index_type_) {
@@ -159,6 +170,7 @@ int ObFtsIndexBuildTask::init(
       
       dst_schema_version_ = schema_version_;
       is_inited_ = true;
+    }
     }
   }
   return ret;

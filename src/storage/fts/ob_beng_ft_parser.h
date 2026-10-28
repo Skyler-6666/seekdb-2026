@@ -51,6 +51,8 @@ public:
       int64_t &char_len,
       int64_t &word_freq) override;
 
+  int reuse(const ObFTParserParam &param) override;
+
   VIRTUAL_TO_STRING_KV(K_(analysis_ctx), K_(english_analyzer), KP_(token_stream), K_(is_inited));
 private:
   int segment(

@@ -17,6 +17,7 @@
 #include "sql/engine/expr/ob_expr_tokenize.h"
 
 #include "lib/alloc/alloc_struct.h"
+#include "lib/allocator/ob_malloc.h"
 #include "lib/allocator/page_arena.h"
 #include "lib/charset/ob_charset.h"
 #include "common/json_type/ob_json_base.h"
@@ -39,6 +40,59 @@ namespace oceanbase
 {
 namespace sql
 {
+namespace
+{
+// A tokenize() call used to construct a fresh parser (dictionary loads,
+// processor setup) for every evaluation. The parser configuration rarely
+// changes within a session, so cache one parser per worker thread, keyed by
+// parser name, parser properties and collation.
+struct ObTokenizeTLSCache final
+{
+  ObTokenizeTLSCache()
+    : helper_(),
+      word_map_(),
+      arena_("FTSExprTLS"),
+      parser_name_(),
+      properties_(),
+      coll_type_(common::CS_TYPE_INVALID),
+      is_inited_(false)
+  {}
+  storage::ObFTParseHelper helper_;
+  storage::ObFTWordMap word_map_;
+  common::ObArenaAllocator arena_;
+  common::ObString parser_name_;
+  common::ObString properties_;
+  common::ObCollationType coll_type_;
+  bool is_inited_;
+};
+
+int prepare_tls_helper(ObTokenizeTLSCache &cache, const ObExprTokenize::TokenizeParam &param)
+{
+  int ret = OB_SUCCESS;
+  const common::ObCollationType coll = param.meta_.get_collation_type();
+  if (cache.is_inited_
+      && cache.coll_type_ == coll
+      && cache.parser_name_ == param.parser_name_
+      && cache.properties_ == param.properties_) {
+    // cache hit
+  } else {
+    cache.helper_.reset();
+    cache.arena_.reset();
+    cache.is_inited_ = false;
+    if (OB_FAIL(ob_write_string(cache.arena_, param.parser_name_, cache.parser_name_))) {
+    } else if (OB_FAIL(ob_write_string(cache.arena_, param.properties_, cache.properties_))) {
+    } else {
+      cache.coll_type_ = coll;
+      if (OB_FAIL(cache.helper_.init(&cache.arena_, cache.parser_name_, cache.properties_))) {
+      } else {
+        cache.is_inited_ = true;
+      }
+    }
+  }
+  return ret;
+}
+} // anonymous namespace
+
 ObExprTokenize::ObExprTokenize(common::ObIAllocator &alloc)
     : ObStringExprOperator(alloc,
                            T_FUN_TOKENIZE,
@@ -81,34 +135,37 @@ int ObExprTokenize::tokenize_fulltext(const TokenizeParam &param,
                                       ObIJsonBase *&result)
 {
   int ret = OB_SUCCESS;
-  storage::ObFTParseHelper tokenize_helper;
+  static thread_local ObTokenizeTLSCache *tls_cache = nullptr;
+  ObTokenizeTLSCache &cache =
+      (nullptr != tls_cache) ? *tls_cache : *(tls_cache = OB_NEW(ObTokenizeTLSCache, "FTSExprTLS"));
   const int64_t ft_word_bkt_cnt = MIN(MAX(param.fulltext_.length() / 2, 2), 997);
   int64_t doc_len = 0;
-  storage::ObFTWordMap token_map;
+  UNUSED(allocator);
 
   if (TokenizeParam::OUTPUT_MODE::DEFAULT != mode && TokenizeParam::OUTPUT_MODE::ALL != mode) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(tokenize_helper.init(&allocator, param.parser_name_, param.properties_))) {
-  } else if (OB_FAIL(token_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
+  } else if (OB_FAIL(prepare_tls_helper(cache, param))) {
+  } else if (!cache.word_map_.created()
+             && OB_FAIL(cache.word_map_.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
   } else if (
       (0 != param.fulltext_.length())
-      && OB_FAIL(tokenize_helper.segment(
+      && OB_FAIL(cache.helper_.segment(
                      param.meta_,
                      param.fulltext_.ptr(),
                      param.fulltext_.length(),
                      doc_len,
-                     token_map))) {
+                     cache.word_map_))) {
   } else {
     switch (param.output_mode_) {
     case TokenizeParam::OUTPUT_MODE::DEFAULT: {
-      if (OB_FAIL(tokenize_helper.make_token_array_json(token_map, result))) {
+      if (OB_FAIL(cache.helper_.make_token_array_json(cache.word_map_, result))) {
       } else {
         // pass
       }
       break;
     }
     case TokenizeParam::OUTPUT_MODE::ALL: {
-      if (OB_FAIL(tokenize_helper.make_detail_json(token_map, doc_len, result))) {
+      if (OB_FAIL(cache.helper_.make_detail_json(cache.word_map_, doc_len, result))) {
       } else {
         // pass
       }
