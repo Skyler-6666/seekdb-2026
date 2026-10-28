@@ -49,6 +49,12 @@ private:
                                   common::ObString &query, 
                                   common::ObJsonArray *document_array, 
                                   common::ObJsonArray *&result_array);
+  static int call_rerank_with_batching(common::ObIAllocator &allocator,
+                                       const common::ObAIFuncExprInfo &info,
+                                       const share::ObAiModelEndpointInfo &endpoint_info,
+                                       common::ObString &query,
+                                       common::ObJsonArray *document_array,
+                                       common::ObJsonArray *&result_array);
   
   static int eval_ai_rerank_with_doc_key(const ObExpr &expr, ObEvalCtx &ctx, common::ObIAllocator &allocator,
                                          common::ObString &model_id, common::ObString &query, common::ObJsonArray *document_array,
