@@ -5,6 +5,8 @@ Requires pymysql and a built seekdb. Uses a dedicated local test database direct
 from pathlib import Path
 import argparse, os, runpy, subprocess, sys, tempfile, time
 import pymysql
+import json, threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parents[4]
 options = argparse.ArgumentParser()
@@ -35,6 +37,16 @@ def start():
   except pymysql.MySQLError:time.sleep(.1)
  process.kill();process.wait(timeout=10)
  raise RuntimeError('seekdb startup timed out')
+
+class Echo(BaseHTTPRequestHandler):
+ calls = 0
+ def do_POST(self):
+  request=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  value=next(message['content'] for message in request['messages'] if message['role']=='user')
+  type(self).calls += 1
+  data=json.dumps({'choices':[{'message':{'content':value}}]}).encode()
+  self.send_response(200);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+ def log_message(self,*arguments):pass
 
 process = start()
 connection = None
@@ -83,7 +95,20 @@ try:
  query('ROLLBACK');query('SET SESSION ai_column_strict_read=OFF');time.sleep(.3)
  assert helpers['mock'].read_events(19124)==[]
  assert query('SELECT result FROM composite WHERE id=%s',(key,))==(('mock:initial',),)
+ query('BEGIN')
+ query("INSERT INTO composite(id,part,content) VALUES('CaseKey',99,'uncommitted')")
+ query("UPDATE composite SET id='casekey' WHERE id='CaseKey' AND part=99")
+ query("DELETE FROM composite WHERE id='casekey' AND part=99")
+ tasks=query("SELECT COUNT(*) FROM oceanbase.__all_ai_column_task j JOIN oceanbase.__all_table t ON t.table_id=j.table_id JOIN oceanbase.__all_database d ON d.database_id=t.database_id WHERE d.database_name='ai_column_edges' AND t.table_name='composite'")
+ assert tasks==((0,),),tasks
+ query('ROLLBACK')
  print('PASS composite/string key, NULL READY, PL write protection, identity update, rollback and own-transaction strict read',flush=True)
+ query("CREATE TABLE large_payload(id INT PRIMARY KEY,body LONGTEXT,result LONGTEXT AI COLUMN(AI_COMPLETE('ai_column_edge_model',body)) WITH(max_retries=0))")
+ large_text="汉\\'\n"*10000
+ query('INSERT INTO large_payload(id,body) VALUES(1,%s)',(large_text,))
+ wait_empty('large_payload')
+ assert query('SELECT result FROM large_payload')==(('mock:'+large_text,),)
+ print('PASS large Unicode LONGTEXT input and output',flush=True)
  query('CREATE TABLE backfill(id BIGINT PRIMARY KEY,content TEXT)')
  query("INSERT INTO backfill VALUES(1,'existing')")
  query("ALTER TABLE backfill ADD result VARCHAR(400) AI COLUMN(AI_COMPLETE('ai_column_edge_model',content)) WITH(max_retries=0)")
@@ -106,7 +131,34 @@ try:
  wait_empty('pending',35);assert query('SELECT result FROM pending')==(('mock:slow-old',),)
  query('SET SESSION ai_column_strict_read=ON');assert query('SELECT result FROM backfill')==(('mock:changed:existing',),)
  print('PASS committed task recovery after process termination and READY schema/state persistence',flush=True)
- query('SET SESSION ai_column_strict_read=OFF');query('DROP DATABASE ai_column_edges')
+ query('SET SESSION ai_column_strict_read=OFF')
+ echo=ThreadingHTTPServer(('127.0.0.1',19125),Echo)
+ echo_thread=threading.Thread(target=echo.serve_forever,daemon=True);echo_thread.start()
+ try:
+  for sql in ["CALL DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('ai_column_cast_ep')","CALL DBMS_AI_SERVICE.DROP_AI_MODEL('ai_column_cast_model')"]:
+   try:query(sql)
+   except pymysql.MySQLError as error:assert error.args[0] in (11112,11118)
+  query("CALL DBMS_AI_SERVICE.CREATE_AI_MODEL('ai_column_cast_model','{\"type\":\"completion\",\"model_name\":\"echo\"}')")
+  query("CALL DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT('ai_column_cast_ep','{\"ai_model_name\":\"ai_column_cast_model\",\"provider\":\"openai\",\"url\":\"http://127.0.0.1:19125/v1/chat/completions\",\"access_key\":\"test\"}')")
+  query("CREATE TABLE cast_results(id INT PRIMARY KEY,body TEXT,bad FLOAT AI COLUMN(AI_COMPLETE('ai_column_cast_model',body)) WITH(max_retries=1),good VARCHAR(40) AI COLUMN(AI_COMPLETE('ai_column_cast_model',body)) WITH(max_retries=0))")
+  query("INSERT INTO cast_results(id,body) VALUES(1,'1e100')")
+  wait_empty('cast_results')
+  assert query('SELECT bad,good FROM cast_results')==((None,'1e100'),)
+  assert Echo.calls==3,Echo.calls
+  query('SET SESSION ai_column_strict_read=ON')
+  assert query('SELECT good FROM cast_results')==(('1e100',),)
+  expect_error('SELECT bad FROM cast_results',(11120,))
+  query('SET SESSION ai_column_strict_read=OFF')
+  query("ALTER TABLE cast_results RETRY AI COLUMN bad WHERE status='FAILED'")
+  wait_empty('cast_results')
+  assert Echo.calls==5,Echo.calls
+  assert query('SELECT bad,good FROM cast_results')==((None,'1e100'),)
+  print('PASS native target-type conversion failure, bounded retry and grouped READY/FAILED publication',flush=True)
+ finally:
+  echo.shutdown();echo.server_close();echo_thread.join(timeout=5)
+ query('DROP DATABASE ai_column_edges')
+ query("CALL DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('ai_column_cast_ep')")
+ query("CALL DBMS_AI_SERVICE.DROP_AI_MODEL('ai_column_cast_model')")
  query("CALL DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('ai_column_edge_ep')");query("CALL DBMS_AI_SERVICE.DROP_AI_MODEL('ai_column_edge_model')")
 finally:
  if runner is not None:runner.close()

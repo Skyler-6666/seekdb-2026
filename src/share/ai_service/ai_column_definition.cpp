@@ -245,7 +245,7 @@ Definition decode(const std::string &value)
   uint64_t type = integer("type"), retries = integer("max_retries"),
            dimension = integer("dimension"), length = integer("length"), scale = integer("scale");
   if (type > static_cast<unsigned>(ResultType::Vector) || retries > 100 || dimension > 65536 ||
-      length > 64 * 1024 * 1024 || scale > 30)
+      length > static_cast<uint64_t>(std::numeric_limits<int>::max()) || scale > 30)
     invalid("definition bounds");
   d.integer_bits = integer("integer_bits");
   if (d.integer_bits != 8 && d.integer_bits != 16 && d.integer_bits != 24 && d.integer_bits != 32 &&

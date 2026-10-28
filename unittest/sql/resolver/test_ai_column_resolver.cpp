@@ -40,10 +40,12 @@ void regressions()
   d.state_column_id = 18;
   d.request_column_id = 19;
   d.result_spec_column_id = 20;
+  d.length = 2147483647; // LONGTEXT schema metadata; no allocation uses this bound.
   auto restored = decode(encode(d));
   check(restored.expression == d.expression && restored.dependencies.size() == 1 &&
         restored.dependencies[0].id == 17 && restored.result_spec_column_id == 20 &&
-        restored.integer_bits == 64);
+        restored.integer_bits == 64 && restored.length == 2147483647);
+  d.length = 0;
   rejects([&] { decode("{}"); });
   rejects([&] { decode("[]"); });
   rejects([&] { decode(encode(d) + "garbage"); });

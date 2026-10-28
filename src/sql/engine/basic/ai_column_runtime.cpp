@@ -343,8 +343,14 @@ int install_impl(uint64_t table_id)
                       ref("OLD", column.definition.request_column_name) + ") THEN " +
                       enqueue(table, column) + " END IF; ";
     }
+    std::string row_tasks = "rowkey_hash=SHA2(" + predicate_expression(table, "OLD") + ",256)";
+    // A case-insensitive key can retain its identity while its spelling changes.
+    // Request IDs still identify its pending tasks independently of that spelling.
+    for (const auto &column : table.columns)
+      row_tasks += " OR (column_id=" + number(column.id) + " AND request_id=" +
+                   ref("OLD", column.definition.request_column_name) + ")";
     std::string erase = "DELETE FROM " + queue + " WHERE table_id=" + number(table.id) +
-                        " AND rowkey_hash=SHA2(" + predicate_expression(table, "OLD") + ",256); ";
+                        " AND (" + row_tasks + "); ";
     after_update =
         "BEGIN IF " + key_changed(table) + " THEN " + erase + "END IF; " + after_update.substr(6);
     struct Trigger
@@ -583,6 +589,13 @@ void stage(const Column &column, Task &task)
     values += ",retry_count=retry_count+1,eligible_ts=DATE_ADD(NOW(6),INTERVAL 1 SECOND)";
   write(*GCTX.sql_proxy_, "UPDATE " + queue + " SET " + values + " WHERE " + task_where(task));
 }
+bool result_conversion_error(int code)
+{
+  return code == OB_DATA_OUT_OF_RANGE || code == OB_ERR_WARN_DATA_OUT_OF_RANGE ||
+         code == OB_ERR_DATA_TOO_LONG || code == OB_ERR_DATA_TRUNCATED ||
+         code == OB_ERR_TRUNCATED_WRONG_VALUE || code == OB_ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD ||
+         code == OB_ERR_INCORRECT_STRING_VALUE || code == OB_OPERATE_OVERFLOW;
+}
 void publish(const Table &table, const std::vector<Task> &original)
 {
   if (original.empty())
@@ -595,7 +608,8 @@ void publish(const Table &table, const std::vector<Task> &original)
   check(transaction.start(GCTX.sql_proxy_));
   try
   {
-    // Lock the business row before the outbox, matching business DML lock order.
+    // Lock the business row before the outbox, matching business DML lock
+    // order.
     if (!table.name.empty())
     {
       alignas(16) ObMySQLProxy::MySQLResult row;
@@ -638,16 +652,59 @@ void publish(const Table &table, const std::vector<Task> &original)
                       ac::identifier(d.result_spec_column_name) + "=" + ac::literal(task.version);
       }
       if (terminal && !table.name.empty())
-        write(transaction, "UPDATE /*+ OPT_PARAM('HIDDEN_COLUMN_VISIBLE' 'TRUE') */ " +
-                               qualified(table) + " SET " + assignments + " WHERE " +
-                               first.predicate + conditions);
+      {
+        const std::string update =
+            "UPDATE /*+ OPT_PARAM('HIDDEN_COLUMN_VISIBLE' 'TRUE') */ " + qualified(table) + " SET ";
+        const std::string where = " WHERE " + first.predicate + conditions;
+        int64_t affected = 0;
+        int ret = transaction.write((update + assignments + where).c_str(), affected);
+        if (result_conversion_error(ret))
+        {
+          // A failed proxy write invalidates its transaction. Probe each result
+          // in a separate rolled-back transaction; no partial result is
+          // published.
+          transaction.end(false);
+          for (const auto &task : tasks)
+          {
+            if (task.state != 4 || task.null_result)
+              continue;
+            const auto &column = *find_column(table, task.column);
+            ObMySQLTransaction probe;
+            check(probe.start(GCTX.sql_proxy_));
+            const std::string assignment = ac::identifier(column.name) + "=" +
+                                           ac::result_literal(column.definition, task.result);
+            ret = probe.write((update + assignment + where).c_str(), affected);
+            probe.end(false);
+            if (result_conversion_error(ret))
+            {
+              bool retry = task.retries < column.definition.max_retries;
+              write(*GCTX.sql_proxy_, "UPDATE " + queue +
+                                          " SET state=" + std::to_string(retry ? 3 : 5) +
+                                          ",error_code=" + std::to_string(ret) +
+                                          ",result_value=NULL,retry_count=retry_count+" +
+                                          (retry ? "1" : "0") + " WHERE " + task_where(task));
+            }
+            else
+              check(ret);
+          }
+          write(*GCTX.sql_proxy_, "UPDATE " + queue +
+                                      " SET "
+                                      "owner_id=NULL,lease_until=NULL,eligible_ts=DATE_ADD(NOW(6)"
+                                      ",INTERVAL 1 SECOND) WHERE " +
+                                      group);
+          return;
+        }
+        else
+          check(ret);
+      }
       write(transaction, "DELETE FROM " + queue + " WHERE " + group);
     }
     else
     {
       write(transaction, "UPDATE " + queue +
                              " SET "
-                             "owner_id=NULL,lease_until=NULL,eligible_ts=GREATEST(eligible_ts,DATE_"
+                             "owner_id=NULL,lease_until=NULL,eligible_ts="
+                             "GREATEST(eligible_ts,DATE_"
                              "ADD(NOW(6),INTERVAL 1 SECOND)) WHERE " +
                              group);
     }
