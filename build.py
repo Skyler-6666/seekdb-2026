@@ -112,10 +112,6 @@ def _bazel_environment() -> Dict[str, str]:
         compiler = Path(ndk) / "toolchains" / "llvm" / "prebuilt" / host / "bin" / "clang"
         if not compiler.is_file():
             environment.pop("ANDROID_NDK_HOME")
-    system_clang = Path("/usr/bin/clang")
-    if platform.system() == "Linux" and system_clang.is_file():
-        rustflags = environment.get("RUSTFLAGS", "")
-        environment["RUSTFLAGS"] = (rustflags + " -C linker=/usr/bin/clang").strip()
     return environment
 
 
