@@ -279,6 +279,9 @@ def main(arguments: List[str]) -> int:
                 ["test", "--test_output=errors",
                  "//unittest/oblib:test_hnsw_serial_format"],
                 ["test", "--test_output=errors", "//unittest/sql:sql_tests"],
+                ["test", "--test_output=errors", "//unittest/share:share_tests"],
+                ["test", "--test_output=errors",
+                 "//unittest/observer:observer_tests"],
                 ["build", "//src/observer:observer_runtime"],
             ]
             for check in checks:
