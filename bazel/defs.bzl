@@ -5,6 +5,7 @@ to evolve without spreading their layout or standard policy across packages.
 """
 
 load("@rules_cc//cc:cc_import.bzl", _cc_import = "cc_import")
+load("@rules_cc//cc:cc_test.bzl", _cc_test = "cc_test")
 load("//bazel:platforms.bzl", _openmp_copts = "openmp_copts")
 load(
     "//bazel:compile_config.bzl",
@@ -144,7 +145,7 @@ def seekdb_module_cc_test(
 
   package = native.package_name()
   package_parent = "../" * len(package.split("/"))
-  native.cc_test(
+  _cc_test(
       name = name,
       data = data + ["//src/observer:liboceanbase"],
       deps = [":" + main_target] + unity_targets + [
