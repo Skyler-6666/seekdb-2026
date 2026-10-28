@@ -5625,7 +5625,7 @@ int ObSchemaServiceSQLImpl::get_table_id(
             " AND database_id = %" PRIu64 " "
             ")) "
             "ORDER BY session_id DESC",                 // case 3.1
-            OB_ALL_VIRTUAL_CORE_ALL_TABLE_TNAME, uint64_t(1), database_id,
+            "core_all_table()", uint64_t(1), database_id,
             OB_ALL_TABLE_TNAME, tb_name, static_cast<int64_t>(session_id), database_id))) {
         }
       } else {
@@ -5746,7 +5746,7 @@ int ObSchemaServiceSQLImpl::get_index_id(
                 "UNION ALL "
                 GET_INDEX_ID_SQL
                 ") ",
-                OB_ALL_VIRTUAL_CORE_ALL_TABLE_TNAME, UINT64_C(1), database_id, idx_name, USER_INDEX,
+                "core_all_table()", UINT64_C(1), database_id, idx_name, USER_INDEX,
                 OB_ALL_TABLE_TNAME, OB_INVALID_RUNTIME_ID, database_id, idx_name, USER_INDEX))) {
     }
   } else {
@@ -6090,7 +6090,7 @@ int ObSchemaServiceSQLImpl::get_table_schema_versions(
         if (OB_FAIL(sql.append_fmt(
             "SELECT table_id, schema_version FROM %s "
             "WHERE table_id IN (",
-            OB_ALL_VIRTUAL_CORE_ALL_TABLE_TNAME))) {
+            "core_all_table()"))) {
         }
         for (int64_t i = 0; OB_SUCC(ret) && i < core_table_ids.count(); i++) {
           if (OB_FAIL(sql.append_fmt("%" PRIu64 "%s", core_table_ids.at(i),
@@ -6222,7 +6222,7 @@ int ObSchemaServiceSQLImpl::get_table_index_infos(
                 "UNION ALL "
                 GET_INDEX_INFO_SQL
                 ") ",
-                OB_ALL_VIRTUAL_CORE_ALL_TABLE_TNAME, UINT64_C(1), database_id, data_table_id, USER_INDEX,
+                "core_all_table()", UINT64_C(1), database_id, data_table_id, USER_INDEX,
                 OB_ALL_TABLE_TNAME, OB_INVALID_RUNTIME_ID, database_id, data_table_id, USER_INDEX))) {
     }
   } else {

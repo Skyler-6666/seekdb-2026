@@ -15836,7 +15836,7 @@ int ObDDLService::check_db_and_table_is_exist(const obcall::ObTruncateTableArg &
                               "ON a.database_id = c.database_id WHERE a.database_name = '%s' AND table_name = '%s' "
                               "AND (session_id = 0 or session_id = %lu) order by session_id desc",
                               OB_ALL_DATABASE_TNAME, OB_ALL_TABLE_TNAME,
-                              OB_ALL_VIRTUAL_CORE_ALL_TABLE_TNAME, uint64_t(1),
+                              "core_all_table()", uint64_t(1),
                               tmp_database_name, tmp_table_name, session_id))) {
     } else if (OB_FAIL(trans.read(res, sql.ptr()))) {
     } else if (OB_ISNULL(result = res.get_result())) {

@@ -3260,7 +3260,7 @@ int ObDDLTaskRecordOperator::kill_task_inner_sql(
         ret = OB_ERR_UNEXPECTED;
       } else if (OB_FAIL(sql_string.assign_fmt(" SELECT id as session_id FROM %s WHERE trace_id like \"%c%s\" "
           " and info like \"%cINSERT%c('ddl_task_id', %" PRId64 ")%cINTO%cSELECT%c%" PRId64 "%c\" ",
-          OB_ALL_VIRTUAL_SESSION_INFO_TNAME,
+          "session_info()",
           spec_charater,
           trace_id_like,
           spec_charater,
@@ -3328,7 +3328,7 @@ int ObDDLTaskRecordOperator::get_running_tasks_inner_sql(
         ret = OB_ERR_UNEXPECTED;
       } else if (OB_FAIL(sql_string.assign_fmt(" SELECT info FROM %s WHERE trace_id like \"%c%s\""
           " and info like \"%cINSERT%c('ddl_task_id', %" PRId64 ")%cINTO%cSELECT%cPARTITION%c%" PRId64 "%c\" ",
-          OB_ALL_VIRTUAL_SESSION_INFO_TNAME,
+          "session_info()",
           spec_charater,
           trace_id_like,
           spec_charater,

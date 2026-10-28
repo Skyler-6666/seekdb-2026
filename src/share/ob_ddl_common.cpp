@@ -902,7 +902,7 @@ int ObDDLUtil::get_ls_host_left_disk_space(common::ObISQLClient &sql_client,
     ObSqlString query_string;
     sqlclient::ObMySQLResult *result = NULL;
     if (OB_FAIL(query_string.assign_fmt("SELECT free_size FROM %s LIMIT 1",
-        OB_ALL_VIRTUAL_DISK_STAT_TNAME))) {
+        "disk_stat()"))) {
     } else if (OB_FAIL(sql_client.read(res, query_string.ptr()))) {
     } else if (OB_ISNULL(result = res.get_result())) {
       ret = OB_ERR_UNEXPECTED;
@@ -1232,7 +1232,7 @@ int ObDDLUtil::check_table_column_checksum_error(common::ObISQLClient &sql_clien
     SMART_VAR(ObMySQLProxy::MySQLResult, res) {
       if OB_FAIL(ret) {
       } else if (OB_FAIL(query_string.append_fmt("SELECT data_table_id FROM %s WHERE data_table_id = %" PRId64 " LIMIT 1",
-          OB_ALL_VIRTUAL_COLUMN_CHECKSUM_ERROR_INFO_TNAME, table_id))) {
+          "column_checksum_error_info()", table_id))) {
       } else if (OB_FAIL(ObShareUtil::set_default_timeout_ctx(timeout_ctx, config::internal_sql_execute_timeout()))) {
       } else if (OB_FAIL(sql_client.read(res, query_string.ptr()))) {
       } else if (OB_ISNULL(result = res.get_result())) {
@@ -1344,7 +1344,7 @@ int ObCheckTabletDataComplementOp::check_task_inner_sql_session_status(
         ret = OB_ERR_UNEXPECTED;
       } else if (OB_FAIL(sql_string.assign_fmt(" SELECT id as session_id FROM %s WHERE trace_id like \"%c%s\" "
             " and info like \"%cINSERT%c('ddl_task_id', %" PRId64 ")%cINTO%cSELECT%c%" PRId64 "%c\" ",
-          OB_ALL_VIRTUAL_SESSION_INFO_TNAME,
+          "session_info()",
           charater,
           trace_id_like,
           charater,

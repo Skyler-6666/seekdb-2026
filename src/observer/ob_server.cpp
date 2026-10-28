@@ -60,6 +60,8 @@ int ObServer::get_lower_bound_freeze_info(const int64_t snapshot_version, share:
 #include "observer/omt/ob_server_runtime.h"
 #include "sql/engine/px/p2p_datahub/ob_p2p_dh_mgr.h"
 #include "sql/ob_sql_init.h"
+#include "sql/table_function/table_function.h"
+#include "observer/virtual_table/ob_virtual_table_iterator_factory.h"
 #include "sql/ob_sql_task.h"
 #include "sql/engine/cmd/ob_load_data_utils.h"
 #include "storage/tx_table/ob_tx_data_cache.h"
@@ -798,7 +800,12 @@ int ObServer::init(const ObServerOptions &opts)
       LOG_ERROR("init sql task factory failed", KR(ret));
     }
     if (OB_SUCC(ret)) {
-      if (OB_FAIL(sql::init_sql_factories())) {
+      // Program-owned definitions are available before bootstrap and schema-service SQL.
+      int64_t function_count = 0;
+      const sql::TableFunctionDescriptor *functions = sql::get_system_table_functions(function_count);
+      if (OB_FAIL(sql::TableFunctionRegistry::register_functions(functions, function_count))) {
+        LOG_ERROR("register system table functions failed", KR(ret));
+      } else if (OB_FAIL(sql::init_sql_factories())) {
         LOG_ERROR("init sql factories !", KR(ret));
       } else if (OB_FAIL(sql::init_sql_executor_singletons())) {
         LOG_ERROR("init sql executor singletons !", KR(ret));
