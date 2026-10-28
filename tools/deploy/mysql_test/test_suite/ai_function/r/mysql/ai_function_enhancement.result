@@ -8,8 +8,8 @@ select ai_prompt(t, a) from ai_enhance_prompt;
 ai_prompt(t, a)
 {"args": ["lob"], "template": "{0}-ok"}
 drop table ai_enhance_prompt;
-call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_complete');
 call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('enhance_complete_ep');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_complete');
 call DBMS_AI_SERVICE.CREATE_AI_MODEL(
 'enhance_complete', '{"type":"completion","model_name":"qwen3-32b"}');
 call DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT(
@@ -22,8 +22,8 @@ select length(ai_complete(
 '{"temperature":0.2,"max_tokens":16}')) > 0 as complete_config_ok;
 complete_config_ok
 1
-call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_embed');
 call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('enhance_embed_ep');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_embed');
 call DBMS_AI_SERVICE.CREATE_AI_MODEL(
 'enhance_embed', '{"type":"dense_embedding","model_name":"text-embedding-v1"}');
 call DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT(
@@ -44,8 +44,8 @@ id	dimension
 2	NULL
 3	768
 drop table ai_enhance_batch;
-call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_rerank');
 call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('enhance_rerank_ep');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_rerank');
 call DBMS_AI_SERVICE.CREATE_AI_MODEL(
 'enhance_rerank', '{"type":"rerank","model_name":"BAAI/bge-reranker-v2-m3"}');
 call DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT(
@@ -61,8 +61,8 @@ from (select ai_rerank('enhance_rerank','apple',
 'text') as r) x;
 first_id	rerank_count
 a	2
-call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_ollama_complete');
 call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('enhance_ollama_complete_ep');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_ollama_complete');
 call DBMS_AI_SERVICE.CREATE_AI_MODEL(
 'enhance_ollama_complete', '{"type":"completion","model_name":"qwen2.5"}');
 call DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT(
@@ -80,8 +80,8 @@ Ollama
 select length(ai_complete('enhance_ollama_complete', 'hello')) > 0 as ollama_complete_ok;
 ollama_complete_ok
 1
-call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_ollama_embed');
 call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('enhance_ollama_embed_ep');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_ollama_embed');
 call DBMS_AI_SERVICE.CREATE_AI_MODEL(
 'enhance_ollama_embed', '{"type":"dense_embedding","model_name":"nomic-embed-text"}');
 call DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT(
@@ -89,13 +89,13 @@ call DBMS_AI_SERVICE.CREATE_AI_MODEL_ENDPOINT(
 select json_valid(ai_embed('enhance_ollama_embed', 'hello')) as ollama_embed_ok;
 ollama_embed_ok
 1
-call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_complete');
 call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('enhance_complete_ep');
-call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_embed');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_complete');
 call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('enhance_embed_ep');
-call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_rerank');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_embed');
 call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('enhance_rerank_ep');
-call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_ollama_complete');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_rerank');
 call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('enhance_ollama_complete_ep');
-call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_ollama_embed');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_ollama_complete');
 call DBMS_AI_SERVICE.DROP_AI_MODEL_ENDPOINT('enhance_ollama_embed_ep');
+call DBMS_AI_SERVICE.DROP_AI_MODEL('enhance_ollama_embed');
