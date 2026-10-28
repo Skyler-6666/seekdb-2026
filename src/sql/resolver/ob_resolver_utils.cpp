@@ -134,6 +134,9 @@ int ObResolverUtils::get_all_function_table_column_names(const TableItem &table_
     } catch (const std::exception &error) { ret = OB_INVALID_ARGUMENT; LOG_USER_ERROR(OB_INVALID_ARGUMENT, error.what()); }
     return ret;
   }
+  if (!table_item.function_column_names_.empty()) {
+    return append(column_names, table_item.function_column_names_);
+  }
   ObPLPackageGuard *package_guard = nullptr;
   const ObUserDefinedType *user_type = NULL;
   ObExecContext *exec_ctx = params.session_info_->get_cur_exec_ctx();
