@@ -347,6 +347,11 @@ extern "C" int ob_gpu_hnsw_build(const ObGpuHnswBuildParam *param, ObGpuHnswBuil
     status = OB_GPU_BUILD_ERR_BUILD_FAILED;
     goto cleanup;
   }
+  if (hipDeviceSynchronize() != hipSuccess) {
+    set_message(result->message_, sizeof(result->message_), "GPU synchronization after serialization failed");
+    status = OB_GPU_BUILD_ERR_BUILD_FAILED;
+    goto cleanup;
+  }
 
   {
     char *data = nullptr;
