@@ -274,8 +274,8 @@ space 计算，所以 IP 的两种写法差异不影响正确性。
 # 默认 Bazel 构建不会看到或编译 .cu
 python3 build.py build //src/observer:seekdb
 
-# 显式构建独立插件，默认目标不需要这个 define
-python3 build.py build --define=hip_hnsw=enabled \
+# 显式构建独立插件，默认 seekdb 构建不会依赖这个目标
+python3 build.py build \
     --action_env=HIPVS_ROOT=/opt/hipvs \
     --action_env=DLPACK_INCLUDE_DIR=/opt/hipvs/include \
     //src/oblib/lib/vector/gpu:ob_gpu_hnsw_plugin
