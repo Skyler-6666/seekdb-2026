@@ -214,7 +214,7 @@ seekdb_test_interface(
     deps = [
         ":sql_runtime_internal_headers",
         ":sql_runtime_interface",
-    ],
+    ] + SQL_RUNTIME_NATIVE_DEPS,
     visibility = ["//unittest:__subpackages__"],
 )
 

@@ -1740,14 +1740,6 @@ cc_library(
     visibility = ["//visibility:private"],
 )
 
-seekdb_test_interface(
-    name = "share_unit_test_interface",
-    deps = [
-        ":_share_implementation_headers",
-    ] + _SHARE_RUNTIME_DEPS,
-    visibility = ["//unittest:__subpackages__"],
-)
-
 _SHARE_UNIT_TEST_DEPS = [
     ":autoincrement_runtime",
     ":max_id_allocation",
@@ -1807,6 +1799,16 @@ cc_library(
     visibility = ["//unittest/share:__pkg__"],
 )
 
+seekdb_test_interface(
+    name = "share_unit_test_interface",
+    deps = [
+        ":_share_implementation_headers",
+    ] + _SHARE_UNIT_TEST_DEPS + _SHARE_RUNTIME_OBLIB_DEPS + [
+        ":share_test_support",
+        "//bazel/third_party:roaring_headers",
+    ],
+    visibility = ["//unittest:__subpackages__"],
+)
 
 _SHARE_RUNTIME_UNITY_GROUPS = remaining_unity_groups(
     SHARE_UNITY_GROUPS,
