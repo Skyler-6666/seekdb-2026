@@ -465,6 +465,7 @@ _SHARE_SEMANTIC_HEADER_TARGETS = {
     "redo_log_storage": struct(
         hdrs = [
             "ob_local_device.h",
+            "wasm_aio.h",
         ],
         deps = [
             ":io_device_interface",
