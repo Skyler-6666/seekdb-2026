@@ -27,6 +27,11 @@ direct-distance, extra-info, or no-GPU query actually needs CPU fallback, seekdb
 builds the sidecar from that buffer once and then uses the normal incremental
 VSAG path. `lib=vsag` behavior is unchanged.
 
+The bridge also maps the SQL HNSW parameter `M` to CAGRA's recommended graph
+layout (`graph_degree = 2 * M`, `intermediate_graph_degree = 3 * M`) instead of
+always using cuVS defaults. The original `seekdb_cuvs_build` ABI remains valid;
+the new `seekdb_cuvs_build_ex` entry is used when seekdb has HNSW parameters.
+
 The product integration lives in:
 
 - [`ob_vsag_adaptor.cpp`](../../src/oblib/lib/vector/ob_vsag_adaptor.cpp):

@@ -20,6 +20,10 @@ int seekdb_cuvs_cagra_knn(const float* base, long n, long dim,
  *  - seekdb_cuvs_free: releases the handle.
  * All ROCm/cuVS state lives inside the .so; seekdb only ever sees these C symbols. */
 void* seekdb_cuvs_build(const float* base, long n, long dim);
+/* Build with explicit CAGRA graph parameters. graph_degree/intermediate_graph_degree
+ * use zero to retain the cuVS defaults. */
+void* seekdb_cuvs_build_ex(const float* base, long n, long dim,
+                           long graph_degree, long intermediate_graph_degree);
 int   seekdb_cuvs_search(void* handle, const float* query, long nq, long topk,
                          unsigned int* out_ids, float* out_dist);
 void  seekdb_cuvs_free(void* handle);
