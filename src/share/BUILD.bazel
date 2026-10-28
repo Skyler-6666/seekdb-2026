@@ -532,6 +532,7 @@ seekdb_semantic_unity_cc_library(
     implementation_deps = [
         "//rust:local",
         ":cluster_version_interface",
+        ":local_storage_interface",
         ":error_codes",
         ":io",
         ":resource_limit_interface",
