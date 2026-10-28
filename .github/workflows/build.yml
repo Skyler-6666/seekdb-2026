@@ -19,7 +19,7 @@ concurrency:
 env:
   XDG_CACHE_HOME: ${{ github.workspace }}/.cache
   CCACHE_DIR: ${{ github.workspace }}/.ccache
-  SEEKDB_CCACHE_MAX_SIZE: 9G
+  SEEKDB_CCACHE_MAX_SIZE: 4G
 
 jobs:
   # Fast compile sanity of the sql side with the Bazel module targets.
@@ -30,7 +30,7 @@ jobs:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 30720
+          root-reserve-mb: 10240
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
@@ -69,7 +69,7 @@ jobs:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 30720
+          root-reserve-mb: 10240
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
@@ -91,6 +91,9 @@ jobs:
           key: ccache-seekdb-${{ github.run_number }}
           restore-keys: |
             ccache-seekdb-
+
+      - name: Trim restored ccache
+        run: ccache -M 4G && ccache -c || true
 
       - name: Compile seekdb
         env:
@@ -126,7 +129,7 @@ jobs:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 30720
+          root-reserve-mb: 10240
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
@@ -148,6 +151,9 @@ jobs:
           key: ccache-seekdb-${{ github.run_number }}
           restore-keys: |
             ccache-seekdb-
+
+      - name: Trim restored ccache
+        run: ccache -M 4G && ccache -c || true
 
       - name: Compile seekdb (ccache warm)
         env:
