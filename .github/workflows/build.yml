@@ -99,6 +99,14 @@ jobs:
           MAKE_ARGS: -j2
         run: .github/script/seekdb/compile.sh
 
+      - name: Dump parser diagnostics on failure
+        if: failure()
+        run: |
+          echo "=== _gen_parser.error ==="
+          cat src/sql/parser/_gen_parser.error 2>/dev/null || true
+          echo "=== _gen_parser.output (tail) ==="
+          tail -50 src/sql/parser/_gen_parser.output 2>/dev/null || true
+
       - name: Verify artifacts
         run: |
           test -x build_release/src/observer/seekdb

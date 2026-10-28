@@ -287,7 +287,7 @@ END_P SET_VAR DELIMITER
         EXTENDED EXCLUSIVE EXTENDED_NOADDR EXTENT_SIZE EXTRACT EXCEPT EXPIRED ENCODING EMPTY_FIELD_AS_NULL EUCLIDEAN
 
         FAIL FAILOVER FAST FAULTS FIELDS FILEX FIRST FIRST_VALUE FIXED FLUSH FORMAT
-        FOUND FORK FREEZE FREQUENCY FUNCTION FOLLOWING FLASHBACK FULL FRAGMENTATION FROZEN FILE_ID FILTER
+        FOUND FORK FREEZE FREQUENCY FUNCTION FUNCTIONS FOLLOWING FLASHBACK FULL FRAGMENTATION FROZEN FILE_ID FILTER
         FIELD_OPTIONALLY_ENCLOSED_BY FIELD_DELIMITER FIELD_ENCLOSED_BY FILE_EXTENSION
 
         GENERAL GEOMETRY GEOMCOLLECTION GEOMETRYCOLLECTION GET_FORMAT GLOBAL GRANTS GROUP_CONCAT GROUPING
@@ -498,7 +498,6 @@ END_P SET_VAR DELIMITER
 %type <node> dynamic_sampling_hint
 %type <node> skip_index_type opt_skip_index_type_list
 %type <node> vec_index_params vec_index_param vec_index_param_value opt_with_vector_index_parameters
-%type <node> table_function_expr table_function_arguments table_function_column_aliases
 %type <node> json_table_expr unnest_expr mock_jt_on_error_on_empty jt_column_list json_table_column_def
 %type <node> json_table_ordinality_column_def json_table_exists_column_def json_table_value_column_def json_table_nested_column_def
 %type <node> opt_value_on_empty_or_error_or_mismatch opt_on_mismatch
@@ -10838,10 +10837,6 @@ tbl_name
 {
   $$ = $1;
 }
-| table_function_expr
-{
-  $$ = $1;
-}
 | json_table_expr
 {
   $$ = $1;
@@ -12636,15 +12631,7 @@ CLASS_ORIGIN
  *
  *****************************************************************************/
 show_stmt:
-SHOW TABLE FUNCTIONS
-{ malloc_terminal_node($$, result->malloc_pool_, T_SHOW_TABLE_FUNCTIONS); }
-| DESCRIBE TABLE FUNCTION relation_name
-{ malloc_non_terminal_node($$, result->malloc_pool_, T_DESCRIBE_TABLE_FUNCTION, 1, $4); }
-| DESCRIBE TABLE FUNCTION table_function_expr
-{ malloc_non_terminal_node($$, result->malloc_pool_, T_DESCRIBE_TABLE_FUNCTION, 1, $4); }
-| DESCRIBE TABLE FUNCTION json_table_expr
-{ malloc_non_terminal_node($$, result->malloc_pool_, T_DESCRIBE_TABLE_FUNCTION, 1, $4); }
-| SHOW opt_extended_or_full TABLES opt_from_or_in_database_clause opt_show_condition
+SHOW opt_extended_or_full TABLES opt_from_or_in_database_clause opt_show_condition
 {
   ParseNode *value = NULL;
   malloc_terminal_node(value, result->malloc_pool_, T_INT);
@@ -17618,39 +17605,6 @@ literal
 }
 ;
 
-table_function_column_aliases:
-/* empty */ { $$ = NULL; }
-| '(' relation_name_list ')' { $$ = $2; }
-;
-
-table_function_arguments:
-/* empty */ { $$ = NULL; }
-| expr_list { $$ = $1; }
-;
-
-table_function_expr:
-relation_name '(' table_function_arguments ')' %prec LOWER_PARENS
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_FUNCTION_CALL, 4, $1, $3, NULL, NULL);
-}
-| relation_name '(' table_function_arguments ')' relation_name
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_FUNCTION_CALL, 4, $1, $3, $5, NULL);
-}
-| relation_name '(' table_function_arguments ')' AS relation_name
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_FUNCTION_CALL, 4, $1, $3, $6, NULL);
-}
-| relation_name '(' table_function_arguments ')' relation_name '(' relation_name_list ')'
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_FUNCTION_CALL, 4, $1, $3, $5, $7);
-}
-| relation_name '(' table_function_arguments ')' AS relation_name '(' relation_name_list ')'
-{
-  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_FUNCTION_CALL, 4, $1, $3, $6, $8);
-}
-;
-
 unreserved_keyword:
 unreserved_keyword_for_role_name { $$=$1;}
 | unreserved_keyword_ambiguous_roles { $$=$1;}
@@ -17663,7 +17617,8 @@ unreserved_keyword_normal { $$=$1;}
 ;
 
 unreserved_keyword_normal:
-ACCOUNT
+FUNCTIONS
+| ACCOUNT
 |       ACTION
 |       ACTIVE
 |       ADDDATE
