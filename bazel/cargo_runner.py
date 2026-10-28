@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -83,7 +84,14 @@ if target:
     environment["AR_" + target] = str(ar)
     # MSVC Rust targets use link.exe syntax, not the C compiler's syntax.
     if not target.endswith("_msvc"):
-        environment["CARGO_TARGET_" + target.upper() + "_LINKER"] = str(cc)
+        linker = str(cc)
+        if (sys.platform.startswith("linux") and not args.target
+                and Path("/usr/bin/gcc").is_file()):
+            # Rust host build scripts must link against the host glibc. The
+            # pinned devtoolchain linker predates the relr.dyn section used by
+            # current Ubuntu runners.
+            linker = "/usr/bin/gcc"
+        environment["CARGO_TARGET_" + target.upper() + "_LINKER"] = linker
 command = args.command[1:] if args.command[:1] == ["--"] else args.command
 for index, argument in enumerate(command):
     for key in ("CARGO_WORKSPACE", "CARGO_TARGET_DIR", "CARGO"):
