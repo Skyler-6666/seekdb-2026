@@ -1,5 +1,11 @@
 package(default_visibility = ["//visibility:public"])
 
+cc_library(
+    name = "ob_gpu_hnsw_plugin_api",
+    hdrs = ["ob_gpu_hnsw_plugin.h"],
+    includes = ["."],
+)
+
 # The plugin is a standalone hipVS artifact. It is never part of the default
 # seekdb build or link graph. Building this target explicitly requires HIPVS_ROOT
 # (plus DLPACK_INCLUDE_DIR when the headers are not in HIPVS_ROOT).
