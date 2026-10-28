@@ -39,8 +39,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <string>
-#include <vector>
+#include <limits>
+#include <mutex>
 
 #include <cuvs/core/c_api.h>
 #include <cuvs/distance/distance.h>
@@ -70,13 +70,22 @@ void noop_tensor_deleter(DLManagedTensor *tensor)
   (void)tensor;
 }
 
-void set_message(char *message, size_t message_size, const std::string &text)
+void set_message(char *message, size_t message_size, const char *text)
 {
   if (message == nullptr || message_size == 0) {
     return;
   }
-  snprintf(message, message_size, "%s", text.c_str());
+  snprintf(message, message_size, "%s", text);
 }
+
+/*
+ * Keep a single hipVS workspace in flight per process. Database index builds
+ * can run concurrently, but sharing a CAGRA workspace across threads is not
+ * part of the hipVS C API contract. Serializing entry to the plugin prevents
+ * device allocations and graph construction from racing while still allowing
+ * the caller to schedule multiple index-build tasks.
+ */
+std::mutex g_gpu_build_mutex;
 
 /* Map the plugin metric to the cuVS distance type. */
 cuvsDistanceType to_cuvs_metric(int32_t metric)
@@ -179,8 +188,8 @@ extern "C" int ob_gpu_hnsw_build(const ObGpuHnswBuildParam *param, ObGpuHnswBuil
   cuvsHnswIndexParams_t hnsw_params = nullptr;
   cuvsHnswIndex_t hnsw_index = nullptr;
   float *host_vectors = nullptr;
-  std::vector<int64_t> shape(2);
-  std::vector<int64_t> strides(2);
+  int64_t shape[2] = {0, 0};
+  int64_t strides[2] = {0, 0};
   DLManagedTensor dataset;
   char temp_path[] = "/tmp/ob_gpu_hnsw_XXXXXX";
   bool temp_file_created = false;
@@ -192,6 +201,7 @@ extern "C" int ob_gpu_hnsw_build(const ObGpuHnswBuildParam *param, ObGpuHnswBuil
     set_message(result->message_, sizeof(result->message_), "invalid build parameter");
     return OB_GPU_BUILD_ERR_INVALID_PARAM;
   }
+  std::lock_guard<std::mutex> build_guard(g_gpu_build_mutex);
   if (ob_gpu_hnsw_available() == 0) {
     set_message(result->message_, sizeof(result->message_), "no usable AMD GPU");
     return OB_GPU_BUILD_ERR_UNAVAILABLE;
@@ -210,12 +220,24 @@ extern "C" int ob_gpu_hnsw_build(const ObGpuHnswBuildParam *param, ObGpuHnswBuil
   }
 
   const size_t vector_count = static_cast<size_t>(param->n_rows_) * static_cast<size_t>(param->dim_);
-  host_vectors = static_cast<float *>(malloc(vector_count * sizeof(float)));
-  if (host_vectors == nullptr) {
+  const size_t max_size = std::numeric_limits<size_t>::max();
+  if (static_cast<size_t>(param->n_rows_) > max_size / static_cast<size_t>(param->dim_)
+      || vector_count > max_size / sizeof(float)) {
+    set_message(result->message_, sizeof(result->message_), "vector buffer size overflow");
+    return OB_GPU_BUILD_ERR_INVALID_PARAM;
+  }
+  const size_t vector_bytes = vector_count * sizeof(float);
+  const hipError_t alloc_status = hipHostMalloc(
+      reinterpret_cast<void **>(&host_vectors), vector_bytes, hipHostMallocDefault);
+  if (alloc_status != hipSuccess || host_vectors == nullptr) {
+    if (host_vectors != nullptr) {
+      hipHostFree(host_vectors);
+      host_vectors = nullptr;
+    }
     set_message(result->message_, sizeof(result->message_), "out of memory while copying vectors");
     return OB_GPU_BUILD_ERR_OUT_OF_MEMORY;
   }
-  memcpy(host_vectors, param->vectors_, vector_count * sizeof(float));
+  memcpy(host_vectors, param->vectors_, vector_bytes);
 
   shape[0] = param->n_rows_;
   shape[1] = param->dim_;
@@ -226,8 +248,8 @@ extern "C" int ob_gpu_hnsw_build(const ObGpuHnswBuildParam *param, ObGpuHnswBuil
   dataset.dl_tensor.device = DLDevice{kDLCPU, 0};
   dataset.dl_tensor.ndim = 2;
   dataset.dl_tensor.dtype = DLDataType{kDLFloat, 32, 1};
-  dataset.dl_tensor.shape = shape.data();
-  dataset.dl_tensor.strides = strides.data();
+  dataset.dl_tensor.shape = shape;
+  dataset.dl_tensor.strides = strides;
   dataset.manager_ctx = nullptr;
   dataset.deleter = noop_tensor_deleter;
 
@@ -359,7 +381,9 @@ cleanup:
   if (resources != nullptr) {
     cuvsResourcesDestroy(resources);
   }
-  free(host_vectors);
+  if (host_vectors != nullptr) {
+    hipHostFree(host_vectors);
+  }
   result->build_seconds_ = elapsed_seconds(start);
   if (status != OB_GPU_BUILD_OK) {
     ob_gpu_hnsw_free_result(result);
