@@ -1625,6 +1625,7 @@ _SHARE_RUNTIME_DEPS = [
     "//src/oblib/easy:easy",
     "//src/oblib:common_sql_mode",
     "//src/oblib:oblib_foundation",
+    "//src/oblib:oblib_mysql_client_services",
     ":log_protocol",
     ":statement_type",
     ":transaction_id",
