@@ -213,6 +213,12 @@ hipVS 有两种把 CAGRA 图转成 HNSW 的方式，序列化出来的字节流�
 插件查找顺序：`$OB_GPU_HNSW_PLUGIN_PATH`（文件或目录）→ observer 可执行文件同级
 目录 → `/usr/local/lib` → `/usr/lib` → 当前目录。
 
+GPU 插件独立于主构建目标。不安装 ROCm 时，Bazel 默认构建和 CMake 默认配置都
+不会编译 `.cu` 文件；observer 只编译 CPU 插件客户端和序列化校验代码。
+插件为每次构建把输入向量复制到 `hipHostMalloc` 分配的 pinned host buffer，
+无论 CAGRA、HNSW 转换、序列化或读回在哪一步失败，都会在统一清理路径调用
+`hipHostFree`，同时销毁 cuVS resources、index、params 并删除临时文件。
+
 ### 3.3 降级策略
 
 | 情况 | 行为 |
@@ -223,6 +229,7 @@ hipVS 有两种把 CAGRA 图转成 HNSW 的方式，序列化出来的字节流�
 | 索引带 extra info 列 | 不走 GPU 路径 |
 | 缓冲的向量超过 `OB_GPU_HNSW_MAX_BYTES`（默认 4GB） | 把已缓冲的写入索引，标记 fallback，之后增量构建 |
 | GPU 建图或加载失败 | 记 warn 日志，用同一批缓冲数据走 CPU 路径重建 |
+| 多个索引同时构建 | 进程级 GPU 构建锁串行进入 hipVS，资源独立创建/释放，互不覆盖 |
 
 **关于 cosine 的排除**：VSAG 对 cosine 索引会自己做归一化
 （`hnsw_zparameters.cpp:44` 里 `obj.normalize = true`），而反序列化时它会额外读
@@ -260,6 +267,31 @@ space 计算，所以 IP 的两种写法差异不影响正确性。
 | seekdb | Linux，源码编译（Bazel） |
 
 ### 4.2 编译插件
+
+不开启 HIP 选项时，纯 CPU 构建不受影响：
+
+```bash
+# 默认 Bazel 构建不会看到或编译 .cu
+python3 build.py build //src/observer:seekdb
+
+# 显式构建独立插件，默认目标不需要这个 define
+python3 build.py build --define=hip_hnsw=enabled \
+    --action_env=HIPVS_ROOT=/opt/hipvs \
+    --action_env=DLPACK_INCLUDE_DIR=/opt/hipvs/include \
+    //src/oblib/lib/vector/gpu:ob_gpu_hnsw_plugin
+```
+
+CMake 同样默认关闭，只有打开下面的选项才调用 `hipcc`：
+
+```bash
+cmake -S src/oblib/lib/vector/gpu -B build-gpu-hnsw \
+    -DSEEKDB_ENABLE_HIP_HNSW_PLUGIN=ON \
+    -DHIPVS_ROOT=/opt/hipvs \
+    -DDLPACK_INCLUDE_DIR=/opt/hipvs/include
+cmake --build build-gpu-hnsw
+```
+
+也可以直接使用安装脚本：
 
 ```bash
 cd src/oblib/lib/vector/gpu
@@ -393,8 +425,10 @@ bazel test //unittest/oblib:test_hnsw_serial_format
 4. **内存开销**。GPU 路径需要在内存里缓冲整个 tablet 的向量，预算由
    `OB_GPU_HNSW_MAX_BYTES` 控制（默认 4GB）。超过预算会自动退回增量 CPU 构建。
    后续可以考虑按 tablet 之外再分片。
-5. **多 tablet 并发**。多个 tablet 同时建图会同时占用显存，需要在插件里加
-   一个信号量限制并发数。当前版本依赖 CAGRA 自身的显存申请，暂未限制。
+5. **多 tablet 并发**。插件用进程级互斥锁串行进入 hipVS，避免多个 CAGRA
+   workspace 同时申请显存或争用运行时资源；业务任务仍可并发提交，后到任务
+   等待前一次 GPU 构建完成。若前一次 GPU 构建失败，当前任务直接回退 CPU，
+   不会复用未完成的 GPU 状态。
 
 ---
 

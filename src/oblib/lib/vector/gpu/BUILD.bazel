@@ -1,0 +1,25 @@
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "hip_hnsw_enabled",
+    define_values = {"hip_hnsw": "enabled"},
+)
+
+# The plugin is a standalone hipVS artifact. It is never part of the default
+# seekdb build or link graph; enabling it requires an explicit Bazel define and
+# HIPVS_ROOT (plus DLPACK_INCLUDE_DIR when the headers are not in HIPVS_ROOT).
+genrule(
+    name = "ob_gpu_hnsw_plugin",
+    srcs = [
+        "build_plugin.sh",
+        "ob_gpu_hnsw_plugin.cu",
+        "ob_gpu_hnsw_plugin.h",
+    ],
+    outs = ["libob_gpu_hnsw_plugin.so"],
+    cmd = "OUTPUT_DIR=$$(dirname \"$(OUTS)\") bash $(location build_plugin.sh)",
+    tags = ["manual", "local", "no-sandbox"],
+    target_compatible_with = select({
+        ":hip_hnsw_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
