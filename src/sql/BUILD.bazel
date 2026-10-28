@@ -3,6 +3,7 @@ load(
     "MODULE_CXX_COPTS",
     "X86_SIMD_COPTS",
     "grouped_unity_cc_library",
+    "seekdb_test_interface",
     "cc_library",
 )
 load(
@@ -208,13 +209,12 @@ cc_library(
 # White-box unit tests include both the public SQL seam and implementation
 # headers. Keep the private header owner private while exposing one aggregate
 # target to the test packages.
-cc_library(
+seekdb_test_interface(
     name = "sql_unit_test_interface",
     deps = [
         ":sql_runtime_internal_headers",
         ":sql_runtime_interface",
     ],
-    tags = ["manual"],
     visibility = ["//unittest:__subpackages__"],
 )
 

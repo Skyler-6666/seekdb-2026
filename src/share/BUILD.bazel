@@ -2,6 +2,7 @@ load(
     "//bazel:defs.bzl",
     "unity_cc_library",
     "grouped_unity_cc_library",
+    "seekdb_test_interface",
     "cc_library",
 )
 load(
@@ -1739,12 +1740,11 @@ cc_library(
     visibility = ["//visibility:private"],
 )
 
-cc_library(
+seekdb_test_interface(
     name = "share_unit_test_interface",
     deps = [
         ":_share_implementation_headers",
     ] + _SHARE_RUNTIME_DEPS,
-    tags = ["manual"],
     visibility = ["//unittest:__subpackages__"],
 )
 

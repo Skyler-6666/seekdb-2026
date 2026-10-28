@@ -6,6 +6,7 @@ load(
     "cc_import",
     "final_link",
     "grouped_unity_cc_library",
+    "seekdb_test_interface",
     "version_source",
     "cc_library",
 )
@@ -208,10 +209,9 @@ cc_library(
     visibility = ["//src/wasm:__pkg__"],
 )
 
-alias(
+seekdb_test_interface(
     name = "observer_unit_test_interface",
-    actual = ":observer_internal_interface",
-    tags = ["manual"],
+    deps = [":observer_internal_interface"],
     visibility = ["//unittest:__subpackages__"],
 )
 
