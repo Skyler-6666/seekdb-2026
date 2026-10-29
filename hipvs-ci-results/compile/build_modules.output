@@ -1,34 +1,30 @@
 Downloading Bazel: https://releases.bazel.build/9.3.0/release/bazel-9.3.0-linux-x86_64
 Starting local Bazel server (9.3.0) and connecting to it...
-INFO: Invocation ID: 6a67dce6-1d10-4f6f-8b6d-edaef4fec6b7
+INFO: Invocation ID: 9965e9ed-9c54-4c7f-9202-08e1752fbe47
+Computing main repo mapping: 
 Computing main repo mapping: 
 Computing main repo mapping: 
 Loading: 
 Loading: 0 packages loaded
 Loading: 0 packages loaded
-    currently loading: src/sql ... (2 packages)
-Loading: 2 packages loaded
+    currently loading: src/share ... (2 packages)
+Analyzing: 2 targets (2 packages loaded)
 Analyzing: 2 targets (6 packages loaded, 6 targets configured)
 Analyzing: 2 targets (6 packages loaded, 6 targets configured)
 
-Analyzing: 2 targets (23 packages loaded, 21 targets configured)
+Analyzing: 2 targets (60 packages loaded, 21 targets configured)
 
-Analyzing: 2 targets (65 packages loaded, 21 targets configured)
+Analyzing: 2 targets (83 packages loaded, 373 targets configured)
 
-Analyzing: 2 targets (78 packages loaded, 147 targets configured)
-
-Analyzing: 2 targets (105 packages loaded, 3981 targets configured)
+Analyzing: 2 targets (113 packages loaded, 10485 targets configured)
 
 Analyzing: 2 targets (113 packages loaded, 13731 targets configured)
 
-Analyzing: 2 targets (113 packages loaded, 13731 targets configured)
-
-Analyzing: 2 targets (114 packages loaded, 13944 targets configured, 193 aspect applications)
+Analyzing: 2 targets (114 packages loaded, 14008 targets configured, 234 aspect applications)
 [1 / 1] no actions running
 INFO: Analyzed 2 targets (114 packages loaded, 14008 targets configured, 672 aspect applications).
-[1 / 1] no actions running
 INFO: Found 2 targets...
-INFO: Elapsed time: 37.092s, Critical Path: 0.10s
+INFO: Elapsed time: 27.979s, Critical Path: 0.06s
 INFO: 1 process: 1 internal.
 INFO: Build completed successfully, 1 total action
 GPU HNSW plugin: hipcc not found, keeping the CPU HNSW build
