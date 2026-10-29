@@ -98,7 +98,9 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
     int64_t token_len = 0;
     // to next non-whitespace pos
     while (OB_SUCC(ret) && found_delimiter()) {
-      const int64_t c_len = ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
+      const int64_t c_len = cs_->mbminlen == 1
+          && static_cast<unsigned char>(doc[trav_pos_]) < 0x80
+          ? 1 : ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
       trav_pos_ += c_len;
       if (trav_pos_ >= doc_len || 0 == c_len) {// if char is invalid, just skip the rest of document
         iter_end_ = true;
@@ -112,7 +114,9 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
 
     // to next whitespace pos
     while (OB_SUCC(ret) && !found_delimiter()) {
-      const int64_t c_len = ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
+      const int64_t c_len = cs_->mbminlen == 1
+          && static_cast<unsigned char>(doc[trav_pos_]) < 0x80
+          ? 1 : ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
       trav_pos_ += c_len;
       token_len += c_len;
       if (trav_pos_ >= doc_len || 0 == c_len) {
@@ -137,7 +141,7 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
 bool ObTextWhitespaceTokenizer::found_delimiter()
 {
   const unsigned char c = static_cast<unsigned char>(*(input_doc_->ptr_ + trav_pos_));
-  if (c < 0x80) {
+  if (cs_->mbminlen == 1 && c < 0x80) {
     // For ASCII, every non-alphanumeric byte is a delimiter under the
     // supported text collations. Avoid three collation-aware calls per byte.
     return !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
@@ -214,7 +218,11 @@ int ObTokenStopWordNormalizer::filter_special_marks(const ObDatum &check_token, 
   int64_t special_mark_cnt = 0;
   for (int64_t i = 0; i < token_len; ++i) {
     const char *character = token + i;
-    if (ob_ispunct(cs_, *character) || ob_iscntrl(cs_, *character)) {
+    const unsigned char c = static_cast<unsigned char>(*character);
+    const bool special = cs_->mbminlen == 1 && c < 0x80
+        ? !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+        : (ob_ispunct(cs_, *character) || ob_iscntrl(cs_, *character));
+    if (special) {
       special_mark_cnt++;
     }
   }
@@ -263,9 +271,16 @@ int ObBasicEnglishNormalizer::get_next(ObDatum &next_token, int64_t &token_freq)
         const uint32_t raw_token_len = tmp_datum.len_;
         uint32_t first_alnum_pos = 0;
         uint32_t last_alnum_pos = raw_token_len - 1;
+        auto is_alnum = [&](char c) -> bool {
+          const unsigned char byte = static_cast<unsigned char>(c);
+          return cs_->mbminlen == 1 && byte < 0x80
+              ? ((byte >= '0' && byte <= '9') || (byte >= 'A' && byte <= 'Z')
+                 || (byte >= 'a' && byte <= 'z'))
+              : ob_isalnum(cs_, c);
+        };
         for (uint32_t i = 0; i < raw_token_len; ++i) {
           const char *character = token + i;
-          if (ob_isalnum(cs_, *character)) {
+          if (is_alnum(*character)) {
             first_alnum_pos = i;
             found_alnum = true;
             break;
@@ -274,7 +289,7 @@ int ObBasicEnglishNormalizer::get_next(ObDatum &next_token, int64_t &token_freq)
 
         for (int32_t i = raw_token_len - 1; 0 <= i && i < raw_token_len && i >= first_alnum_pos; --i) {
           const char *character = token + i;
-          if (ob_isalnum(cs_, *character)) {
+          if (is_alnum(*character)) {
             last_alnum_pos = i;
             found_alnum = true;
             break;
