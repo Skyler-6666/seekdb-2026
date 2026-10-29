@@ -161,6 +161,14 @@ public:
       common::ObIAllocator *allocator,
       const common::ObString &parser_name,
       const common::ObString &parser_properties);
+  // Use a stable allocator for cached parser objects and a transient allocator
+  // for per-document data. Callers that reset the transient arena between
+  // documents must use this overload.
+  int init(
+      common::ObIAllocator *allocator,
+      common::ObIAllocator *parser_allocator,
+      const common::ObString &parser_name,
+      const common::ObString &parser_properties);
   /**
    * Split document into multiple words
    *
@@ -220,6 +228,7 @@ private:
   void free_cached_iter();
 private:
   common::ObIAllocator *allocator_;
+  common::ObIAllocator *parser_allocator_;
   const ObIFTParserDesc *parser_desc_;
   ObFTParser parser_name_;
   ObAddWordFlag add_word_flag_;
@@ -230,6 +239,7 @@ private:
   mutable ObITokenIterator *cached_iter_;
   mutable const ObIFTParserDesc *cached_desc_;
   mutable common::ObIAllocator *cached_allocator_;
+  bool enable_parser_reuse_;
 
 private:
   static constexpr const char *ENTRY_NAME_DOC_LEN = "doc_len";
