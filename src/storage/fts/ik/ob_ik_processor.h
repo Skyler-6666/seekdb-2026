@@ -86,6 +86,7 @@ private:
   ObFTCharUtil::CharType next_char_type_;
 
   uint32_t handle_size_;
+  bool ascii_compatible_;
   bool is_smart_;
 
   ObFTSortList token_list_;

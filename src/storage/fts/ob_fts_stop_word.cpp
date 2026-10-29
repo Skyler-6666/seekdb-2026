@@ -82,8 +82,14 @@ int ObStopWordChecker::check_stopword(const ObFTWord &word, bool &is_stopword)
     ret = OB_INVALID_ARGUMENT;
   } else {
     const ObString &word_string = word.get_word().get_string();
-    if (word_string.length() >= FTS_STOP_WORD_MAX_LENGTH) {
-      // Every built-in stop word is shorter than the fixed string buffer.
+    bool ascii = true;
+    for (int64_t i = 0; ascii && i < word_string.length(); ++i) {
+      ascii = static_cast<unsigned char>(word_string.ptr()[i]) < 0x80;
+    }
+    if (ascii && word_string.length() >= FTS_STOP_WORD_MAX_LENGTH) {
+      // Every built-in stop word is shorter than the fixed string buffer. Keep
+      // non-ASCII tokens on the conversion path because the collation may map
+      // full-width characters to an ASCII stop word.
       is_stopword = false;
     } else {
       common::ObString cmp_str = word_string;
