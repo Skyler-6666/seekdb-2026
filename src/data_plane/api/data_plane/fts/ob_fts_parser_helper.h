@@ -215,7 +215,7 @@ private:
       const char *fulltext,
       const int64_t fulltext_len,
       common::ObIAllocator &allocator,
-      ObAddWord &add_word);
+      ObAddWord &add_word) const;
   int set_add_word_flag(const ObIFTParserDesc &ftparser_desc);
   void free_cached_iter();
 private:
