@@ -7,28 +7,36 @@ int main(void)
   unsigned ids[200];
   assert(seekdb_cuvs_build(base, 256, 0) == NULL);
   assert(seekdb_cuvs_build(NULL, 256, 4) == NULL);
+  fail_allocation = allocations + 1;
+  assert(seekdb_cuvs_build(base, 256, 4) == NULL && live == 0);
+  fail_allocation = 0;
+  fail_copy = copies + 1;
+  assert(seekdb_cuvs_build(base, 256, 4) == NULL && live == 0);
+  fail_copy = 0;
+  const int before_build = allocations;
+  const int before_frees = frees;
   void *h = seekdb_cuvs_build(base, 256, 4);
   assert(h);
   assert(seekdb_cuvs_search(h, query, 1, 10, ids, distances) == 0);
-  assert(allocations == 3 && live == 3 && distances[0] == 3);
+  assert(allocations == before_build + 4 && live == 4 && distances[0] == 3);
   query[0] = 7;
   for (int j = 0; j < 4096; ++j)
     assert(seekdb_cuvs_search(h, query, 1, 10, ids, distances) == 0);
-  assert(allocations == 3 && frees == 0 && distances[0] == 7);
+  assert(allocations == before_build + 4 && frees == before_frees && distances[0] == 7);
   // Failed cache growth preserves the old scratch buffers and frees partial allocations.
   fail_allocation = allocations + 2;
   assert(seekdb_cuvs_search(h, query, 1, 100, ids, distances) == 11);
-  assert(live == 3);
+  assert(live == 4);
   fail_allocation = 0;
   assert(seekdb_cuvs_search(h, query, 1, 10, ids, distances) == 0);
   assert(seekdb_cuvs_search(h, query, 1, 100, ids, distances) == 0);
   int after_growth = allocations;
-  assert(live == 3 && ids[99] == 99 && distances[99] == 106);
+  assert(live == 4 && ids[99] == 99 && distances[99] == 106);
   assert(seekdb_cuvs_search(h, query, 1, 10, ids, NULL) == 0);
   assert(allocations == after_growth);
   // A batch call does not retain its larger scratch allocations.
   assert(seekdb_cuvs_search(h, query, 2, 100, ids, distances) == 0);
-  assert(live == 3);
+  assert(live == 4);
   fail_copy = copies + 3;
   assert(seekdb_cuvs_search(h, query, 1, 10, ids, distances) == 17);
   fail_copy = 0;

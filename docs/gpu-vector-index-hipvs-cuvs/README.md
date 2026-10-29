@@ -1,5 +1,8 @@
 # hipVS/cuVS GPU vector backend
 
+This branch is the isolated IVF-PQ experiment, not the submission branch.
+See [IVFPQ_GPU_EXPERIMENT.md](IVFPQ_GPU_EXPERIMENT.md) for its unverified status.
+
 The latest GPU measurements and current builder choice are documented in
 [GPU_TUNING_RESULTS.md](GPU_TUNING_RESULTS.md). Iterative construction regressed
 in these diagnostics; the submission branch uses V5 NN-Descent again.
