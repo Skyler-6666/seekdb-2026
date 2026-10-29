@@ -1,8 +1,8 @@
 # hipVS/cuVS GPU vector backend
 
-The latest optimization candidate and its verification limits are documented in
-[ITERATIVE_BUILD_CANDIDATE.md](ITERATIVE_BUILD_CANDIDATE.md). The first candidate's
-historical report is in [BUILD_REPORT.md](BUILD_REPORT.md).
+The latest GPU measurements and current builder choice are documented in
+[GPU_TUNING_RESULTS.md](GPU_TUNING_RESULTS.md). Iterative construction regressed
+in these diagnostics; the submission branch uses V5 NN-Descent again.
 
 Status: **Phase 1 implemented and review-gated** on AMD `gfx1100` with ROCm
 7.2.4. This directory documents the current integration and its reproducible

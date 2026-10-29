@@ -2,6 +2,9 @@
 
 ## Evidence and target
 
+Update: this experiment regressed in real GPU bridge measurements and has been
+withdrawn from the submission branch. See [GPU_TUNING_RESULTS.md](GPU_TUNING_RESULTS.md).
+
 The user reported the official result for `556065c62578673d6313f2fdd798cc8753cbb662`:
 
 ```text

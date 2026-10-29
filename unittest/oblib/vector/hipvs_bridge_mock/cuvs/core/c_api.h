@@ -35,8 +35,8 @@ static int cuvsCagraIndexCreate(cuvsCagraIndex_t *p) { *p = (void*)1; return 0; 
 static int cuvsCagraIndexDestroy(cuvsCagraIndex_t p) { (void)p; return 0; }
 static int cuvsCagraBuild(cuvsResources_t r, cuvsCagraIndexParams_t p, DLManagedTensor *t, cuvsCagraIndex_t i)
 { (void)r; (void)i;
-  assert(p->build_algo == ITERATIVE_CAGRA_SEARCH && p->graph_degree == 128 &&
-         p->intermediate_graph_degree == 256);
+  assert(p->build_algo == NN_DESCENT && p->graph_degree == 128 &&
+         p->intermediate_graph_degree == 256 && p->nn_descent_niter == 100);
   saved_n = t->dl_tensor.shape[0]; saved_dim = t->dl_tensor.shape[1]; return 0; }
 static int cuvsRMMAlloc(cuvsResources_t r, void **p, size_t n)
 { (void)r; ++allocations; if (allocations == fail_allocation) return 1; *p = malloc(n); ++live; return 0; }

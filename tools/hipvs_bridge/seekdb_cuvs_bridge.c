@@ -47,9 +47,7 @@ void* seekdb_cuvs_build(const float* base, long n, long dim)
   dset.dl_tensor.shape = ds; dset.dl_tensor.strides = 0; dset.dl_tensor.byte_offset = 0;
 
   if (cuvsCagraIndexParamsCreate(&h->ip) != CUVS_SUCCESS) goto fail_res;
-  // Keep the V5 graph sizes; use GPU CAGRA search to refine the construction
-  // graph instead of NN-Descent's repeated host graph updates and sampling.
-  h->ip->build_algo = ITERATIVE_CAGRA_SEARCH;
+  h->ip->build_algo = NN_DESCENT;
   h->ip->graph_degree = 128;
   h->ip->intermediate_graph_degree = 256;
   h->ip->nn_descent_niter = 100;
