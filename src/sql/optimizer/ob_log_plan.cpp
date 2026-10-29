@@ -12039,6 +12039,15 @@ int ObLogPlan::prepare_text_retrieval_scan(const ObIArray<ObRawExpr *> &scan_mat
     ObTextRetrievalInfo &tr_info = table_scan->get_text_retrieval_info();
     tr_info.match_expr_ = match_against;
     tr_info.pushdown_match_filter_ = match_pred;
+    if (T_OP_BOOL == match_pred->get_expr_type()
+        && 1 == match_pred->get_param_count()
+        && match_pred->get_param_expr(0) == match_against
+        && NATURAL_LANGUAGE_MODE == match_against->get_mode_flag()) {
+      // A bare MATCH predicate only needs document membership. Avoid computing
+      // BM25 and scanning aggregate statistics when the score is not projected.
+      // Threshold comparisons and score projections keep the full calculation.
+      tr_info.need_calc_relevance_ = false;
+    }
     // The mapping table is absent when the data-table rowkey is used as the document ID.
     table_scan->set_doc_id_index_table_id(tr_info.doc_id_idx_tid_);
     if (table_scan->is_vec_adaptive_scan() || table_scan->is_vec_idx_scan_post_filter()) {
