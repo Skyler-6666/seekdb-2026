@@ -7,7 +7,7 @@ on:
       - competition/fts-fulltext-opt
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -147,3 +147,36 @@ jobs:
             .seekdb_fts_bench/log/
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Publish diagnostics to results branch
+        if: always()
+        run: |
+          set +e
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "seekdb-ci"
+          git config user.email "seekdb-ci@users.noreply.github.com"
+          RESBRANCH="fts-ci-results"
+          git checkout --orphan "$RESBRANCH" >/dev/null 2>&1
+          rm -rf fts-ci-results
+          mkdir -p fts-ci-results
+          {
+            echo "run_id: $GITHUB_RUN_ID"
+            echo "run_number: $GITHUB_RUN_NUMBER"
+            echo "sha: $GITHUB_SHA"
+          } > fts-ci-results/run-meta.txt
+          if [ -d .seekdb_fts_test/work/failures ] && [ -n "$(ls -A .seekdb_fts_test/work/failures 2>/dev/null)" ]; then
+            cp -r .seekdb_fts_test/work/failures fts-ci-results/failures
+          fi
+          if [ -d .seekdb_fts_test/instance/log ] && [ -n "$(ls -A .seekdb_fts_test/instance/log 2>/dev/null)" ]; then
+            mkdir -p fts-ci-results/instance-log
+            find .seekdb_fts_test/instance/log -type f -size -20M -exec cp {} fts-ci-results/instance-log/ \;
+          fi
+          for f in fts_large_bench_score.txt fts_large_bench_report.txt; do
+            if [ -f "$f" ]; then cp "$f" fts-ci-results/; fi
+          done
+          git add -f fts-ci-results >/dev/null 2>&1
+          if git commit -m "ci: diagnostics for run $GITHUB_RUN_NUMBER sha $GITHUB_SHA" >/dev/null 2>&1; then
+            git push --force origin "HEAD:$RESBRANCH" >/dev/null 2>&1 && echo "published diagnostics to branch $RESBRANCH"
+          else
+            echo "no diagnostics to publish"
+          fi
