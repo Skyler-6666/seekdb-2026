@@ -72,14 +72,14 @@ jobs:
           CLIENT_ROOT="$PWD/deps/3rd/u01/obclient"
           export PATH="$CLIENT_ROOT/bin:$PATH"
           export LD_LIBRARY_PATH="$CLIENT_ROOT/lib:$CLIENT_ROOT/lib64:${LD_LIBRARY_PATH:-}"
-          BENCH_DIR="$(mktemp -d /tmp/seekdb-fts-bench.XXXXXX)"
+          BENCH_DIR="$GITHUB_WORKSPACE/.seekdb_fts_bench"
           echo "SEEKDB_FTS_BENCH_DIR=$BENCH_DIR" >> "$GITHUB_ENV"
           python3 .github/script/seekdb/sdb.py start \
             --binary "$PWD/build_release/src/observer/seekdb" \
             --base-dir "$BENCH_DIR" --port 2881 \
-            --parameter memory_budget=4G --parameter cpu_count=4 \
-            --parameter datafile_size=512M --parameter datafile_maxsize=2G \
-            --parameter log_disk_size=4G
+            --parameter memory_budget=2G --parameter cpu_count=2 \
+            --parameter datafile_size=128M --parameter datafile_maxsize=1G \
+            --parameter log_disk_size=2G
           python3 .github/script/seekdb/sdb.py wait-ready \
             --client "$CLIENT_ROOT/bin/obclient" --base-dir "$BENCH_DIR" \
             --host 127.0.0.1 --port 2881 --user root --timeout 600
@@ -116,5 +116,6 @@ jobs:
             fts_large_bench_score.txt
             .seekdb_fts_test/work/failures/
             .seekdb_fts_test/instance/log/
+            .seekdb_fts_bench/log/
           if-no-files-found: ignore
           retention-days: 7
