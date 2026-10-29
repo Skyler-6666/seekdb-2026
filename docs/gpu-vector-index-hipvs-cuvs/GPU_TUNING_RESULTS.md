@@ -47,3 +47,25 @@ validation; the bridge diagnostic cannot measure its observer integration.
 No full-score claim is made. New construction experiments must remain separate
 from the submission branch until measured on both 128- and 256-dimensional
 data, then checked by the official evaluator.
+
+## Built-in IVF-PQ refinement withdrawn
+
+The user supplied a two-round alternating diagnostic on the template 10K x 128
+data with 100 queries. Both versions had Recall@10 and Recall@100 of 1.0.
+
+| Version | Ready seconds | Sampled peak VRAM bytes |
+| --- | --- | --- |
+| V5 round 1 | 1.176538665 | 485339136 |
+| IVF-PQ round 1 | 2.764517145 | 13467451392 |
+| IVF-PQ round 2 | 2.165080087 | 13470920704 |
+| V5 round 2 | 0.598878495 | 550404096 |
+
+The median ready ratio is 0.360155x. The ratio of maximum sampled peaks is
+24.474601x, far above the 1.25x resource target. Sampling every 20 ms provides
+a lower bound on peaks, not an official gate measurement. The runs shared one
+process and later initial VRAM was about 0.5 GB; despite that limitation, this
+is sufficient reason not to promote this path or upscale it to 250K.
+
+Source inspection attributes the large allocation to the fixed GPU refinement
+implementation's per-query candidate-vector lists. A separate bounded GPU
+construction experiment avoids those lists; its performance remains unmeasured.

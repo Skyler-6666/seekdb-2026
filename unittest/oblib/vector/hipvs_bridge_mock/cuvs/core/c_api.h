@@ -44,8 +44,8 @@ static int cuvsCagraIndexCreate(cuvsCagraIndex_t *p) { *p = (void*)1; return 0; 
 static int cuvsCagraIndexDestroy(cuvsCagraIndex_t p) { (void)p; last_error = NULL; return 0; }
 static int cuvsCagraBuild(cuvsResources_t r, cuvsCagraIndexParams_t p, DLManagedTensor *t, cuvsCagraIndex_t i)
 { (void)r; (void)i;
-  assert(p->build_algo == IVF_PQ && p->graph_degree == 128);
-  assert(p->intermediate_graph_degree + 1 <= 256); // frozen GPU refine capacity, including self
+  assert(p->build_algo == IVF_PQ || p->build_algo == NN_DESCENT);
+  assert(p->graph_degree == 128 && p->intermediate_graph_degree == 256);
   assert(t->dl_tensor.device.device_type == kDLCUDA);
   assert(p->graph_build_params->refinement_rate == 8.0f);
   assert(p->graph_build_params->ivf_pq_search_params->lut_dtype == HIP_R_32F);

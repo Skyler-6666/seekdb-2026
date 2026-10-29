@@ -27,7 +27,9 @@ mkdir -p "$(dirname "$OUTPUT")"
   -D__HIP_PLATFORM_AMD__ \
   -I"$HIPVS_ROOT/include" \
   -I"$ROCM_ROOT/include" \
-  "$SCRIPT_DIR/seekdb_cuvs_bridge.c" \
+  -x c "$SCRIPT_DIR/seekdb_cuvs_bridge.c" \
+  -x hip "$SCRIPT_DIR/seekdb_cuvs_graph.hip" \
+  -x none \
   -L"$HIPVS_ROOT/lib" \
   -Wl,-soname,libseekdb_cuvs_bridge.so \
   -Wl,-rpath,"$HIPVS_ROOT/lib:$ROCM_ROOT/lib" \

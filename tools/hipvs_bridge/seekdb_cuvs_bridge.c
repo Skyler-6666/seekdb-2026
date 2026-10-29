@@ -13,11 +13,16 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+int seekdb_cuvs_build_graph(cuvsResources_t res, cuvsCagraIndexParams_t params,
+                           DLManagedTensor* dataset, cuvsCagraIndex_t index,
+                           unsigned int* graph);
+
 typedef struct {
   cuvsResources_t        res;
   cuvsCagraIndexParams_t ip;
   cuvsCagraIndex_t       idx;
   float* device_dataset;
+  unsigned* device_graph;
   long n, dim;
   float *query_buffer, *distance_buffer;
   unsigned *neighbor_buffer;
@@ -40,6 +45,7 @@ void* seekdb_cuvs_build(const float* base, long n, long dim)
   sk_cuvs_index* h = (sk_cuvs_index*)calloc(1, sizeof(*h));
   if (!h) return NULL;
   const size_t dataset_bytes = sizeof(float) * (size_t)n * (size_t)dim;
+  const size_t graph_bytes = sizeof(unsigned) * (size_t)n * 128;
   cuvsIvfPqSearchParams_t build_search = NULL;
   if (cuvsResourcesCreate(&h->res) != CUVS_SUCCESS) { free(h); return NULL; }
 
@@ -49,7 +55,7 @@ void* seekdb_cuvs_build(const float* base, long n, long dim)
   dset.dl_tensor.dtype.code = kDLFloat; dset.dl_tensor.dtype.bits = 32; dset.dl_tensor.dtype.lanes = 1;
   dset.dl_tensor.shape = ds; dset.dl_tensor.strides = 0; dset.dl_tensor.byte_offset = 0;
 
-  // A device dataset selects hipVS's GPU FP32 refinement path. Keep it alive
+  // Construction reads original FP32 vectors on the GPU. Keep them alive
   // because an aligned CAGRA index can retain a view of this allocation.
   if (cuvsRMMAlloc(h->res, (void**)&h->device_dataset, dataset_bytes) != CUVS_SUCCESS) goto fail_res;
   if (cudaMemcpy(h->device_dataset, base, dataset_bytes, cudaMemcpyDefault) != cudaSuccess) goto fail_res;
@@ -57,9 +63,7 @@ void* seekdb_cuvs_build(const float* base, long n, long dim)
   if (cuvsCagraIndexParamsCreate(&h->ip) != CUVS_SUCCESS) goto fail_res;
   h->ip->build_algo = IVF_PQ;
   h->ip->graph_degree = 128;
-  // GPU refinement returns one extra neighbor to discard self. Its fixed
-  // top-k capacity is 256, so at most 255 intermediate neighbors fit.
-  h->ip->intermediate_graph_degree = 255;
+  h->ip->intermediate_graph_degree = 256;
   h->ip->nn_descent_niter = 100;
   if (cuvsIvfPqSearchParamsCreate(&build_search) != CUVS_SUCCESS) goto fail_ip;
   {
@@ -72,9 +76,12 @@ void* seekdb_cuvs_build(const float* base, long n, long dim)
   h->ip->graph_build_params->ivf_pq_search_params = build_search;
   h->ip->graph_build_params->refinement_rate = 8.0f;
   if (cuvsCagraIndexCreate(&h->idx)      != CUVS_SUCCESS) goto fail_ip;
-  if (cuvsCagraBuild(h->res, h->ip, &dset, h->idx) != CUVS_SUCCESS) {
+  if (n > 128 && cuvsRMMAlloc(h->res, (void**)&h->device_graph, graph_bytes) != CUVS_SUCCESS) goto fail_idx;
+  if (n <= 128) h->ip->build_algo = NN_DESCENT;
+  if ((n <= 128 ? cuvsCagraBuild(h->res, h->ip, &dset, h->idx) :
+       seekdb_cuvs_build_graph(h->res, h->ip, &dset, h->idx, h->device_graph)) != CUVS_SUCCESS) {
     const char* error = cuvsGetLastErrorText();
-    fprintf(stderr, "[seekdb_cuvs] cuvsCagraBuild failed: %s\n",
+    fprintf(stderr, "[seekdb_cuvs] GPU graph build failed: %s\n",
             error ? error : "no error text supplied");
     goto fail_idx;
   }
@@ -84,6 +91,7 @@ void* seekdb_cuvs_build(const float* base, long n, long dim)
   return h;
 
 fail_idx: cuvsCagraIndexDestroy(h->idx);
+  if (h->device_graph) cuvsRMMFree(h->res, h->device_graph, graph_bytes);
 fail_ip:
   if (build_search) {
     h->ip->graph_build_params->ivf_pq_search_params = NULL;
@@ -160,6 +168,7 @@ void seekdb_cuvs_free(void* handle)
   release_search_buffers(h);
   cuvsCagraIndexDestroy(h->idx);
   cuvsCagraIndexParamsDestroy(h->ip);
+  if (h->device_graph) cuvsRMMFree(h->res, h->device_graph, sizeof(unsigned)*(size_t)h->n*128);
   if (h->device_dataset) cuvsRMMFree(h->res, h->device_dataset, sizeof(float)*(size_t)h->n*(size_t)h->dim);
   cuvsResourcesDestroy(h->res);
   free(h);
