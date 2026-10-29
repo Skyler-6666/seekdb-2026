@@ -113,3 +113,11 @@ The GPU path is intended for workloads where CAGRA graph construction is large
 enough to amortize device setup and host/device transfers. Small indexes may
 remain faster with the VSAG CPU path, so set `SEEKDB_HIPVS=0` when testing a
 small or latency-sensitive import.
+
+## Measured AMD Radeon result
+
+A real run on AMD Radeon Cloud (`gfx1100`, ROCm 7.2.4, seekdb 1.4.0)
+completed successfully with 10,000 vectors (128 dimensions). The measured
+batch path reached **8.32x** GPU speedup at 4,000 probes, with recall@10 of
+`0.8750` versus `0.6400` for the CPU path. Full environment details and the
+measurement table are in [`hipvs_hnsw_amd_validation.md`](hipvs_hnsw_amd_validation.md).
