@@ -6,7 +6,7 @@ usage()
 {
   cat <<'EOF'
 Usage: run_build_compare.sh --baseline-observer PATH --candidate-observer PATH
-                            --bridge PATH --base-dir PATH
+                            --baseline-bridge PATH --candidate-bridge PATH --base-dir PATH
                             --baseline-port PORT --candidate-port PORT
                             --render PATH --evidence PATH
                             [--rows N] [--dim N] [--rounds N]
@@ -20,6 +20,8 @@ EOF
 BASELINE_OBSERVER=""
 CANDIDATE_OBSERVER=""
 BRIDGE=""
+BASELINE_BRIDGE=""
+CANDIDATE_BRIDGE=""
 BASE_DIR=""
 BASELINE_PORT=""
 CANDIDATE_PORT=""
@@ -34,6 +36,8 @@ while (($# > 0)); do
     --baseline-observer) BASELINE_OBSERVER=$2; shift 2 ;;
     --candidate-observer) CANDIDATE_OBSERVER=$2; shift 2 ;;
     --bridge) BRIDGE=$2; shift 2 ;;
+    --baseline-bridge) BASELINE_BRIDGE=$2; shift 2 ;;
+    --candidate-bridge) CANDIDATE_BRIDGE=$2; shift 2 ;;
     --base-dir) BASE_DIR=$2; shift 2 ;;
     --baseline-port) BASELINE_PORT=$2; shift 2 ;;
     --candidate-port) CANDIDATE_PORT=$2; shift 2 ;;
@@ -49,7 +53,10 @@ done
 
 [[ -x "$BASELINE_OBSERVER" ]] || { echo "baseline observer is not executable" >&2; exit 2; }
 [[ -x "$CANDIDATE_OBSERVER" ]] || { echo "candidate observer is not executable" >&2; exit 2; }
-[[ -f "$BRIDGE" ]] || { echo "bridge does not exist: $BRIDGE" >&2; exit 2; }
+BASELINE_BRIDGE=${BASELINE_BRIDGE:-$BRIDGE}
+CANDIDATE_BRIDGE=${CANDIDATE_BRIDGE:-$BRIDGE}
+[[ -f "$BASELINE_BRIDGE" && -f "$CANDIDATE_BRIDGE" ]] ||
+  { echo "baseline and candidate bridges must exist" >&2; exit 2; }
 [[ -c /dev/kfd ]] || { echo "/dev/kfd is unavailable" >&2; exit 2; }
 [[ -c "$RENDER" ]] || { echo "render node is unavailable: $RENDER" >&2; exit 2; }
 [[ -n "$BASE_DIR" && "$BASE_DIR" != "/" ]] || { echo "unsafe base-dir" >&2; exit 2; }
@@ -154,10 +161,11 @@ start_observer()
   local trace=$4
   local log=$5
   local pid_var=$6
+  local bridge=$7
   mkdir -p "$run_dir"
   ulimit -n 65535
   env -u OB_VSAG_USE_CUVS \
-    "LD_LIBRARY_PATH=$(dirname "$BRIDGE"):/opt/hipvs/lib:/opt/rocm/lib" \
+    "LD_LIBRARY_PATH=$(dirname "$bridge"):/opt/hipvs/lib:/opt/rocm/lib" \
     "OB_VSAG_TRACE=1" \
     "OB_VSAG_TRACE_FILE=$trace" \
     "$observer" \
@@ -240,18 +248,20 @@ done
 initialize_version()
 {
   local version=$1
-  local observer run_dir port
+  local observer run_dir port bridge
   if [[ "$version" == "baseline" ]]; then
     observer=$BASELINE_OBSERVER
     run_dir=$BASELINE_DIR
     port=$BASELINE_PORT
+    bridge=$BASELINE_BRIDGE
   else
     observer=$CANDIDATE_OBSERVER
     run_dir=$CANDIDATE_DIR
     port=$CANDIDATE_PORT
+    bridge=$CANDIDATE_BRIDGE
   fi
   start_observer "$observer" "$run_dir" "$port" \
-    "$EVIDENCE/$version-obvsag-trace.log" "$EVIDENCE/$version-observer.log" ACTIVE_PID ||
+    "$EVIDENCE/$version-obvsag-trace.log" "$EVIDENCE/$version-observer.log" ACTIVE_PID "$bridge" ||
     { echo "$version observer failed to initialize" >&2; return 1; }
   ACTIVE_DIR=$run_dir
   mysql_cmd "$port" -e 'alter system set ob_vector_memory_limit_percentage=30; create database if not exists cuvs_build_bench;' >/dev/null
@@ -269,25 +279,30 @@ run_one()
 {
   local version=$1
   local round=$2
-  local observer run_dir port trace log
+  local observer run_dir port trace log bridge
   if [[ "$version" == "baseline" ]]; then
     observer=$BASELINE_OBSERVER
     run_dir=$BASELINE_DIR
     port=$BASELINE_PORT
     trace=$BASELINE_TRACE
     log=$BASELINE_LOG
+    bridge=$BASELINE_BRIDGE
   else
     observer=$CANDIDATE_OBSERVER
     run_dir=$CANDIDATE_DIR
     port=$CANDIDATE_PORT
     trace=$CANDIDATE_TRACE
     log=$CANDIDATE_LOG
+    bridge=$CANDIDATE_BRIDGE
   fi
-  start_observer "$observer" "$run_dir" "$port" "$trace" "$log" ACTIVE_PID ||
+  start_observer "$observer" "$run_dir" "$port" "$trace" "$log" ACTIVE_PID "$bridge" ||
     { echo "$version observer failed to start for round $round" >&2; return 1; }
   ACTIVE_DIR=$run_dir
   local offset
   offset=$(trace_offset "$trace")
+  local lifecycle_log="$run_dir/log/seekdb.log"
+  local lifecycle_offset
+  lifecycle_offset=$(trace_offset "$lifecycle_log")
   local start_ns end_ns ids
   start_ns=$(date +%s%N)
   ids=$(mysql_cmd "$port" -e "$INDEX_Q
@@ -298,12 +313,17 @@ run_one()
   local builds serves deferred materialized
   builds=$(trace_count "$trace" "$offset" cuvs_build)
   serves=$(trace_count "$trace" "$offset" cuvs_serve)
-  deferred=$(trace_count "$trace" "$offset" cuvs_vsag_defer)
-  materialized=$(trace_count "$trace" "$offset" cuvs_vsag_materialize)
+  local lifecycle="$EVIDENCE/$version-round-$round-lifecycle.log"
+  tail -n +"$lifecycle_offset" "$lifecycle_log" > "$lifecycle"
+  local snapshot_builds
+  snapshot_builds=$(grep -a ' serialized GPU CAGRA snapshot' "$lifecycle" | grep -ac 'built=true' || true)
+  builds=$((builds + snapshot_builds))
+  deferred=0 # V5 does not emit the old V2 deferred-sidecar trace.
+  materialized=$(grep -ac 'lazily built VSAG fallback' "$lifecycle" || true)
   [[ "$builds" -ge 1 && "$serves" -ge 1 ]] ||
     { echo "$version round $round did not run CAGRA build/search" >&2; return 1; }
   if [[ "$version" == "candidate" ]]; then
-    [[ "$deferred" -ge 1 && "$materialized" -eq 0 ]] ||
+    [[ "$materialized" -eq 0 ]] ||
       { echo "$version round $round unexpectedly built a CPU sidecar in the timed region" >&2; return 1; }
   fi
   [[ -n "$ids" ]] || { echo "$version round $round returned no IDs" >&2; return 1; }
@@ -345,6 +365,8 @@ runs = {"baseline": [], "candidate": []}
 for line in results_path.read_text().splitlines():
     version, round_id, elapsed_ns, ids, builds, deferred, materialized = line.split("\t")
     returned = [int(value) for value in ids.split(",") if value]
+    if len(returned) != 100 or len(set(returned)) != 100 or any(i < 0 or i >= rows for i in returned):
+        raise SystemExit(f"{version} round {round_id}: invalid or duplicate result IDs")
     runs[version].append({
         "round": int(round_id),
         "seconds": int(elapsed_ns) / 1e9,

@@ -10,16 +10,31 @@
 #endif
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 typedef struct {
   cuvsResources_t        res;
   cuvsCagraIndexParams_t ip;
   cuvsCagraIndex_t       idx;
   long n, dim;
+  float *query_buffer, *distance_buffer;
+  unsigned *neighbor_buffer;
+  long search_capacity;
 } sk_cuvs_index;
+
+static void release_search_buffers(sk_cuvs_index* h)
+{
+  if (h->distance_buffer) cuvsRMMFree(h->res, h->distance_buffer, sizeof(float)*h->search_capacity);
+  if (h->neighbor_buffer) cuvsRMMFree(h->res, h->neighbor_buffer, sizeof(unsigned)*h->search_capacity);
+  if (h->query_buffer) cuvsRMMFree(h->res, h->query_buffer, sizeof(float)*h->dim);
+  h->query_buffer = NULL; h->distance_buffer = NULL; h->neighbor_buffer = NULL;
+  h->search_capacity = 0;
+}
 
 void* seekdb_cuvs_build(const float* base, long n, long dim)
 {
+  if (!base || n <= 0 || (uint64_t)n > UINT32_MAX || dim <= 0 ||
+      (size_t)n > SIZE_MAX / sizeof(float) / (size_t)dim) return NULL;
   sk_cuvs_index* h = (sk_cuvs_index*)calloc(1, sizeof(*h));
   if (!h) return NULL;
   if (cuvsResourcesCreate(&h->res) != CUVS_SUCCESS) { free(h); return NULL; }
@@ -52,12 +67,20 @@ int seekdb_cuvs_search(void* handle, const float* query, long nq, long topk,
                        unsigned int* out_ids, float* out_dist)
 {
   sk_cuvs_index* h = (sk_cuvs_index*)handle;
-  if (!h) return 1;
+  if (!h || !query || !out_ids || nq <= 0 || topk <= 0 || topk > h->n ||
+      (size_t)nq > SIZE_MAX / sizeof(float) / (size_t)h->dim ||
+      (size_t)nq > SIZE_MAX / sizeof(unsigned) / (size_t)topk ||
+      (size_t)nq > SIZE_MAX / sizeof(float) / (size_t)topk) return 1;
   int rc = 0;
+  const int reuse = nq == 1 && h->search_capacity >= topk;
   float* qd = 0; unsigned* nd = 0; float* dd = 0; cuvsCagraSearchParams_t sp = 0;
-  if (cuvsRMMAlloc(h->res, (void**)&qd, sizeof(float)*nq*h->dim)  != CUVS_SUCCESS) { rc=10; goto done; }
-  if (cuvsRMMAlloc(h->res, (void**)&nd, sizeof(unsigned)*nq*topk) != CUVS_SUCCESS) { rc=11; goto done; }
-  if (cuvsRMMAlloc(h->res, (void**)&dd, sizeof(float)*nq*topk)    != CUVS_SUCCESS) { rc=12; goto done; }
+  if (reuse) {
+    qd = h->query_buffer; nd = h->neighbor_buffer; dd = h->distance_buffer;
+  } else {
+    if (cuvsRMMAlloc(h->res, (void**)&qd, sizeof(float)*nq*h->dim)  != CUVS_SUCCESS) { rc=10; goto done; }
+    if (cuvsRMMAlloc(h->res, (void**)&nd, sizeof(unsigned)*nq*topk) != CUVS_SUCCESS) { rc=11; goto done; }
+    if (cuvsRMMAlloc(h->res, (void**)&dd, sizeof(float)*nq*topk)    != CUVS_SUCCESS) { rc=12; goto done; }
+  }
   if (cudaMemcpy(qd, query, sizeof(float)*nq*h->dim, cudaMemcpyDefault) != cudaSuccess) { rc=13; goto done; }
   {
     DLManagedTensor qt, nt, dt; long qs[2]={nq,h->dim}, nsh[2]={nq,topk}, dsh[2]={nq,topk};
@@ -76,13 +99,22 @@ int seekdb_cuvs_search(void* handle, const float* query, long nq, long topk,
     cuvsFilter f; f.type=NO_FILTER; f.addr=(uintptr_t)0;
     if (cuvsCagraSearch(h->res, sp, h->idx, &qt, &nt, &dt, f) != CUVS_SUCCESS) { rc=15; goto done; }
     if (cudaMemcpy(out_ids, nd, sizeof(unsigned)*nq*topk, cudaMemcpyDefault) != cudaSuccess) { rc=16; goto done; }
-    if (out_dist) cudaMemcpy(out_dist, dd, sizeof(float)*nq*topk, cudaMemcpyDefault);
+    if (out_dist && cudaMemcpy(out_dist, dd, sizeof(float)*nq*topk, cudaMemcpyDefault) != cudaSuccess) { rc=17; goto done; }
   }
 done:
   if (sp) cuvsCagraSearchParamsDestroy(sp);
-  if (dd) cuvsRMMFree(h->res, dd, sizeof(float)*nq*topk);
-  if (nd) cuvsRMMFree(h->res, nd, sizeof(unsigned)*nq*topk);
-  if (qd) cuvsRMMFree(h->res, qd, sizeof(float)*nq*h->dim);
+  // Retain only single-query scratch space. Batch calls keep their bounded lifetime.
+  if (!reuse && rc == 0 && nq == 1) {
+    release_search_buffers(h);
+    h->query_buffer = qd; h->neighbor_buffer = nd; h->distance_buffer = dd;
+    h->search_capacity = topk;
+    qd = NULL; nd = NULL; dd = NULL;
+  }
+  if (!reuse) {
+    if (dd) cuvsRMMFree(h->res, dd, sizeof(float)*nq*topk);
+    if (nd) cuvsRMMFree(h->res, nd, sizeof(unsigned)*nq*topk);
+    if (qd) cuvsRMMFree(h->res, qd, sizeof(float)*nq*h->dim);
+  }
   if (rc) fprintf(stderr, "[seekdb_cuvs] search rc=%d: %s\n", rc, cuvsGetLastErrorText());
   return rc;
 }
@@ -91,6 +123,7 @@ void seekdb_cuvs_free(void* handle)
 {
   sk_cuvs_index* h = (sk_cuvs_index*)handle;
   if (!h) return;
+  release_search_buffers(h);
   cuvsCagraIndexDestroy(h->idx);
   cuvsCagraIndexParamsDestroy(h->ip);
   cuvsResourcesDestroy(h->res);
