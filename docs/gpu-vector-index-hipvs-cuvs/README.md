@@ -18,15 +18,6 @@ vector adaptor. It does not replace VSAG globally.
 - `dbms_vector.batch_knn` exposes one-call batched GPU ANN for explicit batch
   workloads.
 
-### Deferred VSAG sidecar
-
-For `lib=cuvs`, CAGRA is the primary index. The adaptor no longer spends the
-initial build constructing a second, immediately unused VSAG HNSW graph.
-Vectors are retained in one contiguous buffer; if a filtered, deleted, stale,
-direct-distance, extra-info, or no-GPU query actually needs CPU fallback, seekdb
-builds the sidecar from that buffer once and then uses the normal incremental
-VSAG path. `lib=vsag` behavior is unchanged.
-
 The product integration lives in:
 
 - [`ob_vsag_adaptor.cpp`](../../src/oblib/lib/vector/ob_vsag_adaptor.cpp):
@@ -134,31 +125,6 @@ Results for a specific candidate belong in that pull request's description or a
 validation comment rather than in the source tree.
 The no-GPU DDL contract remains covered by
 [`vector_index_cuvs_ddl.test`](../../tools/deploy/mysql_test/test_suite/vector_index/t/vector_index_cuvs_ddl.test).
-
-For a frozen-baseline/candidate A/B build comparison, build both observers with
-CUVS tracing and run:
-
-```bash
-LD_LIBRARY_PATH=/work/bridge:/opt/hipvs/lib:/opt/rocm/lib \
-  bash docs/gpu-vector-index-hipvs-cuvs/validation/run_build_compare.sh \
-    --baseline-observer /work/baseline/seekdb \
-    --candidate-observer /work/candidate/seekdb \
-    --bridge /work/bridge/libseekdb_cuvs_bridge.so \
-    --base-dir /tmp/seekdb-cuvs-build-ab \
-    --baseline-port 2981 \
-    --candidate-port 2991 \
-    --render /dev/dri/renderD135 \
-    --evidence /tmp/seekdb-cuvs-build-ab-evidence
-```
-
-See [`BUILD_REPORT.md`](BUILD_REPORT.md) for the implementation summary,
-reproduction contract, environment limitations, and result table.
-
-The runner alternates the two versions, restarts the selected observer before
-every round to clear process-local graph state, imports data outside the timed
-region, removes the vector index, and measures `CREATE VECTOR INDEX` plus the
-first approximate query. It requires at least three rounds and writes raw
-timings, medians, build speedup, Recall@10, and Recall@100 to `summary.json`.
 
 ## Current limitations
 

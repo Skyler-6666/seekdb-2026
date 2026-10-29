@@ -293,12 +293,8 @@ mysql_cmd "$PORT" -e 'alter system set ob_vector_memory_limit_percentage=30; cre
 mysql_cmd "$PORT" -e "use hipvs_gate;
   create table t_cuvs(id int primary key, v vector(128), vector index idx_c(v) with (distance=l2,type=hnsw,lib=cuvs,m=16,ef_construction=200,ef_search=200));
   create table t_vsag(id int primary key, v vector(128), vector index idx_v(v) with (distance=l2,type=hnsw,lib=vsag,m=16,ef_construction=200,ef_search=200));" >/dev/null
-insert_offset=$(trace_offset "$TRACE")
 mysql_cmd "$PORT" < "$DATA_DIR/cuvs-0.sql" >/dev/null
 mysql_cmd "$PORT" < "$DATA_DIR/vsag.sql" >/dev/null
-deferred=$(trace_count "$TRACE" "$insert_offset" cuvs_vsag_defer)
-[[ "$deferred" -ge 1 ]] || fail_case deferred_vsag_build "deferred=$deferred"
-record_case deferred_vsag_build PASS "deferred=$deferred"
 
 offset=$(trace_offset "$TRACE")
 first_approx=$(ann_ids "$PORT" t_cuvs "$QUERY" "" approx)
@@ -330,10 +326,8 @@ offset=$(trace_offset "$TRACE")
 fresh_approx=$(ann_ids "$PORT" t_cuvs "$QUERY" "" approx)
 fresh_exact=$(ann_ids "$PORT" t_cuvs "$QUERY" "" exact)
 fresh_serve=$(trace_count "$TRACE" "$offset" cuvs_serve)
-materialized=$(trace_count "$TRACE" "$offset" cuvs_vsag_materialize)
 [[ "$fresh_serve" -eq 0 && "$fresh_approx" == "$fresh_exact" ]] || fail_case freshness_fallback "serve=$fresh_serve approx=$fresh_approx exact=$fresh_exact"
-[[ "$materialized" -ge 1 ]] || fail_case freshness_fallback "materialized=$materialized"
-record_case freshness_fallback PASS "n=400 serve=0 materialized=$materialized exact_match=1"
+record_case freshness_fallback PASS "n=400 serve=0 exact_match=1"
 
 mysql_cmd "$PORT" < "$DATA_DIR/cuvs-2.sql" >/dev/null
 offset=$(trace_offset "$TRACE")
