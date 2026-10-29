@@ -32,17 +32,17 @@ jobs:
       HB_JOB: compile
       HB_LOG: build_modules.output
       # The root filesystem fills up on this image; keep every large writer
-      # (cargo registry, rust toolchains, bazel cache, dependency cache) on
-      # the large workspace volume instead.
+      # (cargo registry, rust toolchains, dependency cache) on the large
+      # workspace volume instead. XDG_CACHE_HOME must NOT point into the
+      # workspace: Bazel rejects a repo contents cache inside the main repo.
       CARGO_HOME: ${{ github.workspace }}/.cargo
       RUSTUP_HOME: ${{ github.workspace }}/.rustup
-      XDG_CACHE_HOME: ${{ github.workspace }}/.xdg-cache
       DEP_CACHE_DIR: ${{ github.workspace }}/deps-cache
     steps:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 10240
+          root-reserve-mb: 2048
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
@@ -70,7 +70,7 @@ jobs:
             for d in /usr/share/swift /opt/az /opt/microsoft /opt/pipx /opt/pipx_bin \
                      /usr/local/.ghcup /imagegeneration /usr/local/share/powershell \
                      /usr/share/dotnet /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
-                     /usr/share/miniconda /usr/local/lib/node_modules; do
+                     /usr/share/miniconda /usr/local/lib/node_modules /usr/lib/mono; do
               if [ -d "$d" ]; then
                 sudo rm -rf "$d" && echo "removed $d"
               fi
@@ -172,13 +172,12 @@ jobs:
       HB_LOG: build_observer.output
       CARGO_HOME: ${{ github.workspace }}/.cargo
       RUSTUP_HOME: ${{ github.workspace }}/.rustup
-      XDG_CACHE_HOME: ${{ github.workspace }}/.xdg-cache
       DEP_CACHE_DIR: ${{ github.workspace }}/deps-cache
     steps:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 10240
+          root-reserve-mb: 2048
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
@@ -206,7 +205,7 @@ jobs:
             for d in /usr/share/swift /opt/az /opt/microsoft /opt/pipx /opt/pipx_bin \
                      /usr/local/.ghcup /imagegeneration /usr/local/share/powershell \
                      /usr/share/dotnet /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
-                     /usr/share/miniconda /usr/local/lib/node_modules; do
+                     /usr/share/miniconda /usr/local/lib/node_modules /usr/lib/mono; do
               if [ -d "$d" ]; then
                 sudo rm -rf "$d" && echo "removed $d"
               fi
