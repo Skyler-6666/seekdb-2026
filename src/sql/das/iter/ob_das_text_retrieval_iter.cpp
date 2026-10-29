@@ -338,6 +338,9 @@ int ObDASTextRetrievalIter::inner_get_next_row()
       } else if (OB_FAIL(fill_token_weight())) {
       } else if (OB_FAIL(project_relevance_expr())) {
       }
+    } else if (ir_ctdef_->need_proj_relevance_score()) {
+      if (OB_FAIL(project_fixed_relevance())) {
+      }
     }
   }
   return ret;
@@ -379,6 +382,9 @@ int ObDASTextRetrievalIter::inner_get_next_rows(int64_t &count, int64_t capacity
       if (OB_FAIL(fill_token_doc_cnt())) {
       } else if (OB_FAIL(fill_token_weight())) {
       } else if (OB_FAIL(batch_project_relevance_expr(count))) {
+      }
+    } else if (ir_ctdef_->need_proj_relevance_score()) {
+      if (OB_FAIL(batch_project_fixed_relevance(count))) {
       }
     }
   }
@@ -684,6 +690,44 @@ int ObDASTextRetrievalIter::batch_project_relevance_expr(const int64_t &count)
   if (OB_ISNULL(relevance_expr)) {
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_FAIL(relevance_expr->eval_batch(*ir_rtdef_->eval_ctx_, *skip_, count))) {
+  }
+  return ret;
+}
+
+// when relevance is not needed, any matched document projects a non-zero
+// score so that the match predicate keeps treating it as hit
+int ObDASTextRetrievalIter::project_fixed_relevance()
+{
+  int ret = OB_SUCCESS;
+  sql::ObExpr *relevance_proj_col = ir_ctdef_->relevance_proj_col_;
+  sql::ObEvalCtx *eval_ctx = ir_rtdef_->eval_ctx_;
+  if (OB_ISNULL(relevance_proj_col) || OB_ISNULL(eval_ctx)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    ObDatum &relevance_datum = relevance_proj_col->locate_datum_for_write(*eval_ctx);
+    relevance_datum.set_double(1.0);
+    relevance_proj_col->set_evaluated_flag(*eval_ctx);
+    relevance_proj_col->set_evaluated_projected(*eval_ctx);
+  }
+  return ret;
+}
+
+int ObDASTextRetrievalIter::batch_project_fixed_relevance(const int64_t &count)
+{
+  int ret = OB_SUCCESS;
+  sql::ObExpr *relevance_proj_col = ir_ctdef_->relevance_proj_col_;
+  sql::ObEvalCtx *eval_ctx = ir_rtdef_->eval_ctx_;
+  if (OB_ISNULL(relevance_proj_col) || OB_ISNULL(eval_ctx)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < count; ++i) {
+      ObEvalCtx::BatchInfoScopeGuard guard(*eval_ctx);
+      guard.set_batch_idx(i);
+      ObDatum &relevance_datum = relevance_proj_col->locate_datum_for_write(*eval_ctx);
+      relevance_datum.set_double(1.0);
+      relevance_proj_col->set_evaluated_flag(*eval_ctx);
+    }
+    relevance_proj_col->set_evaluated_projected(*eval_ctx);
   }
   return ret;
 }

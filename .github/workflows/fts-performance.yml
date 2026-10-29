@@ -72,7 +72,7 @@ jobs:
           echo '## FTS correctness failures' >> "$GITHUB_STEP_SUMMARY"
           FAILDIR="$GITHUB_WORKSPACE/.seekdb_fts_test/work/failures"
           if [ -d "$FAILDIR" ] && [ -n "$(ls -A "$FAILDIR" 2>/dev/null)" ]; then
-            for f in "$FAILDIR"/*; do
+            find "$FAILDIR" -type f | while IFS= read -r f; do
               echo "<details><summary>$(basename "$f")</summary>" >> "$GITHUB_STEP_SUMMARY"
               echo '' >> "$GITHUB_STEP_SUMMARY"
               echo '```' >> "$GITHUB_STEP_SUMMARY"

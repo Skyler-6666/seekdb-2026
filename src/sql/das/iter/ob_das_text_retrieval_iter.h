@@ -103,6 +103,8 @@ protected:
   int fill_token_weight();
   int project_relevance_expr();
   int batch_project_relevance_expr(const int64_t &count);
+  int project_fixed_relevance();
+  int batch_project_fixed_relevance(const int64_t &count);
   int gen_default_inv_idx_scan_range(const ObString &query_token, ObNewRange &scan_range);
   int gen_inv_idx_scan_range(const ObString &query_token, const ObDocIdExt &doc_id, ObNewRange &scan_range);
 
