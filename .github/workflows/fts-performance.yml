@@ -1,0 +1,120 @@
+name: FTS correctness and performance
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - competition/fts-fulltext-opt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+
+jobs:
+  verify:
+    timeout-minutes: 360
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential \
+            binutils m4 libtool-bin libncurses-dev python3 python3-pip unzip ccache
+          python3 -m pip install --user pymysql
+
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-fts-${{ github.run_number }}
+          restore-keys: |
+            ccache-fts-
+            ccache-seekdb-
+
+      - name: Compile seekdb
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          SEEKDB_TASK_DIR: ${{ github.workspace }}/seekdb_build
+          MAKE_ARGS: -j4
+        run: .github/script/seekdb/compile.sh
+
+      - name: Verify build artifacts
+        run: |
+          test -x build_release/src/observer/seekdb
+          test -x deps/3rd/u01/obclient/bin/obclient
+          test -x deps/3rd/u01/obclient/bin/mysqltest
+
+      - name: Run FTS correctness suite
+        run: python3 -B .github/script/seekdb/run_fts_cases.py
+
+      - name: Start benchmark instance
+        if: always()
+        run: |
+          CLIENT_ROOT="$PWD/deps/3rd/u01/obclient"
+          export PATH="$CLIENT_ROOT/bin:$PATH"
+          export LD_LIBRARY_PATH="$CLIENT_ROOT/lib:$CLIENT_ROOT/lib64:${LD_LIBRARY_PATH:-}"
+          BENCH_DIR="$(mktemp -d /tmp/seekdb-fts-bench.XXXXXX)"
+          echo "SEEKDB_FTS_BENCH_DIR=$BENCH_DIR" >> "$GITHUB_ENV"
+          python3 .github/script/seekdb/sdb.py start \
+            --binary "$PWD/build_release/src/observer/seekdb" \
+            --base-dir "$BENCH_DIR" --port 2881 \
+            --parameter memory_budget=4G --parameter cpu_count=4 \
+            --parameter datafile_size=512M --parameter datafile_maxsize=2G \
+            --parameter log_disk_size=4G
+          python3 .github/script/seekdb/sdb.py wait-ready \
+            --client "$CLIENT_ROOT/bin/obclient" --base-dir "$BENCH_DIR" \
+            --host 127.0.0.1 --port 2881 --user root --timeout 600
+
+      - name: Run official FTS large benchmark
+        if: always()
+        run: |
+          CLIENT_ROOT="$PWD/deps/3rd/u01/obclient"
+          export PATH="$CLIENT_ROOT/bin:$PATH"
+          export LD_LIBRARY_PATH="$CLIENT_ROOT/lib:$CLIENT_ROOT/lib64:${LD_LIBRARY_PATH:-}"
+          export MYSQL="$CLIENT_ROOT/bin/obclient -h127.0.0.1 -P2881 -uroot -N -s --default-character-set=utf8mb4"
+          export MYSQL_VERBOSE="$CLIENT_ROOT/bin/obclient -h127.0.0.1 -P2881 -uroot --default-character-set=utf8mb4"
+          OUTPUT="$GITHUB_WORKSPACE/fts_large_bench_report.txt" LABEL=optimized \
+            bash tools/benchmark/fts_large_bench.sh
+          python3 tools/benchmark/fts_large_bench_score.py \
+            "$GITHUB_WORKSPACE/fts_large_bench_report.txt" \
+            | tee "$GITHUB_WORKSPACE/fts_large_bench_score.txt"
+
+      - name: Stop benchmark instance
+        if: always()
+        run: |
+          if [[ -n "${SEEKDB_FTS_BENCH_DIR:-}" ]]; then
+            python3 .github/script/seekdb/sdb.py stop \
+              --base-dir "$SEEKDB_FTS_BENCH_DIR" || true
+          fi
+
+      - name: Upload benchmark and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fts-benchmark-results
+          path: |
+            fts_large_bench_report.txt
+            fts_large_bench_score.txt
+            .seekdb_fts_test/work/failures/
+            .seekdb_fts_test/instance/log/
+          if-no-files-found: ignore
+          retention-days: 7
