@@ -9,6 +9,7 @@ from pathlib import Path
 import platform
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -177,6 +178,50 @@ def _route_options(
     return startup, forwarded, defaults
 
 
+def _try_build_gpu_hnsw_plugin(root: Path, output_base: Path) -> None:
+    """Opportunistically build the optional hipVS plugin for the HNSW index build.
+
+    The plugin is loaded by the observer with dlopen and falls back to the plain
+    CPU HNSW build when it is absent, so it is only attempted when the ROCm
+    toolchain is present. A failure here never fails the main build.
+    """
+    try:
+        if os.name == "nt":
+            return
+        if shutil.which("hipcc") is None:
+            print("GPU HNSW plugin: hipcc not found, keeping the CPU HNSW build",
+                  file=sys.stderr, flush=True)
+            return
+        plugin_dir = root / "src" / "oblib" / "lib" / "vector" / "gpu"
+        script = plugin_dir / "build_plugin.sh"
+        if not script.is_file():
+            return
+        bin_dir = output_base / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        print("GPU HNSW plugin: hipcc found, building the optional plugin into %s"
+              % bin_dir, file=sys.stderr, flush=True)
+        environment = dict(os.environ)
+        environment["OUTPUT_DIR"] = str(bin_dir)
+        result = subprocess.run(["bash", str(script)], cwd=plugin_dir,
+                                env=environment, timeout=3600)
+        if result.returncode != 0:
+            print("GPU HNSW plugin: build failed (rc=%d), keeping the CPU HNSW build"
+                  % result.returncode, file=sys.stderr, flush=True)
+            return
+        artifact = bin_dir / "libob_gpu_hnsw_plugin.so"
+        print("GPU HNSW plugin: built %s" % artifact, file=sys.stderr, flush=True)
+        for system_dir in ("/usr/local/lib", "/usr/lib"):
+            try:
+                shutil.copy2(artifact, Path(system_dir) / artifact.name)
+                print("GPU HNSW plugin: also installed into %s"
+                      % (Path(system_dir) / artifact.name), file=sys.stderr, flush=True)
+                break
+            except OSError:
+                pass
+    except Exception as error:
+        print("GPU HNSW plugin: skipped (%s)" % error, file=sys.stderr, flush=True)
+
+
 def main(arguments: List[str]) -> int:
     root = Path(__file__).resolve().parent
     if arguments and arguments[0] == "init":
@@ -242,10 +287,13 @@ def main(arguments: List[str]) -> int:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write("\n".join(lines) + "\n")
-        return subprocess.run([
+        result = subprocess.run([
             str(bazel), "--output_base=" + str(output_base),
             "--bazelrc=" + name,
-        ] + startup_options + bazel_arguments, cwd=root).returncode
+        ] + startup_options + bazel_arguments, cwd=root)
+        if result.returncode == 0 and command == "build":
+            _try_build_gpu_hnsw_plugin(root, output_base)
+        return result.returncode
     finally:
         Path(name).unlink()
 

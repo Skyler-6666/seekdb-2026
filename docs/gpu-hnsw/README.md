@@ -268,10 +268,13 @@ space 计算，所以 IP 的两种写法差异不影响正确性。
 
 ### 4.2 编译插件
 
-不开启 HIP 选项时，纯 CPU 构建不受影响：
+`build.py` 在主构建成功后会做一次机会式探测：机器上有 `hipcc` 时自动编译插件，
+并把 `libob_gpu_hnsw_plugin.so` 输出到 observer 可执行文件的同级目录（`<output_base>/bin/`），
+能写进 `/usr/local/lib` 时也会顺手放一份；没有 ROCm 工具链或插件编译失败时只打印
+一行提示，纯 CPU 构建不受任何影响（跳过逻辑对其它机器完全透明）。
 
 ```bash
-# 默认 Bazel 构建不会看到或编译 .cu
+# 默认 Bazel 构建不会看到或编译 .cu；build.py 在检测到 hipcc 时自动产出插件
 python3 build.py build //src/observer:seekdb
 
 # 显式构建独立插件，默认 seekdb 构建不会依赖这个目标
