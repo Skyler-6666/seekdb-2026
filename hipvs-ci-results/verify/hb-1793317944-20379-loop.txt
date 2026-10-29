@@ -1,0 +1,67 @@
+=== heartbeat 2026-10-29 23:52:24 run=10 sha=62d355f0a46482ffedc668a732406ac1ef424825 job=verify tag=loop ===
+--- uptime ---
+ 23:52:24 up 7 min,  0 users,  load average: 3.28, 1.44, 0.63
+--- nproc ---
+4
+--- free -m ---
+               total        used        free      shared  buff/cache   available
+Mem:           15988        2387         271          49       13329       13204
+Swap:           4095           0        4095
+--- df ---
+Filesystem                   Size  Used Avail Use% Mounted on
+/dev/root                    146G  130G   16G  90% /
+/dev/mapper/buildvg-buildlv   98G   11G   87G  11% /home/runner/work/seekdb-2026/seekdb-2026
+--- top mem ---
+    PID   RSS COMMAND
+   2862 1006388 java
+   5650 473112 rustc
+   5631 367500 rustc
+   5700 279084 rustc
+   5705 257976 rustc
+   1708 145456 Runner.Worker
+   1653 136892 provjobd5325756
+   1687 105024 Runner.Listener
+    778 72976 dockerd
+   3750 59164 cargo
+    596 49816 php-fpm8.1
+--- dmesg tail ---
+--- log tail: build_observer.output ---
+Downloading Bazel: https://releases.bazel.build/9.3.0/release/bazel-9.3.0-linux-x86_64
+Starting local Bazel server (9.3.0) and connecting to it...
+INFO: Invocation ID: 8ba8d5a9-dee5-4af4-8d2b-9b49b8ba08ba
+Computing main repo mapping: 
+Computing main repo mapping: 
+Loading: 
+Loading: 0 packages loaded
+Loading: 0 packages loaded
+    currently loading: src/observer
+Analyzing: target //src/observer:seekdb (5 packages loaded, 6 targets configured)
+Analyzing: target //src/observer:seekdb (5 packages loaded, 6 targets configured)
+
+Analyzing: target //src/observer:seekdb (63 packages loaded, 18 targets configured)
+
+Analyzing: target //src/observer:seekdb (64 packages loaded, 18 targets configured)
+
+Analyzing: target //src/observer:seekdb (109 packages loaded, 4011 targets configured)
+
+Analyzing: target //src/observer:seekdb (121 packages loaded, 17240 targets configured)
+
+Analyzing: target //src/observer:seekdb (121 packages loaded, 17406 targets configured)
+
+Analyzing: target //src/observer:seekdb (122 packages loaded, 17884 targets configured, 486 aspect applications)
+[1 / 1] no actions running
+INFO: Analyzed target //src/observer:seekdb (122 packages loaded, 17884 targets configured, 1192 aspect applications).
+[139 / 528] [Prepa] Writing file src/share/share_runtime_share_runtime_standalone_19.unity.cpp
+[1,008 / 1,661] [Prepa] Writing script src/share/_vector_unity_members.cppmap
+[1,115 / 1,843] checking cached actions
+[1,117 / 1,843] checking cached actions
+[1,121 / 1,843] checking cached actions
+[1,121 / 1,843] [Prepa] SeekdbVersionSource src/observer/ob_version.cpp
+[1,134 / 1,843] Compiling src/oblib/grpc/standbyservice.pb.cc; 0s disk-cache, linux-sandbox
+[1,135 / 1,843] Bison src/sql/parser/bazel_generated/sql_parser_mysql_mode_tab.c; 0s disk-cache, linux-sandbox ... (2 actions running)
+[1,146 / 1,843] Compiling src/oblib/grpc/standbyservice.grpc.pb.cc; 1s disk-cache, linux-sandbox
+[1,146 / 1,843] Compiling src/oblib/grpc/standbyservice.grpc.pb.cc; 2s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,146 / 1,843] Compiling src/oblib/grpc/standbyservice.grpc.pb.cc; 4s disk-cache, linux-sandbox ... (2 actions running)
+[1,147 / 1,843] Building Rust libraries for linux; 4s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,148 / 1,843] Building Rust libraries for linux; 5s disk-cache, linux-sandbox
+[1,148 / 1,843] Building Rust libraries for linux; 16s disk-cache, linux-sandbox
