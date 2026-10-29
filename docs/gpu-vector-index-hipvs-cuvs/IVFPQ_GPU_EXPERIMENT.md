@@ -1,5 +1,10 @@
 # Isolated IVF-PQ construction experiment
 
+The first real HIP compile found a missing data-type mapping include:
+CUDA_R_32F is supplied by cuvs/library_types.h on AMD, not cuda_runtime.h.
+The source now includes it explicitly. Both mock include paths are checked;
+the real HIP compiler still needs to verify the corrected source.
+
 Branch: `contest/hipvs-ivfpq-experiment`. Do not promote or use this as the
 official submission until real GPU quality, timing, and resource checks pass.
 The submission branch `contest/hipvs-cagra-optimization` remains on NN-Descent.

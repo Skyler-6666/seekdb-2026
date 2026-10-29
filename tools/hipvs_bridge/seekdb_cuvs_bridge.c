@@ -5,6 +5,7 @@
 #include <dlpack/dlpack.h>
 #ifdef __HIP_PLATFORM_AMD__
 #include <cuvs/cuda_runtime.h>
+#include <cuvs/library_types.h>
 #else
 #include <cuda_runtime.h>
 #endif
