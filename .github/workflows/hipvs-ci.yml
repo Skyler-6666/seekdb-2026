@@ -60,12 +60,46 @@ jobs:
       - name: Build share_runtime and sql_runtime
         run: |
           set -o pipefail
-          python3 build.py build --downloader_config=.github/script/seekdb/downloader.public.cfg \
-            //src/share:share_runtime //src/sql:sql_runtime 2>&1 | tee build_modules.output
+          git config user.name "seekdb-ci"
+          git config user.email "seekdb-ci@users.noreply.github.com"
+          HB_DIR=$(mktemp -d)
+          RESBRANCH="hipvs-ci-results"
+          (
+            export GIT_DIR="$GITHUB_WORKSPACE/.git" GIT_WORK_TREE="$HB_DIR"
+            cd "$HB_DIR" || exit 0
+            while true; do
+              {
+                echo "=== heartbeat $(date -u +%H:%M:%S) run $GITHUB_RUN_NUMBER job compile ==="
+                free -m
+                echo "--- df ---"
+                df -h / "$GITHUB_WORKSPACE" 2>/dev/null
+                echo "--- top mem ---"
+                ps -eo pid,rss,comm --sort=-rss 2>/dev/null | head -12
+                echo "--- dmesg tail ---"
+                dmesg 2>/dev/null | tail -8
+              } > heartbeat.output 2>&1
+              cp "$GITHUB_WORKSPACE/build_modules.output" build_modules.output 2>/dev/null || true
+              GIT_INDEX_FILE="$HB_DIR/.idx" git read-tree --empty >/dev/null 2>&1
+              GIT_INDEX_FILE="$HB_DIR/.idx" git add -A . >/dev/null 2>&1
+              TREE=$(GIT_INDEX_FILE="$HB_DIR/.idx" git write-tree 2>/dev/null)
+              if [ -n "$TREE" ]; then
+                git fetch --depth=1 origin "$RESBRANCH" >/dev/null 2>&1 || true
+                BASE=$(git rev-parse "origin/$RESBRANCH" 2>/dev/null || true)
+                COMMIT=$(echo "ci: heartbeat run $GITHUB_RUN_NUMBER" | git commit-tree "$TREE" ${BASE:+-p "$BASE"} 2>/dev/null)
+                if [ -n "$COMMIT" ]; then
+                  git update-ref "refs/heads/$RESBRANCH" "$COMMIT" 2>/dev/null
+                  git push --force origin "refs/heads/$RESBRANCH:$RESBRANCH" >/dev/null 2>&1 || true
+                fi
+              fi
+              sleep 20
+            done
+          ) >/dev/null 2>&1 &
+          HB_PID=$!
+          python3 build.py build //src/share:share_runtime //src/sql:sql_runtime 2>&1 | tee build_modules.output
+          kill $HB_PID 2>/dev/null || true
 
       - name: Run HNSW serial format unit test
-        run: python3 build.py test --downloader_config=.github/script/seekdb/downloader.public.cfg \
-          //unittest/oblib:test_hnsw_serial_format
+        run: python3 build.py test //unittest/oblib:test_hnsw_serial_format
 
       - name: Dump parser diagnostics on failure
         if: failure()
@@ -149,8 +183,43 @@ jobs:
       - name: Build observer
         run: |
           set -o pipefail
-          python3 build.py build --downloader_config=.github/script/seekdb/downloader.public.cfg \
-            //src/observer:seekdb 2>&1 | tee build_observer.output
+          git config user.name "seekdb-ci"
+          git config user.email "seekdb-ci@users.noreply.github.com"
+          HB_DIR=$(mktemp -d)
+          RESBRANCH="hipvs-ci-results"
+          (
+            export GIT_DIR="$GITHUB_WORKSPACE/.git" GIT_WORK_TREE="$HB_DIR"
+            cd "$HB_DIR" || exit 0
+            while true; do
+              {
+                echo "=== heartbeat $(date -u +%H:%M:%S) run $GITHUB_RUN_NUMBER job verify ==="
+                free -m
+                echo "--- df ---"
+                df -h / "$GITHUB_WORKSPACE" 2>/dev/null
+                echo "--- top mem ---"
+                ps -eo pid,rss,comm --sort=-rss 2>/dev/null | head -12
+                echo "--- dmesg tail ---"
+                dmesg 2>/dev/null | tail -8
+              } > heartbeat.output 2>&1
+              cp "$GITHUB_WORKSPACE/build_observer.output" build_observer.output 2>/dev/null || true
+              GIT_INDEX_FILE="$HB_DIR/.idx" git read-tree --empty >/dev/null 2>&1
+              GIT_INDEX_FILE="$HB_DIR/.idx" git add -A . >/dev/null 2>&1
+              TREE=$(GIT_INDEX_FILE="$HB_DIR/.idx" git write-tree 2>/dev/null)
+              if [ -n "$TREE" ]; then
+                git fetch --depth=1 origin "$RESBRANCH" >/dev/null 2>&1 || true
+                BASE=$(git rev-parse "origin/$RESBRANCH" 2>/dev/null || true)
+                COMMIT=$(echo "ci: heartbeat run $GITHUB_RUN_NUMBER" | git commit-tree "$TREE" ${BASE:+-p "$BASE"} 2>/dev/null)
+                if [ -n "$COMMIT" ]; then
+                  git update-ref "refs/heads/$RESBRANCH" "$COMMIT" 2>/dev/null
+                  git push --force origin "refs/heads/$RESBRANCH:$RESBRANCH" >/dev/null 2>&1 || true
+                fi
+              fi
+              sleep 20
+            done
+          ) >/dev/null 2>&1 &
+          HB_PID=$!
+          python3 build.py build //src/observer:seekdb 2>&1 | tee build_observer.output
+          kill $HB_PID 2>/dev/null || true
 
       - name: Verify build artifacts
         run: |
