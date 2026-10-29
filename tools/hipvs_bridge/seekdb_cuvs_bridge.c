@@ -70,7 +70,12 @@ void* seekdb_cuvs_build(const float* base, long n, long dim)
   h->ip->graph_build_params->ivf_pq_search_params = build_search;
   h->ip->graph_build_params->refinement_rate = 8.0f;
   if (cuvsCagraIndexCreate(&h->idx)      != CUVS_SUCCESS) goto fail_ip;
-  if (cuvsCagraBuild(h->res, h->ip, &dset, h->idx) != CUVS_SUCCESS) goto fail_idx;
+  if (cuvsCagraBuild(h->res, h->ip, &dset, h->idx) != CUVS_SUCCESS) {
+    const char* error = cuvsGetLastErrorText();
+    fprintf(stderr, "[seekdb_cuvs] cuvsCagraBuild failed: %s\n",
+            error ? error : "no error text supplied");
+    goto fail_idx;
+  }
   h->ip->graph_build_params->ivf_pq_search_params = NULL;
   cuvsIvfPqSearchParamsDestroy(build_search);
   h->n = n; h->dim = dim;
@@ -86,7 +91,7 @@ fail_ip:
 fail_res:
   if (h->device_dataset) cuvsRMMFree(h->res, h->device_dataset, dataset_bytes);
   cuvsResourcesDestroy(h->res); free(h);
-  fprintf(stderr, "[seekdb_cuvs] build failed: %s\n", cuvsGetLastErrorText());
+  fprintf(stderr, "[seekdb_cuvs] build failed\n");
   return NULL;
 }
 

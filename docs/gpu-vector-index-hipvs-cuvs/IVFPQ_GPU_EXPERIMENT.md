@@ -3,7 +3,15 @@
 The first real HIP compile found a missing data-type mapping include:
 CUDA_R_32F is supplied by cuvs/library_types.h on AMD, not cuda_runtime.h.
 The source now includes it explicitly. Both mock include paths are checked;
-the real HIP compiler still needs to verify the corrected source.
+those local checks alone did not establish real HIP compilation.
+
+The user confirmed the corrected HIP build succeeded. The first real GPU
+construction then failed after IVF-PQ's workspace-adjustment log. The original
+exception was lost because successful cleanup calls reset cuVS's thread-local
+last-error text. The bridge now prints the CAGRA error before cleanup. The
+workspace-adjustment info line alone does not establish the failure cause.
+The error-reporting test injects a build failure and clears its text on index
+destruction, matching the fixed library's cleanup behavior.
 
 Branch: `contest/hipvs-ivfpq-experiment`. Do not promote or use this as the
 official submission until real GPU quality, timing, and resource checks pass.

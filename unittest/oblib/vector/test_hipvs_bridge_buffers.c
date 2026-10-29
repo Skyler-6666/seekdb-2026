@@ -13,6 +13,9 @@ int main(void)
   fail_copy = copies + 1;
   assert(seekdb_cuvs_build(base, 256, 4) == NULL && live == 0);
   fail_copy = 0;
+  fail_build = 1;
+  assert(seekdb_cuvs_build(base, 256, 4) == NULL && live == 0);
+  fail_build = 0;
   const int before_build = allocations;
   const int before_frees = frees;
   void *h = seekdb_cuvs_build(base, 256, 4);

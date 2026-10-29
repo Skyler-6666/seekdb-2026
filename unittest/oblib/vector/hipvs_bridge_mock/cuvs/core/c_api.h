@@ -29,17 +29,19 @@ typedef struct { int type; uintptr_t addr; } cuvsFilter;
 enum { CUVS_SUCCESS, NN_DESCENT, ITERATIVE_CAGRA_SEARCH, IVF_PQ, HIP_R_32F, kDLCPU, kDLCUDA, kDLFloat, kDLUInt, NO_FILTER,
        cudaSuccess = 0, cudaMemcpyDefault = 0 };
 static int allocations, frees, live, fail_allocation, copies, fail_copy;
+static int fail_build;
+static const char* last_error = "injected failure";
 static long saved_n, saved_dim;
 static int cuvsResourcesCreate(cuvsResources_t *r) { *r = (void*)1; return 0; }
 static int cuvsResourcesDestroy(cuvsResources_t r) { (void)r; return 0; }
-static const char* cuvsGetLastErrorText(void) { return "injected failure"; }
+static const char* cuvsGetLastErrorText(void) { return last_error; }
 static int cuvsCagraIndexParamsCreate(cuvsCagraIndexParams_t *p)
 { *p = calloc(1, sizeof(**p)); (*p)->graph_build_params = calloc(1, sizeof(GraphParams)); return 0; }
 static int cuvsCagraIndexParamsDestroy(cuvsCagraIndexParams_t p) { free(p->graph_build_params); free(p); return 0; }
 static int cuvsIvfPqSearchParamsCreate(cuvsIvfPqSearchParams_t *p) { *p = calloc(1, sizeof(**p)); return 0; }
 static int cuvsIvfPqSearchParamsDestroy(cuvsIvfPqSearchParams_t p) { free(p); return 0; }
 static int cuvsCagraIndexCreate(cuvsCagraIndex_t *p) { *p = (void*)1; return 0; }
-static int cuvsCagraIndexDestroy(cuvsCagraIndex_t p) { (void)p; return 0; }
+static int cuvsCagraIndexDestroy(cuvsCagraIndex_t p) { (void)p; last_error = NULL; return 0; }
 static int cuvsCagraBuild(cuvsResources_t r, cuvsCagraIndexParams_t p, DLManagedTensor *t, cuvsCagraIndex_t i)
 { (void)r; (void)i;
   assert(p->build_algo == IVF_PQ && p->graph_degree == 128 &&
@@ -47,9 +49,11 @@ static int cuvsCagraBuild(cuvsResources_t r, cuvsCagraIndexParams_t p, DLManaged
   assert(t->dl_tensor.device.device_type == kDLCUDA);
   assert(p->graph_build_params->refinement_rate == 8.0f);
   assert(p->graph_build_params->ivf_pq_search_params->lut_dtype == HIP_R_32F);
+  if (fail_build) { last_error = "injected CAGRA build failure"; return 1; }
   saved_n = t->dl_tensor.shape[0]; saved_dim = t->dl_tensor.shape[1]; return 0; }
 static int cuvsRMMAlloc(cuvsResources_t r, void **p, size_t n)
-{ (void)r; ++allocations; if (allocations == fail_allocation) return 1; *p = malloc(n); ++live; return 0; }
+{ (void)r; ++allocations; if (allocations == fail_allocation) { last_error = "injected allocation failure"; return 1; }
+  *p = malloc(n); ++live; return 0; }
 static int cuvsRMMFree(cuvsResources_t r, void *p, size_t n)
 { (void)r; (void)n; free(p); ++frees; --live; return 0; }
 static int cudaMemcpy(void *dst, const void *src, size_t n, int kind)
