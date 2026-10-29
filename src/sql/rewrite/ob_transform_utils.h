@@ -1884,6 +1884,11 @@ public:
                                 ObRawExpr *expr, 
                                 bool &eq_zero, 
                                 ObIArray<ObExprConstraint> &constraints);
+  static int check_need_calc_match_score(ObExecContext *exec_ctx,
+                                         const ObDMLStmt *stmt,
+                                         ObRawExpr *match_expr,
+                                         bool &need_calc,
+                                         ObIArray<ObExprConstraint> &constraints);
   static int get_having_filters_for_deduce(const ObSelectStmt* sel_stmt,
                                            const ObIArray<ObRawExpr*> &raw_having_exprs,
                                            const ObIArray<ObRawExpr*> &group_clause_exprs,
@@ -2045,11 +2050,6 @@ private:
                                               ObRawExpr* match_expr, 
                                               bool &need_calc,
                                               ObIArray<ObExprConstraint> &constraints);
-  static int check_need_calc_match_score(ObExecContext *exec_ctx,
-                                         const ObDMLStmt *stmt,
-                                         ObRawExpr *match_expr,
-                                         bool &need_calc,
-                                         ObIArray<ObExprConstraint> &constraints);
   static int check_stmt_can_trans_as_exists(ObSelectStmt *stmt,
                                             ObTransformerCtx *ctx,
                                             bool is_correlated,
