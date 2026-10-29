@@ -215,18 +215,19 @@ int ObTokenStopWordNormalizer::filter_special_marks(const ObDatum &check_token, 
   int ret = OB_SUCCESS;
   const int64_t token_len = check_token.len_;
   const char *token = check_token.ptr_;
-  int64_t special_mark_cnt = 0;
+  is_valid = false;
   for (int64_t i = 0; i < token_len; ++i) {
     const char *character = token + i;
     const unsigned char c = static_cast<unsigned char>(*character);
     const bool special = cs_->mbminlen == 1 && c < 0x80
         ? !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
         : (ob_ispunct(cs_, *character) || ob_iscntrl(cs_, *character));
-    if (special) {
-      special_mark_cnt++;
+    if (!special) {
+      // A token is valid as soon as it contains one non-special character.
+      is_valid = true;
+      break;
     }
   }
-  is_valid = !(special_mark_cnt == token_len);
   return ret;
 }
 
