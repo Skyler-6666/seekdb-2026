@@ -8,7 +8,40 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from pathlib import Path
+
+
+class VramSampler:
+    """Sample this GPU's sysfs counter; peaks between samples can be missed."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.initial = int(self.path.read_text().strip())
+        self.peak = self.initial
+        self.samples = 1
+        self.error = None
+        self.stop = threading.Event()
+        self.thread = threading.Thread(target=self.poll, daemon=True)
+
+    def poll(self):
+        while not self.stop.wait(0.02):
+            try:
+                self.peak = max(self.peak, int(self.path.read_text().strip()))
+                self.samples += 1
+            except (OSError, ValueError) as error:
+                self.error = error
+                return
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        self.stop.set()
+        self.thread.join()
+        if self.error is not None and kind is None:
+            raise RuntimeError(f"VRAM sampling failed: {self.error}")
 
 
 def recall_at_k(returned, truth, rows, k):
@@ -136,6 +169,7 @@ def main():
     parser.add_argument("--dim", required=True, type=int)
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--vram-used-file", help="this GPU's mem_info_vram_used sysfs path")
     args = parser.parse_args()
     if args.dim <= 0 or args.rounds < 2:
         parser.error("positive dimension and at least two alternating rounds required")
@@ -153,6 +187,7 @@ def main():
         "rows": len(base), "dim": args.dim, "queries": len(queries),
         "libraries": {"baseline": str(Path(args.baseline).resolve()),
                       "candidate": str(Path(args.candidate).resolve())},
+        "vram_used_file": args.vram_used_file,
         "runs": {"baseline": [], "candidate": []},
     }
     # All cuVS operations run on one reusable large-stack thread, including free.
@@ -166,7 +201,14 @@ def main():
                 snapshot = Path(temporary) / f"{name}-{round_id}.cagra"
 
                 def run(library=report["libraries"][name], path=snapshot):
-                    return Bridge(library).run(base, queries, truth, path)
+                    context = VramSampler(args.vram_used_file) if args.vram_used_file else nullcontext()
+                    with context as sampler:
+                        measured = Bridge(library).run(base, queries, truth, path)
+                    if sampler is not None:
+                        measured["vram_initial_bytes"] = sampler.initial
+                        measured["vram_peak_sampled_bytes"] = sampler.peak
+                        measured["vram_samples"] = sampler.samples
+                    return measured
 
                 result = worker.submit(run).result()
                 result["round"] = round_id + 1
@@ -182,8 +224,15 @@ def main():
                 statistics.median(r["recall"][str(k)] for r in report["runs"]["baseline"])
         for k in (10, 100)
     }
+    if args.vram_used_file:
+        peaks = {name: max(r["vram_peak_sampled_bytes"] for r in runs)
+                 for name, runs in report["runs"].items()}
+        report["sampled_vram_peak_ratio"] = peaks["candidate"] / peaks["baseline"] if peaks["baseline"] else None
     output.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(json.dumps({k: report[k] for k in ("bridge_ready_speedup", "median_recall_delta")}), flush=True)
+    summary = {k: report[k] for k in ("bridge_ready_speedup", "median_recall_delta")}
+    if args.vram_used_file:
+        summary["sampled_vram_peak_ratio"] = report["sampled_vram_peak_ratio"]
+    print(json.dumps(summary), flush=True)
     print(f"Report: {output}", flush=True)
 
 

@@ -54,6 +54,19 @@ server resource gates, and Hidden250K. Snapshot byte size is not VRAM usage.
 These diagnostics cannot establish official gates or a score. Retain the raw
 JSON and reproduce promising results with the official evaluator.
 
+On the user's instance, GPU 0 has PCI address 0000:e3:00.0. If its sysfs
+counter is readable, add:
+
+```bash
+--vram-used-file /sys/bus/pci/devices/0000:e3:00.0/mem_info_vram_used
+```
+
+The tool samples absolute device VRAM usage every 20 ms from before library
+loading until after handle release, reporting initial usage, sampled peak, and
+sample count per run. Other GPU users can affect this counter. A sampled peak
+is a lower bound because short allocations can fall between samples; it is not
+the official profiler's peak and cannot prove a memory gate passed.
+
 CPU metric validation can run without NumPy or a GPU:
 
 ```bash

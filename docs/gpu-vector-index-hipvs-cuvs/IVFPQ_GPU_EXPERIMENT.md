@@ -22,6 +22,20 @@ refinement outputs. The final CAGRA graph degree stays 128. This one-neighbor
 construction change still requires measured recall validation and is not
 assumed quality-neutral. The CPU test enforces the external refine capacity.
 
+The user confirmed build, first query, and snapshot reload pass after that
+boundary fix on the 10K x 32 smoke data. The GPU reports 51522830336 bytes
+total VRAM at PCI 0000:e3:00.0; post-test usage was 28028928 bytes, which is not
+a construction peak. The instance did not expose RAFT/RMM development headers
+in the searched /opt and /usr/local/include paths, so a C++ batch-size adapter
+cannot yet be built there from the available SDK. The C API does not expose
+the construction search's max_internal_batch_size.
+
+Source inspection confirms the fixed GPU refine path fills per-query IVF-flat
+lists with candidate vectors. Its memory therefore scales with batch size,
+candidate count, and dimension, beyond the neighbors/distances buffers alone.
+Do not run this unbounded path at 250K yet. The next small-data comparison adds
+20 ms sysfs VRAM sampling to quantify the limitation before further work.
+
 Branch: `contest/hipvs-ivfpq-experiment`. Do not promote or use this as the
 official submission until real GPU quality, timing, and resource checks pass.
 The submission branch `contest/hipvs-cagra-optimization` remains on NN-Descent.
