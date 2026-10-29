@@ -1,0 +1,32 @@
+=== heartbeat 2026-10-29 19:22:26 run=8 sha=ba01ce7fbcb3e06bff1e929164526a03326b64ff job=verify tag=end ===
+--- uptime ---
+ 19:22:26 up 6 min,  0 users,  load average: 1.52, 1.04, 0.48
+--- nproc ---
+4
+--- free -m ---
+               total        used        free      shared  buff/cache   available
+Mem:           15987         834         199          48       14954       14758
+Swap:           4095           0        4095
+--- df ---
+Filesystem                   Size  Used Avail Use% Mounted on
+/dev/root                    146G  130G   16G  90% /
+/dev/mapper/buildvg-buildlv   98G  9.0G   89G  10% /home/runner/work/seekdb-2026/seekdb-2026
+--- top mem ---
+    PID   RSS COMMAND
+   1897 188272 Runner.Worker
+   1837 156440 provjobd5901711
+   1870 99612 Runner.Listener
+    966 71872 dockerd
+    760 48764 php-fpm8.1
+    204 44256 multipathd
+    782 43092 snapd
+    808 42820 containerd
+    897 37100 mono
+   1219 32948 python3
+    797 28068 python3
+--- dmesg tail ---
+--- log tail: build_observer.output ---
+Downloading Bazel: https://releases.bazel.build/9.3.0/release/bazel-9.3.0-linux-x86_64
+ERROR: cannot read Bazel options: Extracting Bazel installation...
+OpenJDK 64-Bit Server VM warning: Options -Xverify:none and -noverify were deprecated in JDK 13 and will likely be removed in a future release.
+ERROR: The repo contents cache [/home/runner/work/seekdb-2026/seekdb-2026/.xdg-cache/bazel/_bazel_runner/cache/repos/v1/contents] is inside the main repo [/home/runner/work/seekdb-2026/seekdb-2026]. This can cause spurious failures. Disable the repo contents cache with `--repo_contents_cache=`, or specify `--repo_contents_cache=<path outside the main repo>`.
