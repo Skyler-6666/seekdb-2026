@@ -47,10 +47,14 @@ jobs:
         working-directory: rust
 
       - name: Prepare project dependencies
-        run: python3 build.py init 2>&1 | tee deps_init.output
+        run: |
+          set -o pipefail
+          python3 build.py init 2>&1 | tee deps_init.output
 
       - name: Build share_runtime and sql_runtime
-        run: python3 build.py build //src/share:share_runtime //src/sql:sql_runtime
+        run: |
+          set -o pipefail
+          python3 build.py build //src/share:share_runtime //src/sql:sql_runtime 2>&1 | tee build_modules.output
 
       - name: Run HNSW serial format unit test
         run: python3 build.py test //unittest/oblib:test_hnsw_serial_format
@@ -62,6 +66,38 @@ jobs:
           cat src/sql/parser/_gen_parser.error 2>/dev/null || true
           echo "=== _gen_parser.output (tail) ==="
           tail -50 src/sql/parser/_gen_parser.output 2>/dev/null || true
+
+      - name: Publish build logs to results branch
+        if: always()
+        run: |
+          set +e
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "seekdb-ci"
+          git config user.email "seekdb-ci@users.noreply.github.com"
+          RESBRANCH="hipvs-ci-results"
+          git checkout --orphan "$RESBRANCH" >/dev/null 2>&1
+          rm -rf hipvs-ci-results
+          mkdir -p hipvs-ci-results/compile
+          {
+            echo "run_id: $GITHUB_RUN_ID"
+            echo "run_number: $GITHUB_RUN_NUMBER"
+            echo "sha: $GITHUB_SHA"
+            echo "job: compile"
+          } > hipvs-ci-results/compile/run-meta.txt
+          for f in deps_init.output build_modules.output; do
+            if [ -f "$f" ]; then
+              cp "$f" hipvs-ci-results/compile/ 2>/dev/null || true
+            fi
+          done
+          if [ -f src/sql/parser/_gen_parser.error ]; then
+            cp src/sql/parser/_gen_parser.error hipvs-ci-results/compile/ 2>/dev/null || true
+          fi
+          git add -f hipvs-ci-results >/dev/null 2>&1
+          if git commit -m "ci: compile diagnostics for run $GITHUB_RUN_NUMBER sha $GITHUB_SHA" >/dev/null 2>&1; then
+            git push --force origin "HEAD:$RESBRANCH" >/dev/null 2>&1 && echo "published compile diagnostics to branch $RESBRANCH"
+          else
+            echo "no compile diagnostics to publish"
+          fi
 
   verify:
     timeout-minutes: 360
@@ -91,10 +127,14 @@ jobs:
         working-directory: rust
 
       - name: Prepare project dependencies
-        run: python3 build.py init 2>&1 | tee deps_init.output
+        run: |
+          set -o pipefail
+          python3 build.py init 2>&1 | tee deps_init.output
 
       - name: Build observer
-        run: python3 build.py build //src/observer:seekdb
+        run: |
+          set -o pipefail
+          python3 build.py build //src/observer:seekdb 2>&1 | tee build_observer.output
 
       - name: Verify build artifacts
         run: |
@@ -161,6 +201,12 @@ jobs:
           if [ -d .seekdb_vec_test/instance ]; then
             mkdir -p hipvs-ci-results/instance-log
             find .seekdb_vec_test/instance -maxdepth 1 -type f \( -name 'seekdb.log*' -o -name '*.log' \) -size -20M -exec cp {} hipvs-ci-results/instance-log/ \;
+          fi
+          for f in deps_init.output build_observer.output; do
+            if [ -f "$f" ]; then cp "$f" hipvs-ci-results/ 2>/dev/null || true; fi
+          done
+          if [ -f src/sql/parser/_gen_parser.error ]; then
+            cp src/sql/parser/_gen_parser.error hipvs-ci-results/ 2>/dev/null || true
           fi
           git add -f hipvs-ci-results >/dev/null 2>&1
           if git commit -m "ci: diagnostics for run $GITHUB_RUN_NUMBER sha $GITHUB_SHA" >/dev/null 2>&1; then
