@@ -526,7 +526,7 @@ int ObTextRetrievalDaaTTokenIter::save_docids()
     cur_idx_ = 0;
     const ObDatumVector &doc_id_datum = inv_scan_domain_id_col_->locate_expr_datumvector(*eval_ctx_);
     for (int64_t i = 0; OB_SUCC(ret) && i < count_; ++i) {
-      if (OB_LIKELY(!token_iter_->get_skip()->at(i))) {
+      if (OB_ISNULL(token_iter_->get_skip()) || OB_LIKELY(!token_iter_->get_skip()->at(i))) {
         if (OB_FAIL(doc_id_[i].from_datum(*doc_id_datum.at(i)))) {
         };
       }

@@ -171,6 +171,10 @@ jobs:
             mkdir -p fts-ci-results/instance-log
             find .seekdb_fts_test/instance/log -type f -size -20M -exec cp {} fts-ci-results/instance-log/ \;
           fi
+          if [ -d .seekdb_fts_test/instance ]; then
+            mkdir -p fts-ci-results/instance-log
+            find .seekdb_fts_test/instance -maxdepth 1 -type f \( -name 'seekdb.log*' -o -name '*.log' \) -size -20M -exec cp {} fts-ci-results/instance-log/ \;
+          fi
           for f in fts_large_bench_score.txt fts_large_bench_report.txt; do
             if [ -f "$f" ]; then cp "$f" fts-ci-results/; fi
           done

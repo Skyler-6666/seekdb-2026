@@ -263,6 +263,7 @@ int ObSRDaaTIterImpl::do_one_merge_round(int64_t &count)
     if (OB_UNLIKELY(OB_ITER_END != ret)) {
     }
   } else if (OB_FAIL(collect_dims_by_id(id_datum, relevance, need_project))) {
+  } else if (nullptr == iter_param_->relevance_expr_ && FALSE_IT(relevance = 1.0)) {
   } else if (need_project && OB_FAIL(filter_on_demand(count, relevance, need_project))) {
   } else if (need_project && OB_FAIL(cache_result(count, *id_datum, relevance))) {
     if (OB_ITER_END != ret) {
