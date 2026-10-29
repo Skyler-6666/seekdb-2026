@@ -57,7 +57,9 @@ void* seekdb_cuvs_build(const float* base, long n, long dim)
   if (cuvsCagraIndexParamsCreate(&h->ip) != CUVS_SUCCESS) goto fail_res;
   h->ip->build_algo = IVF_PQ;
   h->ip->graph_degree = 128;
-  h->ip->intermediate_graph_degree = 256;
+  // GPU refinement returns one extra neighbor to discard self. Its fixed
+  // top-k capacity is 256, so at most 255 intermediate neighbors fit.
+  h->ip->intermediate_graph_degree = 255;
   h->ip->nn_descent_niter = 100;
   if (cuvsIvfPqSearchParamsCreate(&build_search) != CUVS_SUCCESS) goto fail_ip;
   {

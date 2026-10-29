@@ -13,13 +13,37 @@ workspace-adjustment info line alone does not establish the failure cause.
 The error-reporting test injects a build failure and clears its text on index
 destruction, matching the fixed library's cleanup behavior.
 
+The original error was then confirmed on the GPU: refine_device requests
+intermediate_graph_degree + 1 outputs to exclude self, but its fixed top-k
+capacity is 256. The fixed source checks k <= 256 despite the error message
+saying "less than". Intermediate degree 256 therefore requested 257 and failed.
+This experiment now uses 255 intermediate neighbors, giving exactly 256
+refinement outputs. The final CAGRA graph degree stays 128. This one-neighbor
+construction change still requires measured recall validation and is not
+assumed quality-neutral. The CPU test enforces the external refine capacity.
+
 Branch: `contest/hipvs-ivfpq-experiment`. Do not promote or use this as the
 official submission until real GPU quality, timing, and resource checks pass.
 The submission branch `contest/hipvs-cagra-optimization` remains on NN-Descent.
 
+## Organizer clarification supplied by the user
+
+On 2026-10-29 the user relayed an upcoming rule clarification: custom GPU graph
+construction is permitted, while queries must actually use the organizer's
+fixed CAGRA search implementation and its results. The complete updated
+official document has not been supplied yet.
+
+This experiment changes construction only. The successful GPU query path still
+calls cuvsCagraSearch from the installed fixed library and copies its returned
+neighbor offsets/distances to the caller. It does not replace query computation
+with an alternative search, query-time reranker, precomputed answer, or a
+phase-specific implementation. Build-time IVF candidate refinement is separate
+from the unchanged CAGRA query path. Final compliance still needs the complete
+rules and official profiling/quality checks.
+
 This experiment changes only CAGRA's initial neighbor graph construction to
 IVF-PQ with 8x candidate refinement, up to 32 probes, and FP32 lookup tables
-and internal IVF-PQ distance accumulation. It retains graph degrees 128/256
+and internal IVF-PQ distance accumulation. It uses graph degrees 128/255
 and the V5 CAGRA search parameters (width 4, at least max(512, 4*k) candidates).
 The probe count is bounded by the fixed hipVS default number of lists,
 max(1, n / 2000), so small datasets do not request more probes than lists.
@@ -27,7 +51,7 @@ max(1, n / 2000), so small datasets do not request more probes than lists.
 The original FP32 matrix is copied once into a GPU allocation retained by the
 bridge handle. Passing a device dataset selects the fixed library's GPU
 refinement path. The host-dataset IVF-PQ path can refine on CPU and is not used.
-The fixed library chooses 256*8 neighbor candidates and refines them against
+The fixed library chooses 255*8 neighbor candidates and refines them against
 the original FP32 device data before optimizing the 128-edge CAGRA graph.
 Quantized IVF-PQ is only a construction candidate selector; final query vectors
 and distances use the original FP32 CAGRA index.
