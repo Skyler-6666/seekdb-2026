@@ -58,6 +58,7 @@ private:
   uint64_t row_idx_;
   bool is_fts_index_aux_;
   storage::ObFTParseHelper helper_;
+  common::ObArenaAllocator parser_allocator_;
   storage::ObFTWordMap word_map_;
   bool is_inited_;
 

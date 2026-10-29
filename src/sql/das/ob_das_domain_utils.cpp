@@ -48,6 +48,7 @@ ObFTIndexRowCache::ObFTIndexRowCache()
     row_idx_(0),
     is_fts_index_aux_(true),
     helper_(),
+    parser_allocator_("FTSParser"),
     is_inited_(false)
 {
 }
@@ -68,7 +69,7 @@ int ObFTIndexRowCache::init(
   if (OB_UNLIKELY(is_inited_)) {
     ret = OB_INIT_TWICE;
   } else if (OB_FAIL(CURRENT_CONTEXT->CREATE_CONTEXT(merge_memctx_, param))) {
-  } else if (OB_FAIL(helper_.init(&(merge_memctx_->get_arena_allocator()), parser_name, parser_properties))) {
+  } else if (OB_FAIL(helper_.init(&(merge_memctx_->get_arena_allocator()), &parser_allocator_, parser_name, parser_properties))) {
   } else {
     row_idx_ = 0;
     is_fts_index_aux_ = is_fts_index_aux;
@@ -124,6 +125,7 @@ void ObFTIndexRowCache::reset()
   row_idx_ = 0;
   is_fts_index_aux_ = true;
   helper_.reset();
+  parser_allocator_.reset();
   if (word_map_.created()) {
     word_map_.destroy();
   }
