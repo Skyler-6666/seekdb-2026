@@ -66,6 +66,24 @@ jobs:
       - name: Run FTS correctness suite
         run: python3 -B .github/script/seekdb/run_fts_cases.py
 
+      - name: Publish FTS correctness failures to job summary
+        if: failure()
+        run: |
+          echo '## FTS correctness failures' >> "$GITHUB_STEP_SUMMARY"
+          FAILDIR="$GITHUB_WORKSPACE/.seekdb_fts_test/work/failures"
+          if [ -d "$FAILDIR" ] && [ -n "$(ls -A "$FAILDIR" 2>/dev/null)" ]; then
+            for f in "$FAILDIR"/*; do
+              echo "<details><summary>$(basename "$f")</summary>" >> "$GITHUB_STEP_SUMMARY"
+              echo '' >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              tail -n 100 "$f" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              echo '</details>' >> "$GITHUB_STEP_SUMMARY"
+            done
+          else
+            echo 'no failure artifacts found' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Start benchmark instance
         if: always()
         run: |
@@ -97,6 +115,16 @@ jobs:
           python3 tools/benchmark/fts_large_bench_score.py \
             "$GITHUB_WORKSPACE/fts_large_bench_report.txt" \
             | tee "$GITHUB_WORKSPACE/fts_large_bench_score.txt"
+
+      - name: Publish benchmark results to job summary
+        if: always()
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/fts_large_bench_score.txt" ]; then
+            { echo '## Benchmark score'; cat "$GITHUB_WORKSPACE/fts_large_bench_score.txt"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f "$GITHUB_WORKSPACE/fts_large_bench_report.txt" ]; then
+            { echo '## Benchmark report'; cat "$GITHUB_WORKSPACE/fts_large_bench_report.txt"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Stop benchmark instance
         if: always()

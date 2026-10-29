@@ -12858,6 +12858,38 @@ int ObTransformUtils::inner_check_need_calc_match_score(ObExecContext *exec_ctx,
   return ret;
 }
 
+int ObTransformUtils::check_need_calc_match_score(ObExecContext *exec_ctx,
+                                                  const ObDMLStmt *stmt,
+                                                  ObRawExpr *match_expr,
+                                                  bool &need_calc,
+                                                  ObIArray<ObExprConstraint> &constraints)
+{
+  int ret = OB_SUCCESS;
+  ObSEArray<ObRawExpr *, 4> check_exprs;
+  need_calc = false;
+  if (OB_ISNULL(exec_ctx) || OB_ISNULL(stmt) || OB_ISNULL(match_expr)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(append(check_exprs, stmt->get_condition_exprs()))) {
+    LOG_WARN("failed to append condition exprs", K(ret));
+  } else if (OB_FAIL(stmt->get_order_exprs(check_exprs))) {
+    LOG_WARN("failed to get order exprs", K(ret));
+  } else if (stmt->is_select_stmt()) {
+    const ObSelectStmt *sel_stmt = static_cast<const ObSelectStmt *>(stmt);
+    if (OB_FAIL(sel_stmt->get_select_exprs(check_exprs))) {
+      LOG_WARN("failed to get select exprs", K(ret));
+    } else if (OB_FAIL(append(check_exprs, sel_stmt->get_group_exprs()))) {
+      LOG_WARN("failed to append group exprs", K(ret));
+    }
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && !need_calc && i < check_exprs.count(); ++i) {
+    if (OB_FAIL(inner_check_need_calc_match_score(exec_ctx, check_exprs.at(i), match_expr,
+                                                  need_calc, constraints))) {
+      LOG_WARN("failed to check need calc match score", K(ret));
+    }
+  }
+  return ret;
+}
+
 int ObTransformUtils::check_expr_eq_zero(ObExecContext *ctx,
                                          ObRawExpr *expr, 
                                          bool &eq_zero, 

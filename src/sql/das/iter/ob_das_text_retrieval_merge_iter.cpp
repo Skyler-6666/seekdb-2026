@@ -1482,7 +1482,7 @@ int ObDASTRTaatLookupIter::fill_output_exprs(int64_t &count, int64_t safe_capaci
 int ObDASTRTaatLookupIter::inner_get_next_row()
 {
   int ret = OB_SUCCESS;
-  bool need_fill_doc_cnt = !doc_cnt_calculated_;
+  bool need_fill_doc_cnt = ir_ctdef_->need_calc_relevance() && !doc_cnt_calculated_;
   if (OB_UNLIKELY(1 != rangekey_size_)) { // if rangekey_size_ > 1, UNSUPPORTED
     ret = OB_ERR_UNEXPECTED;
   } else if (next_written_idx_ >= rangekey_size_) {
@@ -1499,9 +1499,9 @@ int ObDASTRTaatLookupIter::inner_get_next_row()
       }
     }
   } else if (need_fill_doc_cnt && OB_FAIL(fill_total_doc_cnt())) {
-  } else if (0 == total_doc_cnt_) {
+  } else if (ir_ctdef_->need_calc_relevance() && 0 == total_doc_cnt_) {
     ret = OB_ITER_END;
-  } else if (total_doc_cnt_ < 0) {
+  } else if (ir_ctdef_->need_calc_relevance() && total_doc_cnt_ < 0) {
     ret = OB_ERR_UNEXPECTED;
   } else {
     int64_t count = 0;
@@ -1746,7 +1746,7 @@ int ObDASTRDaatIter::inner_get_next_row()
     bool filter_valid = false;
     bool got_valid_document = false;
     bool doc_valid = false;
-    ObExpr *match_filter = ir_ctdef_->need_calc_relevance() ? ir_ctdef_->match_filter_ : nullptr;
+    ObExpr *match_filter = ir_ctdef_->match_filter_;
     ObDatum *filter_res = nullptr;
     const bool is_batch = false;
     while (OB_SUCC(ret) && !got_valid_document) {
@@ -1789,7 +1789,7 @@ int ObDASTRDaatIter::inner_get_next_rows(int64_t &count, int64_t capacity)
   } else if (0 == capacity) {
     count = 0;
   } else {
-    ObExpr *match_filter = ir_ctdef_->need_calc_relevance() ? ir_ctdef_->match_filter_ : nullptr;
+    ObExpr *match_filter = ir_ctdef_->match_filter_;
     int64_t real_capacity = min(capacity, ir_rtdef_->eval_ctx_->max_batch_size_);
     ObDatum *filter_res = nullptr;
     const bool is_batch = true;
@@ -2091,7 +2091,7 @@ int ObDASTRDaatLookupIter::inner_get_next_rows(int64_t &count, int64_t capacity)
     ret = OB_ERR_UNEXPECTED;
   } else if (next_written_idx_ == 0) {
     // for normal case
-    ObExpr *match_filter = ir_ctdef_->need_calc_relevance() ? ir_ctdef_->match_filter_ : nullptr;
+    ObExpr *match_filter = ir_ctdef_->match_filter_;
     const bool is_batch = true;
     next_written_idx_ = 0;
     bool filter_valid = false;
@@ -2215,7 +2215,9 @@ int ObDASTRDaatLookupIter::next_disjunctive_document(const int capacity)
       }
 
       if (OB_SUCC(ret)) {
-        const double relevance_score = ir_ctdef_->need_calc_relevance() ? cur_doc_relevance : 0;
+        // when relevance is not needed, any matched document projects a
+        // non-zero score so that the match predicate keeps treating it as hit
+        const double relevance_score = ir_ctdef_->need_calc_relevance() ? cur_doc_relevance : 1;
         int64_t pos = hints_[next_written_idx_];
         if (pos < capacity) {
           ObEvalCtx::BatchInfoScopeGuard guard(*ctx);
