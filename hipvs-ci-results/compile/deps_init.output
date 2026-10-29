@@ -26,3 +26,4 @@ Preparing obshell-4.4.1.1-32026031914.el8.x86_64.rpm
 Preparing ob-deploy-4.1.0-2.el8.x86_64.rpm
 Preparing obclient-2.2.3-1.el8.x86_64.rpm
 Preparing libobclient-2.2.3-1.el8.x86_64.rpm
+Dependencies ready: /home/runner/work/seekdb-2026/seekdb-2026/deps/3rd
