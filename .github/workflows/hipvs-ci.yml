@@ -64,9 +64,13 @@ jobs:
           git config user.email "seekdb-ci@users.noreply.github.com"
           HB_DIR=$(mktemp -d)
           RESBRANCH="hipvs-ci-results"
+          mkdir -p "$GITHUB_WORKSPACE/hb_copy"
           (
+            set +e
             export GIT_DIR="$GITHUB_WORKSPACE/.git" GIT_WORK_TREE="$HB_DIR"
-            cd "$HB_DIR" || exit 0
+            cd "$HB_DIR"
+            exec >hb_stdout.log 2>hb_stderr.log
+            set -x
             while true; do
               {
                 echo "=== heartbeat $(date -u +%H:%M:%S) run $GITHUB_RUN_NUMBER job compile ==="
@@ -77,18 +81,19 @@ jobs:
                 ps -eo pid,rss,comm --sort=-rss 2>/dev/null | head -12
                 echo "--- dmesg tail ---"
                 dmesg 2>/dev/null | tail -8
+                echo "--- git version ---"
+                git --version
               } > heartbeat.output 2>&1
-              cp "$GITHUB_WORKSPACE/build_modules.output" build_modules.output 2>/dev/null || true
-              GIT_INDEX_FILE="$HB_DIR/.idx" git read-tree --empty >/dev/null 2>&1
-              GIT_INDEX_FILE="$HB_DIR/.idx" git add -A . >/dev/null 2>&1
-              TREE=$(GIT_INDEX_FILE="$HB_DIR/.idx" git write-tree 2>/dev/null)
+              cp "$GITHUB_WORKSPACE/build_modules.output" build_modules.output 2>/dev/null
+              cp heartbeat.output build_modules.output "$GITHUB_WORKSPACE/hb_copy/" 2>/dev/null
+              GIT_INDEX_FILE="$HB_DIR/.idx" git read-tree --empty
+              GIT_INDEX_FILE="$HB_DIR/.idx" git add -A .
+              TREE=$(GIT_INDEX_FILE="$HB_DIR/.idx" git write-tree)
               if [ -n "$TREE" ]; then
-                git fetch --depth=1 origin "$RESBRANCH" >/dev/null 2>&1 || true
-                BASE=$(git rev-parse "origin/$RESBRANCH" 2>/dev/null || true)
-                COMMIT=$(echo "ci: heartbeat run $GITHUB_RUN_NUMBER" | git commit-tree "$TREE" ${BASE:+-p "$BASE"} 2>/dev/null)
+                BASE=$(git ls-remote origin "refs/heads/$RESBRANCH" | cut -f1)
+                COMMIT=$(echo "ci: heartbeat run $GITHUB_RUN_NUMBER" | git commit-tree "$TREE" ${BASE:+-p "$BASE"})
                 if [ -n "$COMMIT" ]; then
-                  git update-ref "refs/heads/$RESBRANCH" "$COMMIT" 2>/dev/null
-                  git push --force origin "refs/heads/$RESBRANCH:$RESBRANCH" >/dev/null 2>&1 || true
+                  git push --force origin "$COMMIT:refs/heads/$RESBRANCH"
                 fi
               fi
               sleep 20
@@ -139,6 +144,9 @@ jobs:
           if [ -f src/sql/parser/_gen_parser.error ]; then
             cp src/sql/parser/_gen_parser.error hipvs-ci-results/compile/ 2>/dev/null || true
           fi
+          if [ -d hb_copy ] && [ -n "$(ls -A hb_copy 2>/dev/null)" ]; then
+            cp -r hb_copy hipvs-ci-results/compile/hb_copy 2>/dev/null || true
+          fi
           git add -Af hipvs-ci-results >/dev/null 2>&1
           if git commit -m "ci: compile diagnostics for run $GITHUB_RUN_NUMBER sha $GITHUB_SHA" >/dev/null 2>&1; then
             git push --force origin "HEAD:$RESBRANCH" >/dev/null 2>&1 && echo "published compile diagnostics to branch $RESBRANCH"
@@ -187,9 +195,13 @@ jobs:
           git config user.email "seekdb-ci@users.noreply.github.com"
           HB_DIR=$(mktemp -d)
           RESBRANCH="hipvs-ci-results"
+          mkdir -p "$GITHUB_WORKSPACE/hb_copy"
           (
+            set +e
             export GIT_DIR="$GITHUB_WORKSPACE/.git" GIT_WORK_TREE="$HB_DIR"
-            cd "$HB_DIR" || exit 0
+            cd "$HB_DIR"
+            exec >hb_stdout.log 2>hb_stderr.log
+            set -x
             while true; do
               {
                 echo "=== heartbeat $(date -u +%H:%M:%S) run $GITHUB_RUN_NUMBER job verify ==="
@@ -200,18 +212,19 @@ jobs:
                 ps -eo pid,rss,comm --sort=-rss 2>/dev/null | head -12
                 echo "--- dmesg tail ---"
                 dmesg 2>/dev/null | tail -8
+                echo "--- git version ---"
+                git --version
               } > heartbeat.output 2>&1
-              cp "$GITHUB_WORKSPACE/build_observer.output" build_observer.output 2>/dev/null || true
-              GIT_INDEX_FILE="$HB_DIR/.idx" git read-tree --empty >/dev/null 2>&1
-              GIT_INDEX_FILE="$HB_DIR/.idx" git add -A . >/dev/null 2>&1
-              TREE=$(GIT_INDEX_FILE="$HB_DIR/.idx" git write-tree 2>/dev/null)
+              cp "$GITHUB_WORKSPACE/build_observer.output" build_observer.output 2>/dev/null
+              cp heartbeat.output build_observer.output "$GITHUB_WORKSPACE/hb_copy/" 2>/dev/null
+              GIT_INDEX_FILE="$HB_DIR/.idx" git read-tree --empty
+              GIT_INDEX_FILE="$HB_DIR/.idx" git add -A .
+              TREE=$(GIT_INDEX_FILE="$HB_DIR/.idx" git write-tree)
               if [ -n "$TREE" ]; then
-                git fetch --depth=1 origin "$RESBRANCH" >/dev/null 2>&1 || true
-                BASE=$(git rev-parse "origin/$RESBRANCH" 2>/dev/null || true)
-                COMMIT=$(echo "ci: heartbeat run $GITHUB_RUN_NUMBER" | git commit-tree "$TREE" ${BASE:+-p "$BASE"} 2>/dev/null)
+                BASE=$(git ls-remote origin "refs/heads/$RESBRANCH" | cut -f1)
+                COMMIT=$(echo "ci: heartbeat run $GITHUB_RUN_NUMBER" | git commit-tree "$TREE" ${BASE:+-p "$BASE"})
                 if [ -n "$COMMIT" ]; then
-                  git update-ref "refs/heads/$RESBRANCH" "$COMMIT" 2>/dev/null
-                  git push --force origin "refs/heads/$RESBRANCH:$RESBRANCH" >/dev/null 2>&1 || true
+                  git push --force origin "$COMMIT:refs/heads/$RESBRANCH"
                 fi
               fi
               sleep 20
@@ -297,6 +310,9 @@ jobs:
           done
           if [ -f src/sql/parser/_gen_parser.error ]; then
             cp src/sql/parser/_gen_parser.error hipvs-ci-results/verify/ 2>/dev/null || true
+          fi
+          if [ -d hb_copy ] && [ -n "$(ls -A hb_copy 2>/dev/null)" ]; then
+            cp -r hb_copy hipvs-ci-results/verify/hb_copy 2>/dev/null || true
           fi
           git add -Af hipvs-ci-results >/dev/null 2>&1
           if git commit -m "ci: diagnostics for run $GITHUB_RUN_NUMBER sha $GITHUB_SHA" >/dev/null 2>&1; then
