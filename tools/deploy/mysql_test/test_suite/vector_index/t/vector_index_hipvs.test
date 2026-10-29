@@ -1,0 +1,38 @@
+--echo # Vector Index AMD GPU (hipVS) Backend Test
+
+--disable_warnings
+drop table if exists t_hipvs;
+--enable_warnings
+alter system set vector_memory_limit = 0;
+sleep 3;
+
+--echo # the HIPVS backend is accepted for the hnsw index
+create table t_hipvs(c1 int, c2 vector(3), primary key(c1), vector index idx_hipvs(c2) with (distance=l2, type=hnsw, lib=hipvs));
+
+--echo # an unknown backend is rejected
+--error 1235
+create vector index idx_bad on t_hipvs(c2) with (distance=l2, type=hnsw, lib=unknown);
+
+--echo # the HIPVS backend is rejected for the ivf index
+--error 1235
+create vector index idx_bad on t_hipvs(c2) with (distance=l2, type=ivf_flat, lib=hipvs);
+
+insert into t_hipvs values(1, '[0.303846,0.305389,0.880365]');
+insert into t_hipvs values(2, '[0.484536,0.669954,0.986755]');
+insert into t_hipvs values(3, '[0.337936,0.048756,0.084670]');
+insert into t_hipvs values(4, '[0.123456,0.789012,0.345678]');
+insert into t_hipvs values(5, '[0.654321,0.111222,0.333444]');
+
+--echo # the rows are indexed
+select count(*) from t_hipvs;
+
+--echo # the index can be rebuilt, the graph is built on the GPU when a GPU is available
+call dbms_vector.rebuild_index('idx_hipvs', 't_hipvs', 'c2', 0);
+
+--echo # the rows are still there after the rebuild
+select count(*) from t_hipvs;
+
+--echo # the approximate search answers with the requested number of rows
+select count(*) from (select c1 from t_hipvs order by l2_distance(c2, '[0.303846,0.305389,0.880365]') approximate limit 3) t;
+
+drop table t_hipvs;

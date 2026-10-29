@@ -48,6 +48,19 @@ enum QuantizationType {
   MAX_TYPE
 };
 
+/**
+ * The backend that owns a vector index.
+ *
+ * VSAG is the default CPU backend. HIPVS is the optional AMD GPU backend: the
+ * HNSW graph is built on the GPU with hipVS (the HIP port of cuVS), and the
+ * resulting index is served by hipVS as well.
+ */
+enum IndexLib {
+  LIB_VSAG = 0,
+  LIB_HIPVS = 1,
+  LIB_MAX
+};
+
 struct CreateIndexParam
 {
   IndexType index_type_ = INVALID_INDEX_TYPE;
@@ -110,12 +123,20 @@ int construct_vsag_search_param(uint8_t create_type,
                                              int64_t ef_search, 
                                              bool use_extra_info_filter, 
                                              char *result_param_str);
+/**
+ * @brief Create an index with an explicit backend.
+ *
+ * @param[in] lib one of the `IndexLib` values. `LIB_HIPVS` builds the index
+ *            with the AMD GPU backend; it falls back to `LIB_VSAG` when the GPU
+ *            backend is not usable on this node.
+ */
 int create_index(VectorIndexPtr& index_handler, IndexType index_type,
                  const char* dtype,
                  const char* metric,int dim,
                  int max_degree, int ef_construction, int ef_search, void* allocator = nullptr,
                  int extra_info_size = 0, int16_t refine_type = 0,
-                 int16_t bq_bits_query = 32, bool bq_use_fht = false);
+                 int16_t bq_bits_query = 32, bool bq_use_fht = false,
+                 int lib = LIB_VSAG);
 int validate_create_index(const CreateIndexParam &param, std::string &err_msg);
 int create_index(VectorIndexPtr &index_handler, IndexType index_type, const char *dtype, const char *metric,
     bool use_reorder, float doc_prune_ratio, int window_size, void *allocator, int extra_info_size = 0);
@@ -126,6 +147,14 @@ int add_index(VectorIndexPtr& index_handler, float* vector, int64_t* ids, int di
 int add_index(VectorIndexPtr &index_handler, uint32_t *lens, uint32_t *dims, float *vals, int64_t *ids, int size,
     char *extra_info = nullptr);
 int get_index_number(VectorIndexPtr& index_handler, int64_t &size);
+/**
+ * @brief Whether the index is really served by the AMD GPU backend.
+ *
+ * It is false when the index was created with `LIB_HIPVS` but the GPU
+ * backend was not usable on this node, in which case the CPU backend serves
+ * the index.
+ */
+bool is_gpu_backed(VectorIndexPtr& index_handler);
 int get_index_type(VectorIndexPtr& index_handler);
 int cal_distance_by_id(VectorIndexPtr& index_handler, const float* vector, const int64_t* ids, int64_t count, const float *&distances);
 int cal_distance_by_id(VectorIndexPtr& index_handler, uint32_t len, uint32_t *dims, float *vals, const int64_t *ids,

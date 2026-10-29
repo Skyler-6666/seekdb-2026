@@ -83,11 +83,11 @@ int create_index(obvsag::VectorIndexPtr& index_handler, int index_type,
                  int max_degree, int ef_construction, int ef_search,
                  void* allocator, int extra_info_size /*= 0*/,
                  int16_t refine_type /*= 0*/, int16_t bq_bits_query /*= 32*/,
-                 bool bq_use_fht /*= false*/)
+                 bool bq_use_fht /*= false*/, int lib /*= obvsag::LIB_VSAG*/)
 {
   obvsag::set_block_size_limit(2*1024*1024);
   LOG_INFO("vector index create params: ", K(index_type), K(dim), KCSTRING(dtype), KCSTRING(metric), K(max_degree), K(ef_construction), K(ef_search),
-      KP(allocator), K(extra_info_size), K(refine_type), K(bq_bits_query), K(bq_use_fht));
+      KP(allocator), K(extra_info_size), K(refine_type), K(bq_bits_query), K(bq_use_fht), K(lib));
   return obvsag::create_index(index_handler,
                                    static_cast<obvsag::IndexType>(index_type),
                                    dtype, metric,
@@ -99,7 +99,8 @@ int create_index(obvsag::VectorIndexPtr& index_handler, int index_type,
                                    extra_info_size,
                                    refine_type,
                                    bq_bits_query,
-                                   bq_use_fht);
+                                   bq_use_fht,
+                                   lib);
 }
 
 int validate_create_index(const CreateIndexParam &param, std::string &err_msg)
@@ -150,6 +151,11 @@ int get_index_number(obvsag::VectorIndexPtr index_handler, int64_t &size)
     return obvsag::get_index_number(index_handler, size);
 }
 
+bool is_gpu_backed(obvsag::VectorIndexPtr index_handler)
+{
+    return obvsag::is_gpu_backed(index_handler);
+}
+
 int get_index_type(obvsag::VectorIndexPtr index_handler)
 {
     return obvsag::get_index_type(index_handler);
@@ -159,8 +165,7 @@ int cal_distance_by_id(obvsag::VectorIndexPtr index_handler,
                        const float *vector,
                        const int64_t *ids,
                        int64_t count,
-                       const float *&distances)
-{
+                       const float *&distances){
     return obvsag::cal_distance_by_id(index_handler, vector, ids, count, distances);
 }
 

@@ -58,12 +58,19 @@ int init_vasg_logger(void* logger);
 
 bool check_vsag_init();
 
+/**
+ * @brief Create an index with an explicit backend.
+ *
+ * @param[in] lib one of the `obvsag::IndexLib` values. `obvsag::LIB_HIPVS`
+ *            builds the index with the AMD GPU backend, and falls back to the
+ *            CPU backend when the GPU backend is not usable.
+ */
 int create_index(obvsag::VectorIndexPtr& index_handler, int index_type,
                  const char* dtype, const char* metric, int dim,
                  int max_degree, int ef_construction, int ef_search,
                  void* allocator = NULL, int extra_info_size = 0,
                  int16_t refine_type = 0, int16_t bq_bits_query = 32,
-                 bool bq_use_fht = false);
+                 bool bq_use_fht = false, int lib = obvsag::LIB_VSAG);
 
 int validate_create_index(const CreateIndexParam &param, std::string &err_msg);
 
@@ -81,6 +88,11 @@ int add_index(obvsag::VectorIndexPtr &index_handler, uint32_t *lens, uint32_t *d
     char *extra_infos = nullptr);
 
 int get_index_number(obvsag::VectorIndexPtr index_handler, int64_t &size);
+
+/**
+ * @brief Whether the index is really served by the AMD GPU backend.
+ */
+bool is_gpu_backed(obvsag::VectorIndexPtr index_handler);
 
 int get_index_type(obvsag::VectorIndexPtr index_handler);
 int cal_distance_by_id(obvsag::VectorIndexPtr index_handler,

@@ -257,6 +257,8 @@ int ObVectorIndexUtil::parser_params_from_string(
             param.lib_ = ObVectorIndexAlgorithmLib::VIAL_VSAG;
           } else if (new_param_value == "OB") {
             param.lib_ = ObVectorIndexAlgorithmLib::VIAL_OB;
+          } else if (new_param_value == "HIPVS") {
+            param.lib_ = ObVectorIndexAlgorithmLib::VIAL_HIPVS;
           } else {
             ret = OB_NOT_SUPPORTED;
           }
@@ -1030,6 +1032,8 @@ int ObVectorIndexUtil::construct_rebuild_index_param(
         tmp_lib = ObString("VSAG");
       } else if (old_vec_param.lib_ == ObVectorIndexAlgorithmLib::VIAL_OB) {
         tmp_lib = ObString("OB");
+      } else if (old_vec_param.lib_ == ObVectorIndexAlgorithmLib::VIAL_HIPVS) {
+        tmp_lib = ObString("HIPVS");
       } else {
         ret = OB_ERR_UNEXPECTED;
       }
@@ -2991,7 +2995,8 @@ int ObVectorIndexUtil::check_index_param(
           }
         } else if (last_variable == "LIB") {
           if (new_parser_name == "VSAG" ||
-              new_parser_name == "OB") {
+              new_parser_name == "OB" ||
+              new_parser_name == "HIPVS") {
             lib_is_set = true;
             lib_name = new_parser_name;
           } else {
@@ -3293,9 +3298,9 @@ int ObVectorIndexUtil::check_index_param(
           LOG_USER_ERROR(OB_NOT_SUPPORTED, "this value of vector index m is");
         }
         if (OB_FAIL(ret)) {
-        } else if (lib_is_set && lib_name != "VSAG") {
+        } else if (lib_is_set && lib_name != "VSAG" && lib_name != "HIPVS") {
           ret = OB_NOT_SUPPORTED;
-          LOG_USER_ERROR(OB_NOT_SUPPORTED, "hnsw vector index lib name not equal to 'VSAG' is");
+          LOG_USER_ERROR(OB_NOT_SUPPORTED, "hnsw vector index lib name not equal to 'VSAG' or 'HIPVS' is");
         }
         if (OB_FAIL(ret)) {
         } else if (ef_construction_value <= m_value) {

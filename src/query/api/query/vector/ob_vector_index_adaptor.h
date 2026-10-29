@@ -752,6 +752,21 @@ public:
   int init_hnswsq_mem_data();
   int check_snap_hnswsq_index();
   int build_hnswsq_index(ObVectorIndexParam *param);
+  /**
+   * @brief Stage the vectors of a batch for the GPU backend.
+   *
+   * The GPU backend builds the whole HNSW graph in one shot, so the vectors
+   * are staged instead of being inserted one by one. The staged vectors are
+   * consumed by `build_hipvs_index`.
+   */
+  int stage_snap_index(float *vectors, int64_t *vids, int64_t dim, char *extra_info_buf, int64_t num);
+  /**
+   * @brief Build the staged vectors into the HNSW graph on the GPU.
+   *
+   * Does nothing when the index does not use the GPU backend or when there is
+   * nothing staged.
+   */
+  int build_hipvs_index(ObVectorIndexParam *param);
   bool is_mem_data_init_atomic(ObVectorIndexRecordType type);
   int try_init_mem_data(ObVectorIndexRecordType type, ObVectorIndexAlgorithmType enforce_type = VIAT_MAX) {
     int ret = OB_SUCCESS;
@@ -765,6 +780,15 @@ public:
   ObAdapterCreateType &get_create_type() { return create_type_; };
   void set_create_type(ObAdapterCreateType type) { create_type_ = type; };
   ObVectorIndexAlgorithmType get_snap_index_type();
+  /**
+   * @brief Whether the snapshot index is served by the AMD GPU backend.
+   *
+   * The GPU backend does not keep a copy of the vectors, so it cannot
+   * compute the exact distance between a query and a set of ids. The query
+   * path uses this to skip the refinement step, the same way it does for the
+   * indexes that never supported it.
+   */
+  bool is_gpu_backed();
   OB_INLINE int64_t get_extra_column_count()
   {
     return extra_info_column_count_;

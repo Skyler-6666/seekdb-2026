@@ -1357,7 +1357,8 @@ int ObDASHNSWScanIter::process_adaptor_state_pre_filter(
   } else if (OB_FAIL(process_adaptor_state_pre_filter_with_idx_filter(ada_ctx, adaptor, brute_vids, brute_cnt, is_vectorized))) {
   }
   // ipivf not support cal_distance_by_id, so set go_brute_force_=false when using ipivf index.
-  if (is_ipivf()) {
+  // the AMD GPU backend does not support it either, it does not keep a copy of the vectors.
+  if (is_ipivf() || (OB_NOT_NULL(adaptor) && adaptor->is_gpu_backed())) {
     go_brute_force_ = false;
   }
   if (OB_FAIL(ret)) {

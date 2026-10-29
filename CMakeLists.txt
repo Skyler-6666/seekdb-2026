@@ -338,6 +338,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux"
   endforeach()
 endif()
 
+include(cmake/hipvs.cmake)
+seekdb_add_hipvs_bridge()
+
 if(SEEKDB_CMAKE_PACKAGE_FORMAT STREQUAL "RPM")
   include(cmake/RPM.cmake)
 elseif(SEEKDB_CMAKE_PACKAGE_FORMAT STREQUAL "DEB")

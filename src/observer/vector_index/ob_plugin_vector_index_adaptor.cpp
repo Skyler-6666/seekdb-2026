@@ -39,6 +39,32 @@ namespace oceanbase
 namespace share
 {
 
+/**
+ * @brief The backend that owns a vector index.
+ *
+ * The `lib` option of the vector index DDL selects it. `VIAL_HIPVS` builds
+ * the HNSW graph on the AMD GPU with hipVS, `VIAL_VSAG` uses the CPU
+ * backend.
+ */
+static inline int to_index_lib(const ObVectorIndexParam *param)
+{
+  return (param != nullptr && param->lib_ == ObVectorIndexAlgorithmLib::VIAL_HIPVS)
+         ? obvsag::LIB_HIPVS
+         : obvsag::LIB_VSAG;
+}
+
+/**
+ * @brief Whether the index is built by the AMD GPU backend.
+ *
+ * The GPU backend builds the whole HNSW graph in one shot, so the vectors are
+ * staged while the data is loaded and the graph is built when the index is
+ * serialized.
+ */
+static inline bool is_hipvs_backend(const ObVectorIndexParam *param)
+{
+  return param != nullptr && param->lib_ == ObVectorIndexAlgorithmLib::VIAL_HIPVS;
+}
+
 ObVectorIndexInfo::ObVectorIndexInfo()
   : rowkey_vid_table_id_(common::OB_INVALID_ID),
     vid_rowkey_table_id_(common::OB_INVALID_ID),
@@ -793,7 +819,8 @@ int ObPluginVectorIndexAdaptor::init_mem_data(ObVectorIndexRecordType type, ObVe
                                                       param->extra_info_actual_size_,
                                                       param->refine_type_,
                                                       param->bq_bits_query_,
-                                                      param->bq_use_fht_))) {
+                                                      param->bq_use_fht_,
+                                                      to_index_lib(param)))) {
         }
       }
       if (OB_FAIL(ret)) {
@@ -879,7 +906,8 @@ int ObPluginVectorIndexAdaptor::init_mem_data(ObVectorIndexRecordType type, ObVe
                                                param->extra_info_actual_size_,
                                                param->refine_type_,
                                                param->bq_bits_query_,
-                                               param->bq_use_fht_))) {
+                                               param->bq_use_fht_,
+                                               to_index_lib(param)))) {
         }
       }
 
@@ -936,7 +964,8 @@ int ObPluginVectorIndexAdaptor::init_snap_data_without_lock(ObVectorIndexAlgorit
                                              param->extra_info_actual_size_,
                                              param->refine_type_,
                                              param->bq_bits_query_,
-                                             param->bq_use_fht_))) {
+                                             param->bq_use_fht_,
+                                             to_index_lib(param)))) {
       }
     }
 
@@ -1714,7 +1743,14 @@ int ObPluginVectorIndexAdaptor::add_snap_index(float *vectors, int64_t *vids, Ob
           lib::ObMallocHookAttrGuard malloc_guard(lib::ObMemAttr("VIndexVsagADP"));
           lib::ObLightBacktraceGuard light_backtrace_guard(false);
           if (!is_sparse_vector_index_type()) {
-            if (OB_FAIL(obvectorutil::add_index(snap_data_->index_, vectors, vids, dim, extra_info_buf, num))) {
+            if (is_hipvs_backend(param) && param->type_ == ObVectorIndexAlgorithmType::VIAT_HNSW
+                && obvectorutil::is_gpu_backed(snap_data_->index_)) {
+              /* The GPU backend builds the whole HNSW graph in one shot, so the
+               * vectors are staged while the data is loaded. The graph is
+               * built when the index is serialized. */
+              if (OB_FAIL(stage_snap_index(vectors, vids, dim, extra_info_buf, num))) {
+              }
+            } else if (OB_FAIL(obvectorutil::add_index(snap_data_->index_, vectors, vids, dim, extra_info_buf, num))) {
             }
           } else {
             if (OB_FAIL(obvectorutil::add_index(snap_data_->index_, lens, dims, vals, vids, num, extra_info_buf))) {
@@ -1796,6 +1832,82 @@ int ObPluginVectorIndexAdaptor::add_snap_index(float *vectors, int64_t *vids, Ob
   return ret;
 }
 
+bool ObPluginVectorIndexAdaptor::is_gpu_backed()
+{
+  bool ret = false;
+  if (OB_NOT_NULL(snap_data_) && OB_NOT_NULL(snap_data_->index_)) {
+    ret = obvectorutil::is_gpu_backed(snap_data_->index_);
+  }
+  return ret;
+}
+
+int ObPluginVectorIndexAdaptor::stage_snap_index(float *vectors, int64_t *vids, int64_t dim,
+                                                 char *extra_info_buf, int64_t num)
+{
+  int ret = OB_SUCCESS;
+  (void)extra_info_buf;
+  if (OB_ISNULL(snap_data_) || OB_ISNULL(vectors) || OB_ISNULL(vids) || num <= 0) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_FAIL(init_hnswsq_mem_data())) {
+  } else {
+    ObVecIdxVidArray *vid_array = snap_data_->vid_array_;
+    ObVecIdxVecArray *vec_array = snap_data_->vec_array_;
+    for (int64_t i = 0; OB_SUCC(ret) && i < num; ++i) {
+      if (OB_FAIL(vid_array->push_back(vids[i]))) {
+      }
+    }
+    for (int64_t i = 0; OB_SUCC(ret) && i < num * dim; ++i) {
+      if (OB_FAIL(vec_array->push_back(vectors[i]))) {
+      }
+    }
+    /* The GPU backend only handles the plain HNSW index, which carries no
+     * extra info, so the extra info buffer stays empty here. */
+    LOG_INFO("[vec index] stage the vectors for the GPU build", K(num), K(dim),
+             K(vid_array->count()), K(vec_array->count()));
+  }
+  return ret;
+}
+
+int ObPluginVectorIndexAdaptor::build_hipvs_index(ObVectorIndexParam *param)
+{
+  int ret = OB_SUCCESS;
+  if (OB_ISNULL(snap_data_) || OB_ISNULL(param)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (!is_hipvs_backend(param) || param->type_ != VIAT_HNSW) {
+    // nothing to do, the CPU backend builds the index as the rows arrive
+  } else if (!obvectorutil::is_gpu_backed(snap_data_->index_)) {
+    // the GPU backend is not usable on this node, the index was built as the
+    // rows arrived
+  } else if (OB_ISNULL(snap_data_->vid_array_) || OB_ISNULL(snap_data_->vec_array_)
+             || snap_data_->vid_array_->count() == 0) {
+    // nothing was staged
+  } else if (!snap_data_->mem_ctx_->is_inited()
+             && OB_FAIL(snap_data_->mem_ctx_->init(parent_mem_ctx_, all_vsag_use_mem_))) {
+  } else {
+    ObVecIdxVidArray *vid_array = snap_data_->vid_array_;
+    ObVecIdxVecArray *vec_array = snap_data_->vec_array_;
+    ObVecExtraInfoBuffer *extra_info_buf = snap_data_->extra_info_buf_;
+    lib::ObMallocHookAttrGuard malloc_guard(lib::ObMemAttr("VIndexVsagADP"));
+    lib::ObLightBacktraceGuard light_backtrace_guard(false);
+    const int64_t start_us = ObTimeUtility::fast_current_time();
+    if (OB_FAIL(obvectorutil::build_index(snap_data_->index_,
+                                          vec_array->get_data(),
+                                          vid_array->get_data(),
+                                          param->dim_,
+                                          vid_array->count(),
+                                          OB_ISNULL(extra_info_buf) ? nullptr : extra_info_buf->ptr()))) {
+      LOG_WARN("[vec index] the GPU build of the HNSW graph failed", K(ret), K(vid_array->count()));
+    } else {
+      const int64_t cost_us = ObTimeUtility::fast_current_time() - start_us;
+      LOG_INFO("[vec index] the HNSW graph was built on the GPU", K(ret), K(param->dim_),
+               K(vid_array->count()), K(cost_us));
+      /* The staged vectors are now part of the index. */
+      free_hnswsq_array_data(snap_data_, get_allocator());
+    }
+  }
+  return ret;
+}
+
 int ObPluginVectorIndexAdaptor::build_hnswsq_index(ObVectorIndexParam *param)
 {
   INIT_SUCC(ret);
@@ -1824,7 +1936,8 @@ int ObPluginVectorIndexAdaptor::build_hnswsq_index(ObVectorIndexParam *param)
                                              param->extra_info_actual_size_,
                                              param->refine_type_,
                                              param->bq_bits_query_,
-                                             param->bq_use_fht_))) {
+                                             param->bq_use_fht_,
+                                             to_index_lib(param)))) {
       } else if (OB_FAIL(obvectorutil::build_index(snap_data_->index_,
                                                    vec_array->get_data(),
                                                    vid_array->get_data(),
@@ -2036,7 +2149,8 @@ int ObPluginVectorIndexAdaptor::check_snap_hnswsq_index()
                                              param->extra_info_actual_size_,
                                              param->refine_type_,
                                              param->bq_bits_query_,
-                                             param->bq_use_fht_))) {
+                                             param->bq_use_fht_,
+                                             to_index_lib(param)))) {
       } else if (OB_FAIL(obvectorutil::add_index(snap_data_->index_,
                                                  vec_array->get_data(),
                                                  vid_array->get_data(),
@@ -3168,8 +3282,13 @@ int ObPluginVectorIndexAdaptor::serialize(ObIAllocator *allocator, ObOStreamBuf:
   int ret = OB_SUCCESS;
   ObVectorIndexSerializer index_seri(*allocator);
   int64_t snap_index_size = 0;
+  ObVectorIndexParam *param = nullptr;
   if (!snap_data_->is_inited()) {
     ret = OB_NOT_INIT;
+  } else if (OB_ISNULL(param = static_cast<ObVectorIndexParam*>(algo_data_))) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(build_hipvs_index(param))) {
+    // the GPU backend failed to build the graph
   } else if (OB_FAIL(obvectorutil::get_index_number(snap_data_->index_, snap_index_size))) {
   } else if (snap_index_size == 0) {
     // do nothing

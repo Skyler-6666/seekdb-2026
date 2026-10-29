@@ -1,0 +1,8 @@
+build/
+*.dll
+*.exe
+*.o
+*.obj
+# The repository wide ignore rules drop every "Makefile", because the CMake
+# build generates one. This one is checked in on purpose.
+!Makefile

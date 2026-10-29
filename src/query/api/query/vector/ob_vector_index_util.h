@@ -100,6 +100,12 @@ enum ObVectorIndexAlgorithmLib
 {
   VIAL_VSAG = 0,
   VIAL_OB,
+  /**
+   * The optional AMD GPU backend. The HNSW graph is built on the GPU with
+   * hipVS (the HIP port of cuVS), which is much faster than the CPU build for
+   * large inputs.
+   */
+  VIAL_HIPVS,
   VIAL_MAX
 };
 
