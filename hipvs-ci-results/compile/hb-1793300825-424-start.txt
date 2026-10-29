@@ -1,0 +1,29 @@
+=== heartbeat 2026-10-29 19:07:05 run=7 sha=4cce5f2bc96f9c27b650bd664633b40d49bb89ea job=compile tag=start ===
+--- uptime ---
+ 19:07:05 up 7 min,  0 users,  load average: 1.97, 0.99, 0.44
+--- nproc ---
+4
+--- free -m ---
+               total        used        free      shared  buff/cache   available
+Mem:           15988         604         174          46       15210       14991
+Swap:           4095           0        4095
+--- cgroup memory ---
+--- df ---
+Filesystem                   Size  Used Avail Use% Mounted on
+/dev/root                    146G  145G  406M 100% /
+/dev/mapper/buildvg-buildlv   98G  7.7G   90G   8% /home/runner/work/seekdb-2026/seekdb-2026
+--- top mem ---
+    PID   RSS COMMAND
+   1749 135756 Runner.Worker
+   1677 135748 provjobd2794445
+   1730 98724 Runner.Listener
+    747 71608 dockerd
+    601 49900 php-fpm8.1
+    643 44352 snapd
+    201 44208 multipathd
+    665 43360 containerd
+    795 42792 mono
+    956 33032 python3
+    664 28128 python3
+--- dmesg tail ---
+--- build log tail ---
