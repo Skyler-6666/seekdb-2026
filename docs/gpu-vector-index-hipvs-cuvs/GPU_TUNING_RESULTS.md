@@ -69,3 +69,33 @@ is sufficient reason not to promote this path or upscale it to 250K.
 Source inspection attributes the large allocation to the fixed GPU refinement
 implementation's per-query candidate-vector lists. A separate bounded GPU
 construction experiment avoids those lists; its performance remains unmeasured.
+
+## Bounded construction: 10K gain did not scale
+
+Candidate `4836e67220a36286420f6790bfd2ffc023e8b74b` compiled and passed
+10K x 32 persistence smoke testing on the user's GPU. On the 10K x 128 demo,
+three alternating rounds reported 1.691122x ready speed, no recall loss, and
+1.565264x sampled VRAM peak ratio. This did not establish the memory gate.
+
+The user then repeated the 250K x 128 synthetic test twice, with 256 queries
+and three alternating rounds per run. The source and inputs were unchanged.
+Both logs used the same output path, so the later JSON overwrites the earlier
+file; both terminal results were supplied in the pasted attachment.
+
+| Run | V5 median ready | Candidate median ready | Ready speedup | Recall@10 delta | Recall@100 delta | Sampled peak ratio |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 15.827008 s | 17.912748 s | 0.883561x | -0.01328125 | -0.02933594 | 1.750801x |
+| 2 | 16.150208 s | 17.870709 s | 0.903725x | -0.01406250 | -0.03164062 | 1.365942x |
+
+Candidate peak bytes were 1602867200 and 1602887680. V5 peak bytes were
+915505152 and 1173467136. The changing denominator and shared-process initial
+VRAM limit interpretation of the relative sampler result. Neither ratio is
+evidence that the 1.25x resource target passes. Both median recall losses
+exceed the allowed 0.005 paired regression target. These synthetic diagnostics
+are not official SIFT/Hidden gate results, but clearly reject promotion.
+
+The next revision replaces repeated remote neighbor scans with an exact
+shared rank hash table, eliminates the per-row Bloom allocation, delays graph
+allocations until their consuming phases, and collects reverse edges in rank
+order. It adds opt-in synchronized phase timings to locate remaining cost.
+Its quality, timing, and actual resource use are unmeasured until a new GPU run.

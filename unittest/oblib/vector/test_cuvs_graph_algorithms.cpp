@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstdio>
 #include <random>
+#include <vector>
 
 using namespace seekdb_gpu_graph;
 
@@ -56,9 +57,75 @@ static void test_merge()
   assert(!merge_reverse(duplicate.data(), nullptr, 0, 1, rows, scratch.data()));
 }
 
+static void insert_rank(std::array<uint64_t, rank_table_capacity> &table, uint32_t id, unsigned rank)
+{
+  unsigned slot = hash_id(id) & (rank_table_capacity - 1);
+  while (table[slot] != UINT64_MAX) { slot = (slot + 1) & (rank_table_capacity - 1); }
+  table[slot] = rank_key(id, rank);
+}
+
+static void test_rank_lookup()
+{
+  std::array<uint64_t, rank_table_capacity> table;
+  table.fill(UINT64_MAX);
+  assert(find_rank(table.data(), 42) == UINT32_MAX);
+  // Force a long collision chain, including wrapped slots.
+  std::vector<uint32_t> collisions;
+  for (uint32_t id = 0; collisions.size() < intermediate_degree; ++id) {
+    if ((hash_id(id) & (rank_table_capacity - 1)) == rank_table_capacity - 1) {
+      insert_rank(table, id, unsigned(collisions.size()));
+      collisions.push_back(id);
+    }
+  }
+  for (unsigned rank = 0; rank < collisions.size(); ++rank) {
+    assert(find_rank(table.data(), collisions[rank]) == rank);
+  }
+  assert(find_rank(table.data(), collisions.back() + 1) == UINT32_MAX);
+  assert(find_rank(table.data(), UINT32_MAX) == UINT32_MAX);
+  // A bounded miss must terminate even if the table is full.
+  for (unsigned i = 0; i < table.size(); ++i) { table[i] = rank_key(i, i); }
+  assert(find_rank(table.data(), 100000) == UINT32_MAX);
+}
+
+static void test_detour_equivalence(unsigned rows)
+{
+  const unsigned degree = std::min(rows - 1, intermediate_degree);
+  std::mt19937 generator(20261030 + rows);
+  std::vector<uint32_t> knn(rows * degree), ids;
+  for (unsigned row = 0; row < rows; ++row) {
+    ids.clear();
+    for (unsigned id = 0; id < rows; ++id) { if (id != row) { ids.push_back(id); } }
+    std::shuffle(ids.begin(), ids.end(), generator);
+    std::copy_n(ids.begin(), degree, knn.begin() + row * degree);
+  }
+  for (unsigned row : {0U, rows / 2, rows - 1}) {
+    const auto *neighbors = knn.data() + row * degree;
+    std::array<uint64_t, rank_table_capacity> table;
+    table.fill(UINT64_MAX);
+    std::array<unsigned, intermediate_degree> expected{}, actual{};
+    for (unsigned rank = 0; rank < degree; ++rank) { insert_rank(table, neighbors[rank], rank); }
+    // Original exact definition, independent of the hash counting traversal.
+    for (unsigned rank = 0; rank < degree; ++rank) {
+      for (unsigned via = 0; via < rank; ++via) {
+        if (contains(knn.data() + neighbors[via] * degree, degree, neighbors[rank])) { ++expected[rank]; }
+      }
+    }
+    for (unsigned via = 0; via + 1 < degree; ++via) {
+      for (unsigned k = 0; k < degree; ++k) {
+        const unsigned rank = find_rank(table.data(), knn[neighbors[via] * degree + k]);
+        if (rank < degree && rank > via) { ++actual[rank]; }
+      }
+    }
+    assert(actual == expected);
+  }
+}
+
 int main()
 {
   test_sort();
   test_merge();
-  std::puts("PASS: sort ties/sentinels, reverse-edge merge, validity, ring preservation");
+  test_rank_lookup();
+  test_detour_equivalence(129);
+  test_detour_equivalence(512);
+  std::puts("PASS: sort, merge/ring validity, colliding rank lookup, exact detour equivalence");
 }

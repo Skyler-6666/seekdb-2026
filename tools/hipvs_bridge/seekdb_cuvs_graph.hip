@@ -4,7 +4,10 @@
 #include <cuvs/neighbors/cagra.h>
 #include <cuvs/neighbors/ivf_pq.h>
 #include "seekdb_cuvs_graph_algorithms.h"
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 
@@ -36,6 +39,41 @@ struct DeviceBuffer {
   ~DeviceBuffer() { if (ptr) { cuvsRMMFree(res, ptr, bytes); } }
   DeviceBuffer(const DeviceBuffer &) = delete;
   DeviceBuffer &operator=(const DeviceBuffer &) = delete;
+};
+
+// Opt-in diagnostics only: synchronization changes execution scheduling.
+struct BuildTrace {
+  enum Stage { train, lookup, refine, prune, reverse, wrap, stage_count };
+  cuvsResources_t res;
+  bool enabled;
+  double milliseconds[stage_count]{};
+  std::chrono::steady_clock::time_point started;
+  explicit BuildTrace(cuvsResources_t resource) : res(resource)
+  {
+    const char *value = std::getenv("SEEKDB_CUVS_BUILD_TRACE");
+    enabled = value && value[0] == '1' && value[1] == '\0';
+  }
+  void begin()
+  {
+    if (enabled) { check_cuvs(cuvsStreamSync(res)); started = std::chrono::steady_clock::now(); }
+  }
+  void end(Stage stage)
+  {
+    if (enabled) {
+      check_cuvs(cuvsStreamSync(res));
+      milliseconds[stage] += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    }
+  }
+  void report(uint32_t rows) const
+  {
+    if (enabled) {
+      std::fprintf(stderr, "[seekdb_cuvs] build_stage_ms rows=%u train=%.3f lookup=%.3f "
+                   "refine=%.3f prune=%.3f reverse=%.3f wrap=%.3f\n", rows,
+                   milliseconds[train], milliseconds[lookup], milliseconds[refine],
+                   milliseconds[prune], milliseconds[reverse], milliseconds[wrap]);
+    }
+  }
 };
 
 template<unsigned Count>
@@ -87,62 +125,51 @@ __global__ void refine_candidates(const float *data, uint32_t rows, unsigned dim
   }
 }
 
-__global__ void make_bloom(const uint32_t *knn, uint32_t rows, uint32_t *bloom)
+__global__ void prune_graph(const uint32_t *knn, uint32_t rows, uint32_t *graph)
 {
-  __shared__ uint32_t words[bloom_words];
-  if (threadIdx.x < bloom_words) { words[threadIdx.x] = 0; }
-  __syncthreads();
-  const uint32_t id = knn[size_t(blockIdx.x) * intermediate_degree + threadIdx.x];
-  if (id < rows) {
-    const unsigned first = hash_id(id) & (bloom_words * 32 - 1);
-    const unsigned second = hash_id(id ^ 0x9e3779b9U) & (bloom_words * 32 - 1);
-    atomicOr(words + first / 32, 1U << (first % 32));
-    atomicOr(words + second / 32, 1U << (second % 32));
-  }
-  __syncthreads();
-  if (threadIdx.x < bloom_words) { bloom[size_t(blockIdx.x) * bloom_words + threadIdx.x] = words[threadIdx.x]; }
-}
-
-__global__ void prune_graph(const uint32_t *knn, const uint32_t *bloom,
-                            uint32_t rows, uint32_t *graph)
-{
+  __shared__ uint64_t rank_table[rank_table_capacity];
+  __shared__ unsigned detours[intermediate_degree];
   __shared__ uint64_t scores[intermediate_degree];
   const uint32_t row = blockIdx.x;
   const unsigned rank = threadIdx.x;
   const unsigned degree = rows - 1 < intermediate_degree ? rows - 1 : intermediate_degree;
-  const uint32_t target = knn[size_t(row) * intermediate_degree + rank];
-  unsigned detours = 0;
+  for (unsigned i = rank; i < rank_table_capacity; i += blockDim.x) { rank_table[i] = UINT64_MAX; }
+  detours[rank] = 0;
+  __syncthreads();
   if (rank < degree) {
-    const unsigned first = hash_id(target) & (bloom_words * 32 - 1);
-    const unsigned second = hash_id(target ^ 0x9e3779b9U) & (bloom_words * 32 - 1);
-    for (unsigned j = 0; j < rank; ++j) {
-      const uint32_t via = knn[size_t(row) * intermediate_degree + j];
-      const uint32_t *bits = bloom + size_t(via) * bloom_words;
-      if ((bits[first / 32] & (1U << (first % 32))) &&
-          (bits[second / 32] & (1U << (second % 32)))) {
-        // Bloom positives are checked exactly, so collisions cannot alter scores.
-        for (unsigned k = 0; k < degree; ++k) {
-          if (knn[size_t(via) * intermediate_degree + k] == target) { ++detours; break; }
-        }
-      }
+    const uint32_t id = knn[size_t(row) * intermediate_degree + rank];
+    unsigned slot = hash_id(id) & (rank_table_capacity - 1);
+    while (atomicCAS(reinterpret_cast<unsigned long long *>(rank_table + slot),
+                     ~0ULL, static_cast<unsigned long long>(rank_key(id, rank))) != ~0ULL) {
+      slot = (slot + 1) & (rank_table_capacity - 1);
     }
-    scores[rank] = (uint64_t(detours) << 32) | rank;
-  } else {
-    scores[rank] = ~uint64_t(0);
   }
+  __syncthreads();
+  // Read each neighbor-of-neighbor row once, coalesced across the block.
+  // A shared rank lookup counts the same exact two-hop detours as before.
+  for (unsigned via_rank = 0; via_rank + 1 < degree; ++via_rank) {
+    const uint32_t via = knn[size_t(row) * intermediate_degree + via_rank];
+    if (rank < degree) {
+      const uint32_t candidate = knn[size_t(via) * intermediate_degree + rank];
+      const unsigned target_rank = find_rank(rank_table, candidate);
+      if (target_rank < degree && target_rank > via_rank) { atomicAdd(detours + target_rank, 1U); }
+    }
+  }
+  __syncthreads();
+  scores[rank] = rank < degree ? (uint64_t(detours[rank]) << 32) | rank : UINT64_MAX;
   __syncthreads();
   sort_keys<intermediate_degree>(scores);
   if (rank < graph_degree) { graph[size_t(row) * graph_degree + rank] = knn[size_t(row) * intermediate_degree + uint32_t(scores[rank])]; }
 }
 
 __global__ void reverse_edges(const uint32_t *graph, uint32_t rows,
-                              uint32_t *incoming, uint32_t *counts)
+                              unsigned rank, uint32_t *incoming, uint32_t *counts)
 {
-  const size_t position = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (position < size_t(rows) * graph_degree) {
-    const uint32_t target = graph[position];
+  const uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
+  if (row < rows) {
+    const uint32_t target = graph[size_t(row) * graph_degree + rank];
     const uint32_t slot = atomicAdd(counts + target, 1U);
-    if (slot < graph_degree) { incoming[size_t(target) * graph_degree + slot] = uint32_t(position / graph_degree); }
+    if (slot < graph_degree) { incoming[size_t(target) * graph_degree + slot] = row; }
   }
 }
 
@@ -169,7 +196,7 @@ void check_graph_error(cuvsResources_t res, hipStream_t stream, int *device_erro
 
 extern "C" int seekdb_cuvs_build_graph(cuvsResources_t res, cuvsCagraIndexParams_t params,
                                       DLManagedTensor *dataset, cuvsCagraIndex_t index,
-                                      unsigned int *graph)
+                                      unsigned int **graph)
 {
   cuvsIvfPqIndexParams_t train = nullptr;
   cuvsIvfPqIndex_t ivf = nullptr;
@@ -188,25 +215,30 @@ extern "C" int seekdb_cuvs_build_graph(cuvsResources_t res, cuvsCagraIndexParams
     const unsigned candidates = rows < candidate_capacity ? rows : candidate_capacity;
     hipStream_t stream;
     check_cuvs(cuvsStreamGet(res, &stream));
+    BuildTrace trace(res);
     DeviceBuffer flag(res, sizeof(int));
     auto *error = static_cast<int *>(flag.ptr);
     check_hip(hipMemsetAsync(error, 0, sizeof(int), stream));
+    trace.begin();
+    check_cuvs(cuvsIvfPqIndexParamsCreate(&train));
+    train->metric = L2Expanded;
+    train->add_data_on_build = true;
+    train->n_lists = rows / 2000 > 0 ? rows / 2000 : 1;
+    train->kmeans_n_iters = 10;
+    train->kmeans_trainset_fraction = std::fmin(1.0, 1.0 / std::sqrt(double(rows) * 1e-5));
+    train->pq_bits = 8;
+    train->pq_dim = dim % 2 == 0 ? dim / 2 : 0;
+    train->codebook_kind = PER_SUBSPACE;
+    train->conservative_memory_allocation = true;
+    check_cuvs(cuvsIvfPqIndexCreate(&ivf));
+    check_cuvs(cuvsIvfPqBuild(res, train, dataset, ivf));
+    check_cuvs(cuvsStreamSync(res));
+    trace.end(BuildTrace::train);
+    uint32_t *output_graph = nullptr;
     {
       DeviceBuffer knn(res, size_t(rows) * intermediate_degree * sizeof(uint32_t));
       auto *neighbors = static_cast<uint32_t *>(knn.ptr);
       {
-        check_cuvs(cuvsIvfPqIndexParamsCreate(&train));
-        train->metric = L2Expanded;
-        train->add_data_on_build = true;
-        train->n_lists = rows / 2000 > 0 ? rows / 2000 : 1;
-        train->kmeans_n_iters = 10;
-        train->kmeans_trainset_fraction = std::fmin(1.0, 1.0 / std::sqrt(double(rows) * 1e-5));
-        train->pq_bits = 8;
-        train->pq_dim = dim % 2 == 0 ? dim / 2 : 0;
-        train->codebook_kind = PER_SUBSPACE;
-        train->conservative_memory_allocation = true;
-        check_cuvs(cuvsIvfPqIndexCreate(&ivf));
-        check_cuvs(cuvsIvfPqBuild(res, train, dataset, ivf));
         DeviceBuffer candidate_ids(res, size_t(batch_capacity) * candidates * sizeof(int64_t));
         DeviceBuffer candidate_distances(res, size_t(batch_capacity) * candidates * sizeof(float));
         for (uint64_t offset = 0; offset < rows; offset += batch_capacity) {
@@ -224,48 +256,60 @@ extern "C" int seekdb_cuvs_build_graph(cuvsResources_t res, cuvsCagraIndexParams
           distances.dl_tensor.data = candidate_distances.ptr;
           distances.dl_tensor.dtype.code = kDLFloat;
           distances.dl_tensor.dtype.bits = 32;
+          trace.begin();
           check_cuvs(cuvsIvfPqSearch(res, params->graph_build_params->ivf_pq_search_params,
                                     ivf, &queries, &ids, &distances));
+          trace.end(BuildTrace::lookup);
+          trace.begin();
           hipLaunchKernelGGL(refine_candidates, dim3(count), dim3(256), 0, stream,
                              data, rows, dim, uint32_t(offset), static_cast<const int64_t *>(candidate_ids.ptr),
                              candidates, neighbors, error);
           check_hip(hipGetLastError());
+          trace.end(BuildTrace::refine);
         }
         check_graph_error(res, stream, error);
         cleanup();
       }
-      {
-        DeviceBuffer bloom(res, size_t(rows) * bloom_words * sizeof(uint32_t));
-        hipLaunchKernelGGL(make_bloom, dim3(rows), dim3(256), 0, stream,
-                           neighbors, rows, static_cast<uint32_t *>(bloom.ptr));
-        check_hip(hipGetLastError());
-        hipLaunchKernelGGL(prune_graph, dim3(rows), dim3(256), 0, stream,
-                           neighbors, static_cast<const uint32_t *>(bloom.ptr), rows, graph);
-        check_hip(hipGetLastError());
-        check_cuvs(cuvsStreamSync(res));
-      }
+      trace.begin();
+      // Allocate the retained graph after training and candidate selection end.
+      // The C bridge owns this pointer even if a later construction step fails.
+      check_cuvs(cuvsRMMAlloc(res, reinterpret_cast<void **>(graph), size_t(rows) * graph_degree * sizeof(uint32_t)));
+      output_graph = *graph;
+      hipLaunchKernelGGL(prune_graph, dim3(rows), dim3(256), 0, stream, neighbors, rows, output_graph);
+      check_hip(hipGetLastError());
+      check_cuvs(cuvsStreamSync(res));
+      trace.end(BuildTrace::prune);
     }
     {
+      trace.begin();
       DeviceBuffer incoming(res, size_t(rows) * graph_degree * sizeof(uint32_t));
       DeviceBuffer counts(res, size_t(rows) * sizeof(uint32_t));
       check_hip(hipMemsetAsync(counts.ptr, 0, counts.bytes, stream));
-      hipLaunchKernelGGL(reverse_edges, dim3(unsigned((size_t(rows) * graph_degree + 255) / 256)),
-                         dim3(256), 0, stream, graph, rows, static_cast<uint32_t *>(incoming.ptr),
-                         static_cast<uint32_t *>(counts.ptr));
-      check_hip(hipGetLastError());
-      hipLaunchKernelGGL(merge_graph, dim3(rows), dim3(256), 0, stream, graph,
+      // Rank-ordered launches prevent low-priority edges from filling the cap
+      // before higher-priority edges, as in the fixed CAGRA optimizer.
+      for (unsigned rank = 0; rank < graph_degree; ++rank) {
+        hipLaunchKernelGGL(reverse_edges, dim3(unsigned((uint64_t(rows) + 255) / 256)),
+                           dim3(256), 0, stream, output_graph, rows, rank,
+                           static_cast<uint32_t *>(incoming.ptr), static_cast<uint32_t *>(counts.ptr));
+        check_hip(hipGetLastError());
+      }
+      hipLaunchKernelGGL(merge_graph, dim3(rows), dim3(256), 0, stream, output_graph,
                          static_cast<const uint32_t *>(incoming.ptr),
                          static_cast<const uint32_t *>(counts.ptr), rows, error);
       check_hip(hipGetLastError());
       check_graph_error(res, stream, error);
+      trace.end(BuildTrace::reverse);
     }
+    trace.begin();
     int64_t graph_shape[2] = {rows, graph_degree};
     DLManagedTensor graph_tensor = *dataset;
-    graph_tensor.dl_tensor.data = graph;
+    graph_tensor.dl_tensor.data = output_graph;
     graph_tensor.dl_tensor.shape = graph_shape;
     graph_tensor.dl_tensor.dtype.code = kDLUInt;
     graph_tensor.dl_tensor.dtype.bits = 32;
     check_cuvs(cuvsCagraIndexFromArgs(res, L2Expanded, &graph_tensor, dataset, index));
+    trace.end(BuildTrace::wrap);
+    trace.report(rows);
     cuvsSetLastErrorText(nullptr);
     return CUVS_SUCCESS;
   } catch (const std::exception &error) {

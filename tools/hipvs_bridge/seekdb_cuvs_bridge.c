@@ -15,7 +15,7 @@
 
 int seekdb_cuvs_build_graph(cuvsResources_t res, cuvsCagraIndexParams_t params,
                            DLManagedTensor* dataset, cuvsCagraIndex_t index,
-                           unsigned int* graph);
+                           unsigned int** graph);
 
 typedef struct {
   cuvsResources_t        res;
@@ -76,10 +76,9 @@ void* seekdb_cuvs_build(const float* base, long n, long dim)
   h->ip->graph_build_params->ivf_pq_search_params = build_search;
   h->ip->graph_build_params->refinement_rate = 8.0f;
   if (cuvsCagraIndexCreate(&h->idx)      != CUVS_SUCCESS) goto fail_ip;
-  if (n > 128 && cuvsRMMAlloc(h->res, (void**)&h->device_graph, graph_bytes) != CUVS_SUCCESS) goto fail_idx;
   if (n <= 128) h->ip->build_algo = NN_DESCENT;
   if ((n <= 128 ? cuvsCagraBuild(h->res, h->ip, &dset, h->idx) :
-       seekdb_cuvs_build_graph(h->res, h->ip, &dset, h->idx, h->device_graph)) != CUVS_SUCCESS) {
+       seekdb_cuvs_build_graph(h->res, h->ip, &dset, h->idx, &h->device_graph)) != CUVS_SUCCESS) {
     const char* error = cuvsGetLastErrorText();
     fprintf(stderr, "[seekdb_cuvs] GPU graph build failed: %s\n",
             error ? error : "no error text supplied");

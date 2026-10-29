@@ -4,9 +4,11 @@
 // CPU shim for the separate HIP translation unit. This checks ownership only.
 int seekdb_cuvs_build_graph(cuvsResources_t res, cuvsCagraIndexParams_t params,
                            DLManagedTensor* dataset, cuvsCagraIndex_t index,
-                           unsigned int* graph)
+                           unsigned int** graph)
 {
   assert(graph != NULL);
+  assert(*graph == NULL);
+  if (cuvsRMMAlloc(res, (void**)graph, sizeof(unsigned)*(size_t)dataset->dl_tensor.shape[0]*128) != CUVS_SUCCESS) return 1;
   return cuvsCagraBuild(res, params, dataset, index);
 }
 

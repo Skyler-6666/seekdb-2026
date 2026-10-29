@@ -11,7 +11,7 @@ namespace seekdb_gpu_graph {
 constexpr unsigned graph_degree = 128;
 constexpr unsigned intermediate_degree = 256;
 constexpr unsigned candidate_capacity = 2048;
-constexpr unsigned bloom_words = 64;
+constexpr unsigned rank_table_capacity = 1024;
 
 SK_GRAPH_HD inline void exchange_keys(uint64_t &a, uint64_t &b, bool ascending)
 {
@@ -25,6 +25,24 @@ SK_GRAPH_HD inline uint32_t hash_id(uint32_t id)
   id ^= id >> 15;
   id *= 0x846ca68bU;
   return id ^ (id >> 16);
+}
+
+SK_GRAPH_HD inline uint64_t rank_key(uint32_t id, unsigned rank)
+{
+  return (uint64_t(rank) << 32) | id;
+}
+
+// Open addressing at <=25% occupancy. Empty entries stop unsuccessful lookups.
+SK_GRAPH_HD inline unsigned find_rank(const uint64_t *table, uint32_t id)
+{
+  unsigned slot = hash_id(id) & (rank_table_capacity - 1);
+  for (unsigned probe = 0; probe < rank_table_capacity; ++probe) {
+    const uint64_t key = table[slot];
+    if (key == UINT64_MAX) { break; }
+    if (uint32_t(key) == id) { return unsigned(key >> 32); }
+    slot = (slot + 1) & (rank_table_capacity - 1);
+  }
+  return UINT32_MAX;
 }
 
 SK_GRAPH_HD inline bool contains(const uint32_t *ids, unsigned count, uint32_t id)
