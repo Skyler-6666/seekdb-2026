@@ -1,5 +1,8 @@
 ﻿# V5 CAGRA candidate validation report
 
+This is the first candidate's historical report. Its official result and the
+next candidate are in [ITERATIVE_BUILD_CANDIDATE.md](ITERATIVE_BUILD_CANDIDATE.md).
+
 Date: 2026-10-29. Baseline: `634888d9b037153fa143d2c913ba4b25503e1d62`.
 Candidate branch: `contest/hipvs-improve-20261029`.
 

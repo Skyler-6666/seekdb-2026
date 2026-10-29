@@ -22,7 +22,7 @@ typedef struct {
 } DLTensor;
 typedef struct { DLTensor dl_tensor; } DLManagedTensor;
 typedef struct { int type; uintptr_t addr; } cuvsFilter;
-enum { CUVS_SUCCESS, NN_DESCENT, kDLCPU, kDLCUDA, kDLFloat, kDLUInt, NO_FILTER,
+enum { CUVS_SUCCESS, NN_DESCENT, ITERATIVE_CAGRA_SEARCH, kDLCPU, kDLCUDA, kDLFloat, kDLUInt, NO_FILTER,
        cudaSuccess = 0, cudaMemcpyDefault = 0 };
 static int allocations, frees, live, fail_allocation, copies, fail_copy;
 static long saved_n, saved_dim;
@@ -34,7 +34,9 @@ static int cuvsCagraIndexParamsDestroy(cuvsCagraIndexParams_t p) { free(p); retu
 static int cuvsCagraIndexCreate(cuvsCagraIndex_t *p) { *p = (void*)1; return 0; }
 static int cuvsCagraIndexDestroy(cuvsCagraIndex_t p) { (void)p; return 0; }
 static int cuvsCagraBuild(cuvsResources_t r, cuvsCagraIndexParams_t p, DLManagedTensor *t, cuvsCagraIndex_t i)
-{ (void)r; (void)i; assert(p->graph_degree == 128 && p->nn_descent_niter == 100);
+{ (void)r; (void)i;
+  assert(p->build_algo == ITERATIVE_CAGRA_SEARCH && p->graph_degree == 128 &&
+         p->intermediate_graph_degree == 256);
   saved_n = t->dl_tensor.shape[0]; saved_dim = t->dl_tensor.shape[1]; return 0; }
 static int cuvsRMMAlloc(cuvsResources_t r, void **p, size_t n)
 { (void)r; ++allocations; if (allocations == fail_allocation) return 1; *p = malloc(n); ++live; return 0; }
