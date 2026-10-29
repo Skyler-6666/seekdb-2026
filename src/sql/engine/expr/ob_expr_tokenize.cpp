@@ -39,6 +39,31 @@ namespace oceanbase
 {
 namespace sql
 {
+// Memoize the packed JSON result of tokenize() for repeated built-in parser
+// calls. Only stateless built-in ik/beng configurations with no custom parser
+// properties are cached; custom dictionaries keep the normal path.
+struct ObTokenizeResultCache final
+{
+  ObTokenizeResultCache()
+    : arena_("FTSExprResult"),
+      fulltext_(),
+      parser_name_(),
+      properties_(),
+      coll_type_(common::CS_TYPE_INVALID),
+      output_mode_(0),
+      result_(),
+      inited_(false)
+  {}
+  common::ObArenaAllocator arena_;
+  common::ObString fulltext_;
+  common::ObString parser_name_;
+  common::ObString properties_;
+  common::ObCollationType coll_type_;
+  int output_mode_;
+  common::ObString result_;
+  bool inited_;
+};
+
 ObExprTokenize::ObExprTokenize(common::ObIAllocator &alloc)
     : ObStringExprOperator(alloc,
                            T_FUN_TOKENIZE,
@@ -59,17 +84,54 @@ int ObExprTokenize::eval_tokenize(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &e
 
   ObIJsonBase *json_result = nullptr;
   TokenizeParam param;
+  static thread_local ObTokenizeResultCache *result_cache = nullptr;
 
   // check param num, which is checked in ObExprOperator::calc_result_typeN.
   if (OB_UNLIKELY(expr.arg_cnt_ < 1 || expr.arg_cnt_ > 3)) {
     ret = OB_INVALID_ARGUMENT;
   } else if (OB_FAIL(parse_param(expr, ctx, temp_allocator, param))) {
-  } else if (OB_FAIL(tokenize_fulltext(param, param.output_mode_, temp_allocator, json_result))) {
-  } else if (OB_FAIL(ObJsonExprHelper::pack_json_res(expr,
-                                                     ctx,
-                                                     temp_allocator,
-                                                     json_result,
-                                                     expr_datum))) {
+  } else if (OB_ISNULL(result_cache = (nullptr != result_cache) ? result_cache
+                                                                : OB_NEW(ObTokenizeResultCache, "FTSTokenRes"))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else {
+    const common::ObString ik_name = common::ObString::make_string("ik");
+    const common::ObString ik_ver_name = common::ObString::make_string("ik.1");
+    const common::ObString beng_name = common::ObString::make_string("beng");
+    const common::ObString beng_ver_name = common::ObString::make_string("beng.1");
+    const bool cacheable = !param.fulltext_.empty() && param.properties_.empty()
+        && (0 == param.parser_name_.case_compare(ik_name)
+            || 0 == param.parser_name_.case_compare(ik_ver_name)
+            || 0 == param.parser_name_.case_compare(beng_name)
+            || 0 == param.parser_name_.case_compare(beng_ver_name));
+    const bool cache_hit = cacheable && result_cache->inited_
+        && result_cache->coll_type_ == param.meta_.get_collation_type()
+        && result_cache->output_mode_ == static_cast<int>(param.output_mode_)
+        && result_cache->fulltext_ == param.fulltext_
+        && result_cache->parser_name_ == param.parser_name_
+        && result_cache->properties_ == param.properties_;
+    if (cache_hit) {
+      if (OB_FAIL(ObJsonExprHelper::pack_json_str_res(expr, ctx, expr_datum, result_cache->result_))) {
+      }
+    } else if (OB_FAIL(tokenize_fulltext(param, param.output_mode_, temp_allocator, json_result))) {
+    } else if (OB_FAIL(ObJsonExprHelper::pack_json_res(expr,
+                                                       ctx,
+                                                       temp_allocator,
+                                                       json_result,
+                                                       expr_datum))) {
+    } else if (cacheable) {
+      result_cache->arena_.reset();
+      result_cache->inited_ = false;
+      ObString result_str = expr_datum.get_string();
+      if (OB_FAIL(ob_write_string(result_cache->arena_, param.fulltext_, result_cache->fulltext_))) {
+      } else if (OB_FAIL(ob_write_string(result_cache->arena_, param.parser_name_, result_cache->parser_name_))) {
+      } else if (OB_FAIL(ob_write_string(result_cache->arena_, param.properties_, result_cache->properties_))) {
+      } else if (OB_FAIL(ob_write_string(result_cache->arena_, result_str, result_cache->result_))) {
+      } else {
+        result_cache->coll_type_ = param.meta_.get_collation_type();
+        result_cache->output_mode_ = static_cast<int>(param.output_mode_);
+        result_cache->inited_ = true;
+      }
+    }
   }
 
   return ret;

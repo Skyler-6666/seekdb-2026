@@ -25,6 +25,7 @@
 #include "data_plane/fts/ob_fts_parser_helper.h"
 #include "share/schema/ob_multi_version_schema_service.h"
 #include "share/schema/ob_schema_utils.h"
+#include "lib/cpu/ob_cpu_topology.h"
 
 namespace oceanbase
 {
@@ -1047,8 +1048,17 @@ int ObFtsIndexBuilderUtil::decide_parallelism(
       case share::schema::ObIndexType::INDEX_TYPE_DOC_ID_ROWKEY_LOCAL:
       case share::schema::ObIndexType::INDEX_TYPE_FTS_INDEX_LOCAL:
       case share::schema::ObIndexType::INDEX_TYPE_FTS_DOC_WORD_LOCAL:
-        decided_parallelism = MAX(original_parallelism / 3, 1L);
+      {
+        // The FTS index build is split into three dependent aux-table tasks.
+        // When no explicit parallelism is provided, reserve enough logical
+        // workers to use all available CPUs after the /3 split below.
+        int64_t effective_parallelism = original_parallelism;
+        if (effective_parallelism <= 1) {
+          effective_parallelism = MIN(MAX(common::get_cpu_count() * 3L, 1L), 12L);
+        }
+        decided_parallelism = MAX(effective_parallelism / 3, 1L);
         break;
+      }
       case share::schema::ObIndexType::INDEX_TYPE_NORMAL_MULTIVALUE_LOCAL:
       case share::schema::ObIndexType::INDEX_TYPE_UNIQUE_MULTIVALUE_LOCAL:
         decided_parallelism = MAX(original_parallelism / 2, 1L);
