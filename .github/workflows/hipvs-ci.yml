@@ -22,6 +22,12 @@ jobs:
   compile:
     timeout-minutes: 240
     runs-on: ubuntu-22.04
+    env:
+      # Maximize build space removes the preinstalled Android SDK while the
+      # image still exports ANDROID_NDK_HOME, which makes the Android
+      # toolchain repo rule fail on the dangling path. This CI never builds
+      # Android targets, so disable the NDK lookup entirely.
+      ANDROID_NDK_HOME: ""
     steps:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
@@ -54,10 +60,12 @@ jobs:
       - name: Build share_runtime and sql_runtime
         run: |
           set -o pipefail
-          python3 build.py build //src/share:share_runtime //src/sql:sql_runtime 2>&1 | tee build_modules.output
+          python3 build.py build --downloader_config=.github/script/seekdb/downloader.public.cfg \
+            //src/share:share_runtime //src/sql:sql_runtime 2>&1 | tee build_modules.output
 
       - name: Run HNSW serial format unit test
-        run: python3 build.py test //unittest/oblib:test_hnsw_serial_format
+        run: python3 build.py test --downloader_config=.github/script/seekdb/downloader.public.cfg \
+          //unittest/oblib:test_hnsw_serial_format
 
       - name: Dump parser diagnostics on failure
         if: failure()
@@ -75,8 +83,13 @@ jobs:
           git config user.name "seekdb-ci"
           git config user.email "seekdb-ci@users.noreply.github.com"
           RESBRANCH="hipvs-ci-results"
-          git checkout --orphan "$RESBRANCH" >/dev/null 2>&1
-          rm -rf hipvs-ci-results
+          if git fetch --depth=1 origin "$RESBRANCH" >/dev/null 2>&1 \
+              && git checkout -B "$RESBRANCH" FETCH_HEAD >/dev/null 2>&1; then
+            echo "resuming results branch $RESBRANCH"
+          else
+            git checkout --orphan "$RESBRANCH" >/dev/null 2>&1
+            echo "creating results branch $RESBRANCH"
+          fi
           mkdir -p hipvs-ci-results/compile
           {
             echo "run_id: $GITHUB_RUN_ID"
@@ -92,7 +105,7 @@ jobs:
           if [ -f src/sql/parser/_gen_parser.error ]; then
             cp src/sql/parser/_gen_parser.error hipvs-ci-results/compile/ 2>/dev/null || true
           fi
-          git add -f hipvs-ci-results >/dev/null 2>&1
+          git add -Af hipvs-ci-results >/dev/null 2>&1
           if git commit -m "ci: compile diagnostics for run $GITHUB_RUN_NUMBER sha $GITHUB_SHA" >/dev/null 2>&1; then
             git push --force origin "HEAD:$RESBRANCH" >/dev/null 2>&1 && echo "published compile diagnostics to branch $RESBRANCH"
           else
@@ -102,6 +115,8 @@ jobs:
   verify:
     timeout-minutes: 360
     runs-on: ubuntu-22.04
+    env:
+      ANDROID_NDK_HOME: ""
     steps:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
@@ -134,7 +149,8 @@ jobs:
       - name: Build observer
         run: |
           set -o pipefail
-          python3 build.py build //src/observer:seekdb 2>&1 | tee build_observer.output
+          python3 build.py build --downloader_config=.github/script/seekdb/downloader.public.cfg \
+            //src/observer:seekdb 2>&1 | tee build_observer.output
 
       - name: Verify build artifacts
         run: |
@@ -183,32 +199,37 @@ jobs:
           git config user.name "seekdb-ci"
           git config user.email "seekdb-ci@users.noreply.github.com"
           RESBRANCH="hipvs-ci-results"
-          git checkout --orphan "$RESBRANCH" >/dev/null 2>&1
-          rm -rf hipvs-ci-results
-          mkdir -p hipvs-ci-results
+          if git fetch --depth=1 origin "$RESBRANCH" >/dev/null 2>&1 \
+              && git checkout -B "$RESBRANCH" FETCH_HEAD >/dev/null 2>&1; then
+            echo "resuming results branch $RESBRANCH"
+          else
+            git checkout --orphan "$RESBRANCH" >/dev/null 2>&1
+            echo "creating results branch $RESBRANCH"
+          fi
+          mkdir -p hipvs-ci-results/verify
           {
             echo "run_id: $GITHUB_RUN_ID"
             echo "run_number: $GITHUB_RUN_NUMBER"
             echo "sha: $GITHUB_SHA"
-          } > hipvs-ci-results/run-meta.txt
+          } > hipvs-ci-results/verify/run-meta.txt
           if [ -d .seekdb_vec_test/work/failures ] && [ -n "$(ls -A .seekdb_vec_test/work/failures 2>/dev/null)" ]; then
-            cp -r .seekdb_vec_test/work/failures hipvs-ci-results/failures
+            cp -r .seekdb_vec_test/work/failures hipvs-ci-results/verify/failures
           fi
           if [ -d .seekdb_vec_test/instance/log ] && [ -n "$(ls -A .seekdb_vec_test/instance/log 2>/dev/null)" ]; then
-            mkdir -p hipvs-ci-results/instance-log
-            find .seekdb_vec_test/instance/log -type f -size -20M -exec cp {} hipvs-ci-results/instance-log/ \;
+            mkdir -p hipvs-ci-results/verify/instance-log
+            find .seekdb_vec_test/instance/log -type f -size -20M -exec cp {} hipvs-ci-results/verify/instance-log/ \;
           fi
           if [ -d .seekdb_vec_test/instance ]; then
-            mkdir -p hipvs-ci-results/instance-log
-            find .seekdb_vec_test/instance -maxdepth 1 -type f \( -name 'seekdb.log*' -o -name '*.log' \) -size -20M -exec cp {} hipvs-ci-results/instance-log/ \;
+            mkdir -p hipvs-ci-results/verify/instance-log
+            find .seekdb_vec_test/instance -maxdepth 1 -type f \( -name 'seekdb.log*' -o -name '*.log' \) -size -20M -exec cp {} hipvs-ci-results/verify/instance-log/ \;
           fi
           for f in deps_init.output build_observer.output; do
-            if [ -f "$f" ]; then cp "$f" hipvs-ci-results/ 2>/dev/null || true; fi
+            if [ -f "$f" ]; then cp "$f" hipvs-ci-results/verify/ 2>/dev/null || true; fi
           done
           if [ -f src/sql/parser/_gen_parser.error ]; then
-            cp src/sql/parser/_gen_parser.error hipvs-ci-results/ 2>/dev/null || true
+            cp src/sql/parser/_gen_parser.error hipvs-ci-results/verify/ 2>/dev/null || true
           fi
-          git add -f hipvs-ci-results >/dev/null 2>&1
+          git add -Af hipvs-ci-results >/dev/null 2>&1
           if git commit -m "ci: diagnostics for run $GITHUB_RUN_NUMBER sha $GITHUB_SHA" >/dev/null 2>&1; then
             git push --force origin "HEAD:$RESBRANCH" >/dev/null 2>&1 && echo "published diagnostics to branch $RESBRANCH"
           else
