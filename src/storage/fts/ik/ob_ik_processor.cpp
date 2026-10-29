@@ -70,6 +70,25 @@ int TokenizeContext::init()
   return ret;
 }
 
+int TokenizeContext::reuse(const char *fulltext, int64_t fulltext_len, bool is_smart)
+{
+  int ret = OB_SUCCESS;
+  if (OB_ISNULL(fulltext) || fulltext_len <= 0) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    fulltext_ = fulltext;
+    fulltext_len_ = fulltext_len;
+    cursor_ = 0;
+    next_char_len_ = 0;
+    next_char_type_ = ObFTCharUtil::CharType::USELESS;
+    is_smart_ = is_smart;
+    if (OB_FAIL(reset_resource())) {
+    } else if (OB_FAIL(prepare_next_char())) {
+    }
+  }
+  return ret;
+}
+
 int TokenizeContext::reset_resource()
 {
   handle_size_ = 0;

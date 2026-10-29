@@ -124,6 +124,15 @@ public:
       int64_t &word_len,
       int64_t &char_cnt,
       int64_t &word_freq) = 0;
+  // Re-prepare this iterator for a new fulltext without rebuilding the parser
+  // object and its immutable resources (e.g. dictionaries). Parsers that do
+  // not support reuse return OB_NOT_SUPPORTED and the caller falls back to
+  // destroying and re-creating the iterator.
+  virtual int reuse(const ObFTParserParam &param)
+  {
+    UNUSED(param);
+    return OB_NOT_SUPPORTED;
+  }
   DECLARE_PURE_VIRTUAL_TO_STRING;
 };
 

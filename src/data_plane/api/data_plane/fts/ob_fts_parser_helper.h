@@ -207,7 +207,7 @@ public:
   TO_STRING_KV(KP_(allocator), K_(parser_name), KP_(parser_desc), K_(is_inited));
 
 private:
-  static int segment(
+  int segment(
       const ObFTParserProperty &property,
       const int64_t parser_version,
       const ObIFTParserDesc *parser_desc,
@@ -215,8 +215,9 @@ private:
       const char *fulltext,
       const int64_t fulltext_len,
       common::ObIAllocator &allocator,
-      ObAddWord &add_word);
+      ObAddWord &add_word) const;
   int set_add_word_flag(const ObIFTParserDesc &ftparser_desc);
+  void free_cached_iter();
 private:
   common::ObIAllocator *allocator_;
   const ObIFTParserDesc *parser_desc_;
@@ -224,6 +225,11 @@ private:
   ObAddWordFlag add_word_flag_;
   ObFTParserProperty parser_property_;
   bool is_inited_;
+  // Token iterator cached across segment() calls on this helper. The helper
+  // is used per worker/executor and never shared between threads.
+  mutable ObITokenIterator *cached_iter_;
+  mutable const ObIFTParserDesc *cached_desc_;
+  mutable common::ObIAllocator *cached_allocator_;
 
 private:
   static constexpr const char *ENTRY_NAME_DOC_LEN = "doc_len";

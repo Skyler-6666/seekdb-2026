@@ -28,13 +28,17 @@ namespace oceanbase
 {
 namespace storage
 {
-int ObFTDictHub::init()
+int ObFTDictHub::init(common::ObIAllocator *allocator)
 {
   static constexpr int K_MAX_DICT_BUCKET = 128; // for now, only built-in dicts.
   int ret = OB_SUCCESS;
-  if (OB_FAIL(dict_map_.create(K_MAX_DICT_BUCKET, "dict_map"))) {
+  if (OB_ISNULL(allocator)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_FAIL(dict_map_.create(K_MAX_DICT_BUCKET, "dict_map"))) {
   } else if (OB_FAIL(rw_dict_lock_.init(K_MAX_DICT_BUCKET))) {
+  } else if (OB_FAIL(builtin_dict_lock_.init(16))) {
   } else {
+    allocator_ = allocator;
     is_inited_ = true;
   }
   return ret;
@@ -44,7 +48,85 @@ int ObFTDictHub::destroy()
 {
   int ret = OB_SUCCESS;
   is_inited_ = false;
+  BuiltinRangeDictEntry *entries[2] = {&main_entry_, &quan_entry_};
+  for (BuiltinRangeDictEntry *entry : entries) {
+    if (OB_NOT_NULL(entry->dict_)) {
+      entry->dict_->~ObFTRangeDict();
+      allocator_->free(entry->dict_);
+      entry->dict_ = nullptr;
+    }
+    if (OB_NOT_NULL(entry->container_)) {
+      entry->container_->~ObFTCacheRangeContainer();
+      allocator_->free(entry->container_);
+      entry->container_ = nullptr;
+    }
+  }
   return ret;
+}
+
+int ObFTDictHub::ensure_builtin_range_dict(const ObFTDictType type, ObFTRangeDict *&dict)
+{
+  int ret = OB_SUCCESS;
+  dict = nullptr;
+  if (!is_inited_) {
+    ret = OB_NOT_INIT;
+  } else if (ObFTDictType::DICT_IK_MAIN != type && ObFTDictType::DICT_IK_QUAN != type) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    BuiltinRangeDictEntry &entry = (ObFTDictType::DICT_IK_MAIN == type) ? main_entry_ : quan_entry_;
+    {
+      ObBucketHashRLockGuard guard(builtin_dict_lock_, static_cast<uint64_t>(type));
+      dict = entry.dict_;
+    }
+    if (OB_NOT_NULL(dict)) {
+      // fast path: already built
+    } else {
+      ObBucketHashWLockGuard guard(builtin_dict_lock_, static_cast<uint64_t>(type));
+      if (OB_ISNULL(entry.dict_)) {
+        ObFTCacheRangeContainer *container = nullptr;
+        ObFTRangeDict *new_dict = nullptr;
+        ObFTDictDesc desc = (ObFTDictType::DICT_IK_MAIN == type)
+            ? ObFTDictDesc("main_dict",
+                           ObFTDictType::DICT_IK_MAIN,
+                           ObCharsetType::CHARSET_UTF8MB4,
+                           ObCollationType::CS_TYPE_UTF8MB4_BIN)
+            : ObFTDictDesc("quan_dict",
+                           ObFTDictType::DICT_IK_QUAN,
+                           ObCharsetType::CHARSET_UTF8MB4,
+                           ObCollationType::CS_TYPE_UTF8MB4_BIN);
+        if (OB_ISNULL(container = OB_NEWx(ObFTCacheRangeContainer, allocator_, *allocator_))) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else if (OB_FAIL(load_cache(desc, *container)) && OB_ENTRY_NOT_EXIST != ret) {
+        } else if (OB_ENTRY_NOT_EXIST == ret && OB_FAIL(build_cache(desc, *container))) {
+        } else if (OB_ISNULL(new_dict = OB_NEWx(ObFTRangeDict, allocator_, *allocator_, container, desc))) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else if (OB_FAIL(new_dict->init())) {
+        } else {
+          entry.container_ = container;
+          entry.dict_ = new_dict;
+          new_dict = nullptr;
+          container = nullptr;
+        }
+        if (OB_FAIL(ret)) {
+          if (OB_NOT_NULL(new_dict)) {
+            new_dict->~ObFTRangeDict();
+            allocator_->free(new_dict);
+          }
+          if (OB_NOT_NULL(container)) {
+            container->~ObFTCacheRangeContainer();
+            allocator_->free(container);
+          }
+        }
+      }
+      dict = entry.dict_;
+    }
+  }
+  return ret;
+}
+
+int ObFTDictHub::get_builtin_range_dict(const ObFTDictType type, ObFTRangeDict *&dict)
+{
+  return ensure_builtin_range_dict(type, dict);
 }
 int ObFTDictHub::build_cache(const ObFTDictDesc &desc, ObFTCacheRangeContainer &container)
 {

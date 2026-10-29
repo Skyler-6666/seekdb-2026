@@ -218,7 +218,7 @@ int ObFTParseData::init_dict_hub()
   int ret = OB_SUCCESS;
   if (OB_ISNULL(dict_hub_ = OB_NEWx(ObFTDictHub, &handler_allocator_))) {
     ret = OB_ALLOCATE_MEMORY_FAILED;
-  } else if (OB_FAIL(dict_hub_->init())) {
+  } else if (OB_FAIL(dict_hub_->init(&handler_allocator_))) {
   }
   return ret;
 }
@@ -263,7 +263,7 @@ int ObFTParseHelper::segment(
     const char *ft,
     const int64_t ft_len,
     common::ObIAllocator &allocator,
-    ObAddWord &add_word)
+    ObAddWord &add_word) const
 {
   int ret = OB_SUCCESS;
   if (OB_UNLIKELY(parser_version < 0 || nullptr == parser_desc || nullptr == cs || nullptr == ft || 0 >= ft_len)) {
@@ -282,10 +282,29 @@ int ObFTParseHelper::segment(
     param.min_ngram_size_ = property.min_ngram_token_size_;
     param.max_ngram_size_ = property.max_ngram_token_size_;
 
-    if (OB_FAIL(parser_desc->segment(&param, iter))) {
-    } else if (OB_ISNULL(iter)) {
-      ret = OB_ERR_UNEXPECTED;
-    } else {
+    if (OB_NOT_NULL(cached_iter_)) {
+      if (cached_desc_ != parser_desc || cached_allocator_ != &allocator
+          || OB_FAIL(cached_iter_->reuse(param))) {
+        cached_desc_->free_token_iter(&param, cached_iter_);
+        cached_iter_ = nullptr;
+        cached_desc_ = nullptr;
+        cached_allocator_ = nullptr;
+        ret = OB_SUCCESS;
+      } else {
+        iter = cached_iter_;
+      }
+    }
+    if (OB_SUCC(ret) && OB_ISNULL(iter)) {
+      if (OB_FAIL(parser_desc->segment(&param, iter))) {
+      } else if (OB_ISNULL(iter)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        cached_iter_ = iter;
+        cached_desc_ = parser_desc;
+        cached_allocator_ = &allocator;
+      }
+    }
+    if (OB_SUCC(ret) && OB_NOT_NULL(iter)) {
       const char *word = nullptr;
       int64_t word_len = 0;
       int64_t char_cnt = 0;
@@ -301,12 +320,20 @@ int ObFTParseHelper::segment(
         ret = OB_SUCCESS;
       }
     }
-    if (OB_NOT_NULL(iter)) {
-      parser_desc->free_token_iter(&param, iter);
-      iter = nullptr;
-    }
   }
   return ret;
+}
+
+void ObFTParseHelper::free_cached_iter()
+{
+  if (OB_NOT_NULL(cached_iter_)) {
+    ObFTParserParam param;
+    param.allocator_ = cached_allocator_;
+    cached_desc_->free_token_iter(&param, cached_iter_);
+    cached_iter_ = nullptr;
+    cached_desc_ = nullptr;
+    cached_allocator_ = nullptr;
+  }
 }
 
 ObFTParseHelper::ObFTParseHelper()
@@ -315,7 +342,10 @@ ObFTParseHelper::ObFTParseHelper()
     parser_name_(),
     add_word_flag_(),
     parser_property_(),
-    is_inited_(false)
+    is_inited_(false),
+    cached_iter_(nullptr),
+    cached_desc_(nullptr),
+    cached_allocator_(nullptr)
 {
 }
 
@@ -352,6 +382,7 @@ int ObFTParseHelper::init(
 
 void ObFTParseHelper::reset()
 {
+  free_cached_iter();
   parser_desc_ = nullptr;
   allocator_ = nullptr;
   add_word_flag_.clear();
