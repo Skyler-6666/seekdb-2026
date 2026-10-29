@@ -364,6 +364,11 @@ inline int ObFTCharUtil::check_cn_number(ObCollationType coll_type,
                                          bool &is_cn_number)
 {
   int ret = OB_SUCCESS;
+  if (OB_NOT_NULL(input) && 1 == char_len
+      && static_cast<unsigned char>(input[0]) < 0x80) {
+    is_cn_number = false;
+    return ret;
+  }
   ObCharsetType cs_type = ObCharset::charset_type_by_coll(coll_type);
 
   switch (cs_type) {
@@ -384,6 +389,11 @@ inline int ObFTCharUtil::check_num_connector(ObCollationType coll_type,
                                              bool &is_connector)
 {
   int ret = OB_SUCCESS;
+  if (OB_NOT_NULL(input) && 1 == char_len
+      && static_cast<unsigned char>(input[0]) < 0x80) {
+    is_connector = ',' == input[0] || '.' == input[0];
+    return ret;
+  }
   ObCharsetType cs_type = ObCharset::charset_type_by_coll(coll_type);
 
   switch (cs_type) {
@@ -404,6 +414,18 @@ inline int ObFTCharUtil::check_letter_connector(ObCollationType coll_type,
                                                 bool &is_connector)
 {
   int ret = OB_SUCCESS;
+  if (OB_NOT_NULL(input) && 1 == char_len
+      && static_cast<unsigned char>(input[0]) < 0x80) {
+    switch (input[0]) {
+      case '#': case '&': case '+': case '-': case '.': case '@': case '_':
+        is_connector = true;
+        break;
+      default:
+        is_connector = false;
+        break;
+    }
+    return ret;
+  }
   ObCharsetType cs_type = ObCharset::charset_type_by_coll(coll_type);
 
   switch (cs_type) {
@@ -426,6 +448,11 @@ inline int ObFTCharUtil::is_ignore_single_cjk(ObCollationType coll_type,
                                               bool &ignore)
 {
   int ret = OB_SUCCESS;
+  if (OB_NOT_NULL(input) && 1 == char_len
+      && static_cast<unsigned char>(input[0]) < 0x80) {
+    ignore = false;
+    return ret;
+  }
   ObCharsetType cs_type = ObCharset::charset_type_by_coll(coll_type);
 
   switch (cs_type) {
@@ -448,7 +475,16 @@ inline int ObFTCharUtil::do_classify(const char *input, const uint8_t char_len, 
   bool checker = false;
   type = CharType::USELESS;
 
-  if (OB_FAIL(is_alpha<CS_TYPE>(input, char_len, checker))) {
+  if (OB_ISNULL(input)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (1 == char_len && static_cast<unsigned char>(input[0]) < 0x80) {
+    const unsigned char c = static_cast<unsigned char>(input[0]);
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+      type = CharType::ENGLISH_LETTER;
+    } else if (c >= '0' && c <= '9') {
+      type = CharType::ARABIC_LETTER;
+    }
+  } else if (OB_FAIL(is_alpha<CS_TYPE>(input, char_len, checker))) {
   } else if (checker) {
     type = CharType::ENGLISH_LETTER;
   } else if (OB_FAIL(is_arabic<CS_TYPE>(input, char_len, checker))) {

@@ -67,6 +67,33 @@ int ObIKFTParser::init(const ObFTParserParam &param)
   return ret;
 }
 
+int ObIKFTParser::reuse(const ObFTParserParam &param)
+{
+  int ret = OB_SUCCESS;
+  ObCollationType new_coll = ObCollationType::CS_TYPE_INVALID;
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = OB_NOT_INIT;
+  } else if (OB_ISNULL(param.cs_) || OB_ISNULL(param.cs_->name)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (CS_TYPE_INVALID == (new_coll = ObCharset::collation_type(param.cs_->name))
+             || new_coll != coll_type_) {
+    ret = OB_NOT_SUPPORTED;
+  } else {
+    // The segmenters are stateless between segments; only the per-document
+    // context has to be re-pointed.
+    if (OB_ISNULL(ctx_)) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if (OB_FAIL(ctx_->reuse(param.fulltext_,
+                                   param.ft_length_,
+                                   param.ik_param_.mode_ == ObFTIKParam::Mode::SMART))) {
+    }
+  }
+  if (OB_FAIL(ret) && OB_NOT_SUPPORTED != ret) {
+    is_inited_ = false;
+  }
+  return ret;
+}
+
 int ObIKFTParser::get_next_token(const char *&word,
                                  int64_t &word_len,
                                  int64_t &char_cnt,
@@ -231,43 +258,21 @@ int ObIKFTParserDesc::get_add_word_flag(ObAddWordFlag &flag) const
 int ObIKFTParser::init_dict(const ObFTParserParam &param)
 {
   int ret = OB_SUCCESS;
-  ObIFTDict *tmp_dict = nullptr;
+  ObFTRangeDict *main_range_dict = nullptr;
+  ObFTRangeDict *quan_range_dict = nullptr;
 
   if (OB_ISNULL(hub_)) {
     ret = OB_ERR_UNEXPECTED;
-  }
-
-  ObFTRangeDict *dict = nullptr;
-  ObFTDictDesc main_dict_desc("main_dict",
-                              ObFTDictType::DICT_IK_MAIN,
-                              ObCharsetType::CHARSET_UTF8MB4,
-                              ObCollationType::CS_TYPE_UTF8MB4_BIN);
-
-  ObFTDictDesc quan_dict_desc("quan_dict",
-                              ObFTDictType::DICT_IK_QUAN,
-                              ObCharsetType::CHARSET_UTF8MB4,
-                              ObCollationType::CS_TYPE_UTF8MB4_BIN);
-
-  ObFTDictDesc stopword_dict_desc("stopword",
-                                  ObFTDictType::DICT_IK_STOP,
-                                  ObCharsetType::CHARSET_UTF8MB4,
-                                  ObCollationType::CS_TYPE_UTF8MB4_BIN);
-
-  if (should_read_newest_table()) {
-    // clear dict cache, always false now
+  } else if (OB_FAIL(hub_->get_builtin_range_dict(ObFTDictType::DICT_IK_MAIN, main_range_dict))) {
+  } else if (OB_FAIL(hub_->get_builtin_range_dict(ObFTDictType::DICT_IK_QUAN, quan_range_dict))) {
   } else {
-    if (OB_FAIL(init_single_dict(main_dict_desc, cache_main_))) {
-    } else if (OB_FAIL(init_single_dict(quan_dict_desc, cache_quan_))) {
-    } else if (OB_FAIL(init_single_dict(stopword_dict_desc, cache_stop_))) {
-    }
+    dict_main_ = main_range_dict;
+    dict_quan_ = quan_range_dict;
   }
-
-  if (OB_FAIL(ret)) {
-    // already logged.
-  } else if (OB_FAIL(build_dict_from_cache(main_dict_desc, cache_main_, dict_main_))) {
-  } else if (OB_FAIL(build_dict_from_cache(quan_dict_desc, cache_quan_, dict_quan_))) {
-  } else if (OB_FAIL(build_dict_from_cache(stopword_dict_desc, cache_stop_, dict_stop_))) {
-  }
+  // The range dicts are owned (and kvcache-pinned) by the global dict hub;
+  // parser instances only borrow them for the lifetime of one segmentation.
+  // IK stop-word filtering is disabled in get_next_token(); avoid pinning and
+  // constructing the unused stop-word dictionary on every parser instance.
 
   return ret;
 }
@@ -366,18 +371,10 @@ void ObIKFTParser::reset()
   cache_quan_.reset();
   cache_stop_.reset();
 
-  if (!OB_ISNULL(dict_main_)) {
-    dict_main_->~ObIFTDict();
-    allocator_.free(dict_main_);
-  }
-  if (!OB_ISNULL(dict_quan_)) {
-    dict_quan_->~ObIFTDict();
-    allocator_.free(dict_quan_);
-  }
-  if (!OB_ISNULL(dict_stop_)) {
-    dict_stop_->~ObIFTDict();
-    allocator_.free(dict_stop_);
-  }
+  // dict_main_/dict_quan_ are borrowed from the global dict hub; do not free.
+  dict_main_ = nullptr;
+  dict_quan_ = nullptr;
+  dict_stop_ = nullptr;
 
   is_inited_ = false;
 }

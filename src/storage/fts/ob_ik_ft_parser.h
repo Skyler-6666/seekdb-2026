@@ -59,6 +59,8 @@ public:
                      int64_t &char_cnt,
                      int64_t &word_freq) override;
 
+  int reuse(const ObFTParserParam &param) override;
+
   VIRTUAL_TO_STRING_KV(K(is_inited_));
 
 private:

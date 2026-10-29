@@ -40,6 +40,7 @@ public:
 
   int init();
   int reset_resource();
+  int reuse(const char *fulltext, int64_t fulltext_len, bool is_smart);
 
   int get_next_token(const char *&word, int64_t &word_len, int64_t &offset, int64_t &char_cnt);
 
@@ -85,6 +86,7 @@ private:
   ObFTCharUtil::CharType next_char_type_;
 
   uint32_t handle_size_;
+  bool ascii_compatible_;
   bool is_smart_;
 
   ObFTSortList token_list_;
