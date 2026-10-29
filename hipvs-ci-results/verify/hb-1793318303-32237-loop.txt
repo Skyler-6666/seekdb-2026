@@ -1,0 +1,347 @@
+=== heartbeat 2026-10-29 23:58:23 run=10 sha=62d355f0a46482ffedc668a732406ac1ef424825 job=verify tag=loop ===
+--- uptime ---
+ 23:58:23 up 13 min,  0 users,  load average: 2.01, 1.91, 1.13
+--- nproc ---
+4
+--- free -m ---
+               total        used        free      shared  buff/cache   available
+Mem:           15988        3344         228          50       12415       12247
+Swap:           4095           0        4095
+--- df ---
+Filesystem                   Size  Used Avail Use% Mounted on
+/dev/root                    146G  131G   15G  90% /
+/dev/mapper/buildvg-buildlv   98G   11G   87G  11% /home/runner/work/seekdb-2026/seekdb-2026
+--- top mem ---
+    PID   RSS COMMAND
+   7081 1319252 clang
+   2862 857452 java
+   7131 771568 clang
+   1708 145744 Runner.Worker
+   1653 135612 provjobd5325756
+   1687 102880 Runner.Listener
+    778 72992 dockerd
+    596 49816 php-fpm8.1
+    201 44256 multipathd
+    631 43584 containerd
+    605 42544 snapd
+--- dmesg tail ---
+--- log tail: build_observer.output ---
+ions
+[1,121 / 1,843] checking cached actions
+[1,121 / 1,843] [Prepa] SeekdbVersionSource src/observer/ob_version.cpp
+[1,134 / 1,843] Compiling src/oblib/grpc/standbyservice.pb.cc; 0s disk-cache, linux-sandbox
+[1,135 / 1,843] Bison src/sql/parser/bazel_generated/sql_parser_mysql_mode_tab.c; 0s disk-cache, linux-sandbox ... (2 actions running)
+[1,146 / 1,843] Compiling src/oblib/grpc/standbyservice.grpc.pb.cc; 1s disk-cache, linux-sandbox
+[1,146 / 1,843] Compiling src/oblib/grpc/standbyservice.grpc.pb.cc; 2s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,146 / 1,843] Compiling src/oblib/grpc/standbyservice.grpc.pb.cc; 4s disk-cache, linux-sandbox ... (2 actions running)
+[1,147 / 1,843] Building Rust libraries for linux; 4s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,148 / 1,843] Building Rust libraries for linux; 5s disk-cache, linux-sandbox
+[1,148 / 1,843] Building Rust libraries for linux; 16s disk-cache, linux-sandbox
+INFO: From Building Rust libraries for linux:
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.26
+   Compiling find-msvc-tools v0.1.14
+   Compiling shlex v2.0.1
+   Compiling equivalent v1.0.2
+   Compiling cc v1.5.1
+   Compiling hashbrown v0.17.1
+   Compiling serde_core v1.0.229
+   Compiling indexmap v2.14.2
+   Compiling scratch v1.0.9
+   Compiling syn v3.0.6
+   Compiling syn v2.0.119
+   Compiling libc v0.2.189
+   Compiling unicode-width v0.2.2
+   Compiling termcolor v1.4.1
+   Compiling codespan-reporting v0.13.1
+   Compiling memchr v2.8.3
+   Compiling autocfg v1.5.1
+   Compiling serde v1.0.229
+   Compiling num-traits v0.2.19
+   Compiling cxx-build v1.0.202
+   Compiling link-cplusplus v1.0.12
+   Compiling itoa v1.0.18
+   Compiling serde_derive v1.0.229
+   Compiling cxxbridge-flags v1.0.202
+   Compiling utf8parse v0.2.2
+   Compiling cfg-if v1.0.5
+   Compiling anstyle-parse v1.0.0
+   Compiling cxx v1.0.202
+   Compiling zmij v1.0.23
+   Compiling rustix v1.1.5
+   Compiling anstyle-query v1.1.5
+   Compiling anstyle v1.0.14
+   Compiling colorchoice v1.0.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling getrandom v0.4.3
+   Compiling anstream v1.0.0
+   Compiling bitflags v2.13.2
+   Compiling winnow v1.0.4
+   Compiling clap_lex v1.1.1
+   Compiling strsim v0.11.1
+   Compiling crossbeam-utils v0.8.23
+   Compiling linux-raw-sys v0.12.1
+   Compiling serde_json v1.0.151
+   Compiling clap_builder v4.6.7
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling toml_datetime v0.7.5+spec-1.1.0
+   Compiling serde_spanned v1.1.1
+   Compiling winnow v0.7.15
+   Compiling cbindgen v0.29.4
+   Compiling once_cell v1.21.4
+   Compiling fastrand v2.5.0
+   Compiling clap v4.6.7
+   Compiling tempfile v3.27.0
+   Compiling num-conv v0.2.2
+   Compiling minimal-lexical v0.2.1
+   Compiling time-core v0.1.9
+   Compiling toml v0.9.12+spec-1.1.0
+   Compiling log v0.4.34
+   Compiling heck v0.5.0
+   Compiling thiserror v2.0.21
+   Compiling time-macros v0.2.32
+   Compiling nom v7.1.3
+   Compiling thiserror-impl v2.0.21
+   Compiling synstructure v0.13.2
+   Compiling ring v0.17.14
+   Compiling crossbeam-epoch v0.9.21
+   Compiling powerfmt v0.2.0
+   Compiling deranged v0.5.8
+   Compiling rusticata-macros v4.1.0
+   Compiling asn1-rs-derive v0.6.0
+   Compiling asn1-rs-impl v0.2.0
+   Compiling time v0.3.55
+   Compiling displaydoc v0.2.7
+   Compiling cxxbridge-macro v1.0.202
+   Compiling crossbeam-deque v0.8.8
+   Compiling semver v1.0.28
+   Compiling parking_lot_core v0.9.12
+   Compiling rustversion v1.0.23
+   Compiling foldhash v0.2.0
+   Compiling asn1-rs v0.7.2
+   Compiling rustc_version v0.4.1
+   Compiling num-integer v0.1.47
+   Compiling local v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/local)
+warning: linker stderr: /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/Scrt1.o: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libm.so.6: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libmvec.so.1: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libc.so.6: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `local` (build script) generated 1 warning
+   Compiling getrandom v0.2.17
+   Compiling bytemuck_derive v1.12.1
+   Compiling nom v8.0.0
+   Compiling unsafe-libyaml v0.2.11
+   Compiling oid-registry v0.8.1
+   Compiling smallvec v1.16.2
+   Compiling untrusted v0.9.0
+   Compiling zeroize v1.9.0
+   Compiling scopeguard v1.2.0
+   Compiling crc32fast v1.5.2
+   Compiling ryu v1.0.23
+   Compiling serde_yaml v0.9.34+deprecated
+   Compiling rustls-pki-types v1.15.1
+   Compiling lock_api v0.4.14
+   Compiling bytemuck v1.25.2
+   Compiling num-bigint v0.4.8
+   Compiling spdlog-internal v0.2.1
+   Compiling spdlog-rs v0.5.3
+   Compiling crossbeam-queue v0.3.14
+   Compiling crossbeam-channel v0.5.17
+   Compiling rustls v0.23.46
+   Compiling iana-time-zone v0.1.65
+   Compiling adler2 v2.0.1
+   Compiling simd-adler32 v0.3.10
+   Compiling miniz_oxide v0.9.1
+   Compiling der-parser v10.0.0
+   Compiling chrono v0.4.45
+   Compiling crossbeam v0.8.5
+   Compiling arc-swap v1.9.2
+   Compiling spdlog-macros v0.3.1
+   Compiling rustls-webpki v0.103.15
+   Compiling config v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/config)
+   Compiling atomic v0.6.1
+   Compiling parking_lot v0.12.5
+warning: `config` (build script) generated 1 warning (1 duplicate)
+   Compiling sql-nio v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/sql-nio)
+   Compiling in-process v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/in-process)
+   Compiling logger v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/logger)
+   Compiling lazy_static v1.5.0
+   Compiling subtle v2.6.1
+   Compiling dyn-clone v1.0.20
+   Compiling kv v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/kv)
+warning: `logger` (build script) generated 1 warning (1 duplicate)
+   Compiling data-encoding v2.11.1
+warning: linker stderr: /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/Scrt1.o: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libc.so.6: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libm.so.6: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libmvec.so.1: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libm.so.6: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libmvec.so.1: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libc.so.6: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `sql-nio` (build script) generated 1 warning
+   Compiling value-bag v1.14.1
+warning: `in-process` (build script) generated 1 warning (1 duplicate)
+   Compiling x509-parser v0.18.1
+   Compiling flate2 v1.1.10
+   Compiling mio v1.2.3
+   Compiling socket2 v0.6.5
+   Compiling slab v0.4.12
+   Compiling seekdb-rust v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/seekdb-rust)
+    Finished `release` profile [optimized + debuginfo] target(s) in 39.77s
+[1,149 / 1,843] [Scann] Compiling src/data_plane/ob_parallel_range_task_planner.cpp ... (2 actions, 0 running)
+[1,152 / 1,843] Compiling src/share/roaringbitmap_roaring_bitmap.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,158 / 1,843] Compiling src/share/log_protocol_ob_share_log_protocol_0.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,164 / 1,843] Compiling src/share/transaction_id_ob_share_transaction_id_0.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,170 / 1,843] Compiling src/share/semistruct_semistruct.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,171 / 1,843] Compiling src/share/semistruct_semistruct.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,174 / 1,843] Compiling src/oblib/grpc/ob_grpc_server.cpp; 0s disk-cache, linux-sandbox ... (2 actions running)
+[1,178 / 1,843] Compiling src/share/est_row_count_record_est_row_count_record.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions running)
+[1,181 / 1,843] Compiling src/share/io_io.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,182 / 1,843] Compiling src/share/io_io.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,183 / 1,843] Compiling src/share/io_io.unity.cpp; 4s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,188 / 1,843] Compiling src/share/id_generator_id_generator.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions running)
+[1,192 / 1,843] Compiling src/share/schema_foundation_types_schema_foundation_types.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions running)
+[1,194 / 1,843] Compiling src/share/schema_partition_iteration_schema_partition_iteration.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,196 / 1,843] Compiling src/share/system_variable_metadata_system_variable_metadata.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,198 / 1,843] Compiling src/share/system_variable_metadata_system_variable_metadata.unity.cpp; 3s disk-cache, linux-sandbox ... (2 actions running)
+[1,199 / 1,843] Compiling src/oblib/_ob_malloc_impl_ob_malloc_object_list_common_alloc_0.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,201 / 1,843] Compiling src/oblib/_ob_malloc_impl_ob_malloc_object_list_common_alloc_0.unity.cpp; 3s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,206 / 1,843] Compiling src/oblib/_oblib_bitmap_impl_oblib_lib_bitmap_common_0.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,208 / 1,843] Compiling src/oblib/_oblib_bitmap_impl_oblib_lib_bitmap_common_0.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,211 / 1,843] Compiling src/share/text_analysis_text_analysis.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,213 / 1,843] Compiling src/oblib/_oblib_codec_scalar_impl_oblib_lib_codec_0.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,215 / 1,843] Compiling src/oblib/_oblib_codec_scalar_impl_oblib_lib_codec_0.unity.cpp; 3s disk-cache, linux-sandbox ... (2 actions running)
+[1,217 / 1,843] Compiling src/oblib/_oblib_codec_scalar_impl_oblib_lib_codec_0.unity.cpp; 4s disk-cache, linux-sandbox ... (2 actions running)
+[1,219 / 1,843] Compiling src/oblib/_oblib_codec_scalar_impl_oblib_lib_codec_0.unity.cpp; 5s disk-cache, linux-sandbox ... (2 actions running)
+[1,220 / 1,843] Compiling src/share/object_cast_object_cast.unity.cpp; 8s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,222 / 1,843] Compiling src/share/object_cast_object_cast.unity.cpp; 9s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,224 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_common_0.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,226 / 1,843] Compiling src/share/datum_datum_cmp.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,228 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_common_mixed_0.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,230 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_common_mixed_0.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,231 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_common_mixed_0.unity.cpp; 7s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,232 / 1,843] Compiling src/share/_datum_without_pass_datum_without_pass_3.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,233 / 1,843] Compiling src/share/_datum_without_pass_datum_without_pass_3.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,236 / 1,843] Compiling src/share/_datum_without_pass_datum_without_pass_4.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,236 / 1,843] Compiling src/share/_datum_without_pass_datum_without_pass_4.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,237 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_json_type_0.unity.cpp; 3s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,237 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_json_type_0.unity.cpp; 5s disk-cache, linux-sandbox ... (2 actions running)
+[1,238 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_json_type_0.unity.cpp; 7s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,238 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_json_type_0.unity.cpp; 8s disk-cache, linux-sandbox ... (2 actions running)
+[1,239 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_json_type_0.unity.cpp; 11s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,241 / 1,843] Compiling src/share/_datum_without_pass_datum_without_pass_7.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,242 / 1,843] Compiling src/share/_datum_without_pass_datum_without_pass_7.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,243 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_number_0.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,243 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_number_0.unity.cpp; 3s disk-cache, linux-sandbox ... (2 actions running)
+[1,244 / 1,843] Compiling src/share/_datum_without_pass_datum_without_pass_8.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,245 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_timezone_0.unity.cpp; 3s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,246 / 1,843] Compiling src/share/_datum_without_pass_datum_without_pass_9.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,247 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_udt_0.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,248 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_udt_0.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,249 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_udt_0.unity.cpp; 3s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,249 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_udt_0.unity.cpp; 5s disk-cache, linux-sandbox ... (2 actions running)
+[1,250 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_udt_0.unity.cpp; 7s disk-cache, linux-sandbox ... (2 actions running)
+[1,251 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_udt_0.unity.cpp; 8s disk-cache, linux-sandbox ... (2 actions running)
+[1,252 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_udt_0.unity.cpp; 10s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,253 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_udt_0.unity.cpp; 11s disk-cache, linux-sandbox ... (2 actions running)
+[1,255 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_wide_integer_0.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,257 / 1,843] Compiling src/logservice/logservice_ob_logservice_common_0.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,258 / 1,843] Compiling src/oblib/_oblib_common_impl_oblib_common_reloc_xml_0.unity.cpp; 4s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,259 / 1,843] Compiling src/logservice/logservice_ob_logservice_common_mixed_0.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,261 / 1,843] Compiling src/logservice/logservice_ob_logservice_common_mixed_0.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,263 / 1,843] Compiling src/logservice/logservice_ob_logservice_common_mixed_0.unity.cpp; 3s disk-cache, linux-sandbox ... (2 actions running)
+[1,267 / 1,843] Compiling src/logservice/logservice_ob_logservice_common_util_0.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,270 / 1,843] Compiling src/logservice/logservice_ob_logservice_palf_0.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,274 / 1,843] Compiling src/logservice/logservice_ob_logservice_palf_0.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,275 / 1,843] Compiling src/logservice/logservice_ob_logservice_palf_0.unity.cpp; 4s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,277 / 1,843] Compiling src/logservice/logservice_ob_logservice_palf_1.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,278 / 1,843] Compiling src/logservice/logservice_ob_logservice_palf_1.unity.cpp; 3s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,278 / 1,843] Compiling src/logservice/logservice_ob_logservice_palf_1.unity.cpp; 5s disk-cache, linux-sandbox ... (2 actions running)
+[1,280 / 1,843] Compiling src/oblib/_oblib_foundation_impl_oblib_lib_common_mixed_1.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,282 / 1,843] Compiling src/query/vector/ob_vector_embedding_handler.cpp; 2s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,285 / 1,843] Compiling src/standby/standby_module.cpp; 0s disk-cache, linux-sandbox ... (2 actions running)
+[1,288 / 1,843] Compiling src/oblib/_oblib_foundation_impl_oblib_lib_oblog_0.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions running)
+[1,289 / 1,843] Compiling src/standby/control/ob_standby_role_transition_service.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,290 / 1,843] Compiling src/standby/control/ob_standby_role_transition_service.cpp; 3s disk-cache, linux-sandbox ... (2 actions running)
+[1,291 / 1,843] Compiling src/standby/control/ob_standby_role_transition_service.cpp; 4s disk-cache, linux-sandbox ... (2 actions running)
+[1,292 / 1,843] Compiling src/oblib/_oblib_foundation_impl_oblib_lib_utility_0.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,293 / 1,843] Compiling src/standby/control/ob_standby_timestamp_provider.cpp; 1s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,297 / 1,843] Compiling src/standby/control/ob_standby_timestamp_provider.cpp; 2s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,297 / 1,843] Compiling src/standby/control/ob_standby_timestamp_provider.cpp; 3s disk-cache, linux-sandbox ... (2 actions running)
+[1,299 / 1,843] Compiling src/standby/control/ob_standby_timestamp_provider.cpp; 4s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,302 / 1,843] Compiling src/standby/ob_standby_bootstrap_service.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,303 / 1,843] Compiling src/standby/ob_standby_bootstrap_service.cpp; 3s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,311 / 1,843] Compiling src/standby/ob_standby_bootstrap_service.cpp; 4s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,316 / 1,843] Compiling src/standby/ob_standby_bootstrap_service.cpp; 5s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,319 / 1,843] Compiling src/standby/ob_standby_bootstrap_service.cpp; 6s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,322 / 1,843] Compiling src/standby/ob_standby_grpc.cpp; 1s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,323 / 1,843] Compiling src/standby/ob_standby_grpc.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,324 / 1,843] Compiling src/standby/ob_standby_grpc.cpp; 3s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,325 / 1,843] Compiling src/standby/ob_standby_grpc.cpp; 5s disk-cache, linux-sandbox ... (2 actions running)
+[1,326 / 1,843] Compiling src/standby/ob_standby_grpc.cpp; 8s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,333 / 1,843] Compiling src/standby/ob_standby_grpc_stream_util.cpp; 1s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,335 / 1,843] Compiling src/standby/ob_standby_grpc_stream_util.cpp; 2s disk-cache, linux-sandbox ... (2 actions running)
+[1,336 / 1,843] Compiling src/standby/ob_standby_grpc_stream_util.cpp; 3s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,338 / 1,843] Compiling src/standby/ob_standby_grpc_stream_util.cpp; 4s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,340 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_28.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,341 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_28.unity.cpp; 7s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,341 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_28.unity.cpp; 8s disk-cache, linux-sandbox ... (2 actions running)
+[1,342 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_28.unity.cpp; 13s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,344 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_28.unity.cpp; 14s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,346 / 1,843] Compiling src/standby/restore/ob_physical_copy_ctx.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,348 / 1,843] Compiling src/standby/restore/ob_physical_copy_ctx.cpp; 3s disk-cache, linux-sandbox ... (2 actions running)
+[1,350 / 1,843] Compiling src/standby/restore/ob_physical_copy_ctx.cpp; 5s disk-cache, linux-sandbox ... (2 actions running)
+[1,353 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_24.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions running)
+[1,354 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_24.unity.cpp; 6s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,354 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_24.unity.cpp; 7s disk-cache, linux-sandbox ... (2 actions running)
+[1,355 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_24.unity.cpp; 14s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,355 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_24.unity.cpp; 15s disk-cache, linux-sandbox ... (2 actions running)
+[1,356 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_24.unity.cpp; 19s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,356 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_24.unity.cpp; 20s disk-cache, linux-sandbox ... (2 actions running)
+[1,357 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_24.unity.cpp; 27s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,357 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_24.unity.cpp; 28s disk-cache, linux-sandbox ... (2 actions running)
+[1,359 / 1,843] Compiling src/standby/restore/ob_standby_restore_macro_block_writer.cpp; 3s disk-cache, linux-sandbox ... (2 actions running)
+[1,360 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_23.unity.cpp; 3s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,360 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_23.unity.cpp; 5s disk-cache, linux-sandbox ... (2 actions running)
+[1,361 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_23.unity.cpp; 9s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,361 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_23.unity.cpp; 11s disk-cache, linux-sandbox ... (2 actions running)
+[1,362 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_23.unity.cpp; 16s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,362 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_23.unity.cpp; 18s disk-cache, linux-sandbox ... (2 actions running)
+[1,363 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_23.unity.cpp; 24s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,363 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_23.unity.cpp; 26s disk-cache, linux-sandbox ... (2 actions running)
+[1,364 / 1,843] Compiling src/standby/restore/ob_standby_sstable_copier.cpp; 5s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,365 / 1,843] Compiling src/standby/restore/ob_standby_sstable_copier.cpp; 6s disk-cache, linux-sandbox ... (2 actions running)
+[1,367 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_22.unity.cpp; 2s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,367 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_22.unity.cpp; 4s disk-cache, linux-sandbox ... (2 actions running)
+[1,368 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_22.unity.cpp; 8s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,375 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_22.unity.cpp; 9s disk-cache, linux-sandbox ... (2 actions running)
+[1,379 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_22.unity.cpp; 10s disk-cache, linux-sandbox ... (2 actions running)
+[1,380 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_22.unity.cpp; 12s disk-cache, linux-sandbox ... (2 actions running)
+[1,380 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_22.unity.cpp; 22s disk-cache, linux-sandbox ... (2 actions running)
+[1,381 / 1,843] Compiling src/sql/parser/bazel_generated/sql_parser_mysql_mode_tab.c; 22s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,382 / 1,843] Compiling src/sql/parser/bazel_generated/sql_parser_mysql_mode_tab.c; 24s disk-cache, linux-sandbox ... (2 actions running)
+[1,382 / 1,843] Compiling src/sql/parser/bazel_generated/sql_parser_mysql_mode_tab.c; 34s disk-cache, linux-sandbox ... (2 actions running)
+[1,383 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_21.unity.cpp; 15s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,390 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_21.unity.cpp; 16s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,392 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_21.unity.cpp; 17s disk-cache, linux-sandbox ... (2 actions running)
+[1,393 / 1,843] Compiling src/sql/parser/ob_fast_parser.cpp; 3s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,396 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_20.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,397 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_20.unity.cpp; 3s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,397 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_20.unity.cpp; 4s disk-cache, linux-sandbox ... (2 actions running)
+[1,398 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_20.unity.cpp; 5s disk-cache, linux-sandbox ... (2 actions running)
+[1,401 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_20.unity.cpp; 6s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,402 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_20.unity.cpp; 8s disk-cache, linux-sandbox ... (2 actions running)
+[1,404 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_20.unity.cpp; 9s disk-cache, linux-sandbox ... (2 actions running)
+[1,405 / 1,843] Compiling src/sql/engine/prepare/engine_prepare.unity.cpp; 5s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,408 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_19.unity.cpp; 1s disk-cache, linux-sandbox ... (2 actions running)
+[1,408 / 1,843] Compiling src/share/share_runtime_share_runtime_standalone_19.unity.cpp; 11s disk-cache, linux-sandbox ... (2 actions running)
+[1,409 / 1,843] Compiling src/sql/optimizer/optimizer_ob_sql_optimizer_0.unity.cpp; 28s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,410 / 1,843] Compiling src/sql/optimizer/optimizer_ob_sql_optimizer_0.unity.cpp; 30s disk-cache, linux-sandbox ... (2 actions running)
+[1,410 / 1,843] Compiling src/sql/optimizer/optimizer_ob_sql_optimizer_0.unity.cpp; 40s disk-cache, linux-sandbox ... (2 actions running)
