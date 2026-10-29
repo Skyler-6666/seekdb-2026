@@ -1,0 +1,229 @@
+=== heartbeat 2026-10-29 23:52:40 run=10 sha=62d355f0a46482ffedc668a732406ac1ef424825 job=verify tag=loop ===
+--- uptime ---
+ 23:52:40 up 8 min,  0 users,  load average: 3.77, 1.64, 0.71
+--- nproc ---
+4
+--- free -m ---
+               total        used        free      shared  buff/cache   available
+Mem:           15988        1767        1630          49       12589       13824
+Swap:           4095           0        4095
+--- df ---
+Filesystem                   Size  Used Avail Use% Mounted on
+/dev/root                    146G  130G   16G  90% /
+/dev/mapper/buildvg-buildlv   98G  9.6G   88G  10% /home/runner/work/seekdb-2026/seekdb-2026
+--- top mem ---
+    PID   RSS COMMAND
+   2862 1017224 java
+   1708 145500 Runner.Worker
+   1653 137364 provjobd5325756
+   5920 117100 clang
+   1687 100764 Runner.Listener
+   5927 93200 clang
+    778 72976 dockerd
+    596 49816 php-fpm8.1
+    201 44256 multipathd
+    605 43548 snapd
+    631 43512 containerd
+--- dmesg tail ---
+--- log tail: build_observer.output ---
+Downloading Bazel: https://releases.bazel.build/9.3.0/release/bazel-9.3.0-linux-x86_64
+Starting local Bazel server (9.3.0) and connecting to it...
+INFO: Invocation ID: 8ba8d5a9-dee5-4af4-8d2b-9b49b8ba08ba
+Computing main repo mapping: 
+Computing main repo mapping: 
+Loading: 
+Loading: 0 packages loaded
+Loading: 0 packages loaded
+    currently loading: src/observer
+Analyzing: target //src/observer:seekdb (5 packages loaded, 6 targets configured)
+Analyzing: target //src/observer:seekdb (5 packages loaded, 6 targets configured)
+
+Analyzing: target //src/observer:seekdb (63 packages loaded, 18 targets configured)
+
+Analyzing: target //src/observer:seekdb (64 packages loaded, 18 targets configured)
+
+Analyzing: target //src/observer:seekdb (109 packages loaded, 4011 targets configured)
+
+Analyzing: target //src/observer:seekdb (121 packages loaded, 17240 targets configured)
+
+Analyzing: target //src/observer:seekdb (121 packages loaded, 17406 targets configured)
+
+Analyzing: target //src/observer:seekdb (122 packages loaded, 17884 targets configured, 486 aspect applications)
+[1 / 1] no actions running
+INFO: Analyzed target //src/observer:seekdb (122 packages loaded, 17884 targets configured, 1192 aspect applications).
+[139 / 528] [Prepa] Writing file src/share/share_runtime_share_runtime_standalone_19.unity.cpp
+[1,008 / 1,661] [Prepa] Writing script src/share/_vector_unity_members.cppmap
+[1,115 / 1,843] checking cached actions
+[1,117 / 1,843] checking cached actions
+[1,121 / 1,843] checking cached actions
+[1,121 / 1,843] [Prepa] SeekdbVersionSource src/observer/ob_version.cpp
+[1,134 / 1,843] Compiling src/oblib/grpc/standbyservice.pb.cc; 0s disk-cache, linux-sandbox
+[1,135 / 1,843] Bison src/sql/parser/bazel_generated/sql_parser_mysql_mode_tab.c; 0s disk-cache, linux-sandbox ... (2 actions running)
+[1,146 / 1,843] Compiling src/oblib/grpc/standbyservice.grpc.pb.cc; 1s disk-cache, linux-sandbox
+[1,146 / 1,843] Compiling src/oblib/grpc/standbyservice.grpc.pb.cc; 2s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,146 / 1,843] Compiling src/oblib/grpc/standbyservice.grpc.pb.cc; 4s disk-cache, linux-sandbox ... (2 actions running)
+[1,147 / 1,843] Building Rust libraries for linux; 4s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,148 / 1,843] Building Rust libraries for linux; 5s disk-cache, linux-sandbox
+[1,148 / 1,843] Building Rust libraries for linux; 16s disk-cache, linux-sandbox
+INFO: From Building Rust libraries for linux:
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.26
+   Compiling find-msvc-tools v0.1.14
+   Compiling shlex v2.0.1
+   Compiling equivalent v1.0.2
+   Compiling cc v1.5.1
+   Compiling hashbrown v0.17.1
+   Compiling serde_core v1.0.229
+   Compiling indexmap v2.14.2
+   Compiling scratch v1.0.9
+   Compiling syn v3.0.6
+   Compiling syn v2.0.119
+   Compiling libc v0.2.189
+   Compiling unicode-width v0.2.2
+   Compiling termcolor v1.4.1
+   Compiling codespan-reporting v0.13.1
+   Compiling memchr v2.8.3
+   Compiling autocfg v1.5.1
+   Compiling serde v1.0.229
+   Compiling num-traits v0.2.19
+   Compiling cxx-build v1.0.202
+   Compiling link-cplusplus v1.0.12
+   Compiling itoa v1.0.18
+   Compiling serde_derive v1.0.229
+   Compiling cxxbridge-flags v1.0.202
+   Compiling utf8parse v0.2.2
+   Compiling cfg-if v1.0.5
+   Compiling anstyle-parse v1.0.0
+   Compiling cxx v1.0.202
+   Compiling zmij v1.0.23
+   Compiling rustix v1.1.5
+   Compiling anstyle-query v1.1.5
+   Compiling anstyle v1.0.14
+   Compiling colorchoice v1.0.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling getrandom v0.4.3
+   Compiling anstream v1.0.0
+   Compiling bitflags v2.13.2
+   Compiling winnow v1.0.4
+   Compiling clap_lex v1.1.1
+   Compiling strsim v0.11.1
+   Compiling crossbeam-utils v0.8.23
+   Compiling linux-raw-sys v0.12.1
+   Compiling serde_json v1.0.151
+   Compiling clap_builder v4.6.7
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling toml_datetime v0.7.5+spec-1.1.0
+   Compiling serde_spanned v1.1.1
+   Compiling winnow v0.7.15
+   Compiling cbindgen v0.29.4
+   Compiling once_cell v1.21.4
+   Compiling fastrand v2.5.0
+   Compiling clap v4.6.7
+   Compiling tempfile v3.27.0
+   Compiling num-conv v0.2.2
+   Compiling minimal-lexical v0.2.1
+   Compiling time-core v0.1.9
+   Compiling toml v0.9.12+spec-1.1.0
+   Compiling log v0.4.34
+   Compiling heck v0.5.0
+   Compiling thiserror v2.0.21
+   Compiling time-macros v0.2.32
+   Compiling nom v7.1.3
+   Compiling thiserror-impl v2.0.21
+   Compiling synstructure v0.13.2
+   Compiling ring v0.17.14
+   Compiling crossbeam-epoch v0.9.21
+   Compiling powerfmt v0.2.0
+   Compiling deranged v0.5.8
+   Compiling rusticata-macros v4.1.0
+   Compiling asn1-rs-derive v0.6.0
+   Compiling asn1-rs-impl v0.2.0
+   Compiling time v0.3.55
+   Compiling displaydoc v0.2.7
+   Compiling cxxbridge-macro v1.0.202
+   Compiling crossbeam-deque v0.8.8
+   Compiling semver v1.0.28
+   Compiling parking_lot_core v0.9.12
+   Compiling rustversion v1.0.23
+   Compiling foldhash v0.2.0
+   Compiling asn1-rs v0.7.2
+   Compiling rustc_version v0.4.1
+   Compiling num-integer v0.1.47
+   Compiling local v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/local)
+warning: linker stderr: /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/Scrt1.o: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libm.so.6: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libmvec.so.1: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libc.so.6: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `local` (build script) generated 1 warning
+   Compiling getrandom v0.2.17
+   Compiling bytemuck_derive v1.12.1
+   Compiling nom v8.0.0
+   Compiling unsafe-libyaml v0.2.11
+   Compiling oid-registry v0.8.1
+   Compiling smallvec v1.16.2
+   Compiling untrusted v0.9.0
+   Compiling zeroize v1.9.0
+   Compiling scopeguard v1.2.0
+   Compiling crc32fast v1.5.2
+   Compiling ryu v1.0.23
+   Compiling serde_yaml v0.9.34+deprecated
+   Compiling rustls-pki-types v1.15.1
+   Compiling lock_api v0.4.14
+   Compiling bytemuck v1.25.2
+   Compiling num-bigint v0.4.8
+   Compiling spdlog-internal v0.2.1
+   Compiling spdlog-rs v0.5.3
+   Compiling crossbeam-queue v0.3.14
+   Compiling crossbeam-channel v0.5.17
+   Compiling rustls v0.23.46
+   Compiling iana-time-zone v0.1.65
+   Compiling adler2 v2.0.1
+   Compiling simd-adler32 v0.3.10
+   Compiling miniz_oxide v0.9.1
+   Compiling der-parser v10.0.0
+   Compiling chrono v0.4.45
+   Compiling crossbeam v0.8.5
+   Compiling arc-swap v1.9.2
+   Compiling spdlog-macros v0.3.1
+   Compiling rustls-webpki v0.103.15
+   Compiling config v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/config)
+   Compiling atomic v0.6.1
+   Compiling parking_lot v0.12.5
+warning: `config` (build script) generated 1 warning (1 duplicate)
+   Compiling sql-nio v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/sql-nio)
+   Compiling in-process v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/in-process)
+   Compiling logger v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/logger)
+   Compiling lazy_static v1.5.0
+   Compiling subtle v2.6.1
+   Compiling dyn-clone v1.0.20
+   Compiling kv v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/kv)
+warning: `logger` (build script) generated 1 warning (1 duplicate)
+   Compiling data-encoding v2.11.1
+warning: linker stderr: /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/Scrt1.o: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libc.so.6: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libm.so.6: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libmvec.so.1: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libm.so.6: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libmvec.so.1: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+         /home/runner/work/seekdb-2026/seekdb-2026/deps-cache/d98c4bac9fd6964af3d70902b661f4af/3rd/usr/local/oceanbase/devtools/bin/ld: /lib/x86_64-linux-gnu/libc.so.6: unsupported GNU_PROPERTY_TYPE (5) type: 0xc0008002
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `sql-nio` (build script) generated 1 warning
+   Compiling value-bag v1.14.1
+warning: `in-process` (build script) generated 1 warning (1 duplicate)
+   Compiling x509-parser v0.18.1
+   Compiling flate2 v1.1.10
+   Compiling mio v1.2.3
+   Compiling socket2 v0.6.5
+   Compiling slab v0.4.12
+   Compiling seekdb-rust v0.1.0 (/home/runner/work/seekdb-2026/seekdb-2026/build/sandbox/linux-sandbox/17/execroot/_main/bazel-out/k8-opt/bin/rust/cargo-work/workspace/rust/seekdb-rust)
+    Finished `release` profile [optimized + debuginfo] target(s) in 39.77s
+[1,149 / 1,843] [Scann] Compiling src/data_plane/ob_parallel_range_task_planner.cpp ... (2 actions, 0 running)
+[1,152 / 1,843] Compiling src/share/roaringbitmap_roaring_bitmap.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,158 / 1,843] Compiling src/share/log_protocol_ob_share_log_protocol_0.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions, 1 running)
+[1,164 / 1,843] Compiling src/share/transaction_id_ob_share_transaction_id_0.unity.cpp; 0s disk-cache, linux-sandbox ... (2 actions, 1 running)
