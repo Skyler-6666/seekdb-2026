@@ -1,0 +1,216 @@
+# Verify the hipVS HNSW build implementation on the public GitHub runner:
+# compile the SQL modules and run the serial-format unit test with Bazel,
+# build the full observer binary, and run the vector_index mysqltest suite
+# against a local instance. The GPU plugin itself cannot be exercised here
+# (no ROCm on GitHub runners); build.py only probes for hipcc and skips.
+name: hipVS correctness
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - competition/hipvs-hnsw-opt
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    timeout-minutes: 240
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential \
+            binutils m4 libtool-bin libncurses-dev python3 unzip
+
+      - name: Setup Rust toolchain
+        run: rustup toolchain install --no-self-update
+        working-directory: rust
+
+      - name: Prepare project dependencies
+        run: |
+          set -o pipefail
+          python3 build.py init 2>&1 | tee deps_init.output
+
+      - name: Build share_runtime and sql_runtime
+        run: |
+          set -o pipefail
+          python3 build.py build //src/share:share_runtime //src/sql:sql_runtime 2>&1 | tee build_modules.output
+
+      - name: Run HNSW serial format unit test
+        run: python3 build.py test //unittest/oblib:test_hnsw_serial_format
+
+      - name: Dump parser diagnostics on failure
+        if: failure()
+        run: |
+          echo "=== _gen_parser.error ==="
+          cat src/sql/parser/_gen_parser.error 2>/dev/null || true
+          echo "=== _gen_parser.output (tail) ==="
+          tail -50 src/sql/parser/_gen_parser.output 2>/dev/null || true
+
+      - name: Publish build logs to results branch
+        if: always()
+        run: |
+          set +e
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "seekdb-ci"
+          git config user.email "seekdb-ci@users.noreply.github.com"
+          RESBRANCH="hipvs-ci-results"
+          git checkout --orphan "$RESBRANCH" >/dev/null 2>&1
+          rm -rf hipvs-ci-results
+          mkdir -p hipvs-ci-results/compile
+          {
+            echo "run_id: $GITHUB_RUN_ID"
+            echo "run_number: $GITHUB_RUN_NUMBER"
+            echo "sha: $GITHUB_SHA"
+            echo "job: compile"
+          } > hipvs-ci-results/compile/run-meta.txt
+          for f in deps_init.output build_modules.output; do
+            if [ -f "$f" ]; then
+              cp "$f" hipvs-ci-results/compile/ 2>/dev/null || true
+            fi
+          done
+          if [ -f src/sql/parser/_gen_parser.error ]; then
+            cp src/sql/parser/_gen_parser.error hipvs-ci-results/compile/ 2>/dev/null || true
+          fi
+          git add -f hipvs-ci-results >/dev/null 2>&1
+          if git commit -m "ci: compile diagnostics for run $GITHUB_RUN_NUMBER sha $GITHUB_SHA" >/dev/null 2>&1; then
+            git push --force origin "HEAD:$RESBRANCH" >/dev/null 2>&1 && echo "published compile diagnostics to branch $RESBRANCH"
+          else
+            echo "no compile diagnostics to publish"
+          fi
+
+  verify:
+    timeout-minutes: 360
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential \
+            binutils m4 libtool-bin libncurses-dev python3 unzip
+
+      - name: Setup Rust toolchain
+        run: rustup toolchain install --no-self-update
+        working-directory: rust
+
+      - name: Prepare project dependencies
+        run: |
+          set -o pipefail
+          python3 build.py init 2>&1 | tee deps_init.output
+
+      - name: Build observer
+        run: |
+          set -o pipefail
+          python3 build.py build //src/observer:seekdb 2>&1 | tee build_observer.output
+
+      - name: Verify build artifacts
+        run: |
+          test -x build/bin/src/observer/seekdb
+          test -x deps/3rd/u01/obclient/bin/obclient
+          test -x deps/3rd/u01/obclient/bin/mysqltest
+          echo "seekdb binary: $(stat -c%s build/bin/src/observer/seekdb) bytes"
+
+      - name: Run vector_index mysqltest suite
+        run: python3 -B .github/script/seekdb/run_vector_cases.py
+
+      - name: Publish correctness failures to job summary
+        if: failure()
+        run: |
+          echo '## vector_index correctness failures' >> "$GITHUB_STEP_SUMMARY"
+          FAILDIR="$GITHUB_WORKSPACE/.seekdb_vec_test/work/failures"
+          if [ -d "$FAILDIR" ] && [ -n "$(ls -A "$FAILDIR" 2>/dev/null)" ]; then
+            find "$FAILDIR" -type f | while IFS= read -r f; do
+              echo "<details><summary>$(basename "$f")</summary>" >> "$GITHUB_STEP_SUMMARY"
+              echo '' >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              tail -n 100 "$f" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              echo '</details>' >> "$GITHUB_STEP_SUMMARY"
+            done
+          else
+            echo 'no failure artifacts found' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hipvs-vector-results
+          path: |
+            .seekdb_vec_test/work/failures/
+            .seekdb_vec_test/instance/log/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Publish diagnostics to results branch
+        if: always()
+        run: |
+          set +e
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "seekdb-ci"
+          git config user.email "seekdb-ci@users.noreply.github.com"
+          RESBRANCH="hipvs-ci-results"
+          git checkout --orphan "$RESBRANCH" >/dev/null 2>&1
+          rm -rf hipvs-ci-results
+          mkdir -p hipvs-ci-results
+          {
+            echo "run_id: $GITHUB_RUN_ID"
+            echo "run_number: $GITHUB_RUN_NUMBER"
+            echo "sha: $GITHUB_SHA"
+          } > hipvs-ci-results/run-meta.txt
+          if [ -d .seekdb_vec_test/work/failures ] && [ -n "$(ls -A .seekdb_vec_test/work/failures 2>/dev/null)" ]; then
+            cp -r .seekdb_vec_test/work/failures hipvs-ci-results/failures
+          fi
+          if [ -d .seekdb_vec_test/instance/log ] && [ -n "$(ls -A .seekdb_vec_test/instance/log 2>/dev/null)" ]; then
+            mkdir -p hipvs-ci-results/instance-log
+            find .seekdb_vec_test/instance/log -type f -size -20M -exec cp {} hipvs-ci-results/instance-log/ \;
+          fi
+          if [ -d .seekdb_vec_test/instance ]; then
+            mkdir -p hipvs-ci-results/instance-log
+            find .seekdb_vec_test/instance -maxdepth 1 -type f \( -name 'seekdb.log*' -o -name '*.log' \) -size -20M -exec cp {} hipvs-ci-results/instance-log/ \;
+          fi
+          for f in deps_init.output build_observer.output; do
+            if [ -f "$f" ]; then cp "$f" hipvs-ci-results/ 2>/dev/null || true; fi
+          done
+          if [ -f src/sql/parser/_gen_parser.error ]; then
+            cp src/sql/parser/_gen_parser.error hipvs-ci-results/ 2>/dev/null || true
+          fi
+          git add -f hipvs-ci-results >/dev/null 2>&1
+          if git commit -m "ci: diagnostics for run $GITHUB_RUN_NUMBER sha $GITHUB_SHA" >/dev/null 2>&1; then
+            git push --force origin "HEAD:$RESBRANCH" >/dev/null 2>&1 && echo "published diagnostics to branch $RESBRANCH"
+          else
+            echo "no diagnostics to publish"
+          fi

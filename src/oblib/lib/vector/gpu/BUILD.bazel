@@ -1,0 +1,24 @@
+load("//bazel:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "ob_gpu_hnsw_plugin_api",
+    hdrs = ["ob_gpu_hnsw_plugin.h"],
+    includes = ["."],
+)
+
+# The plugin is a standalone hipVS artifact. It is never part of the default
+# seekdb build or link graph. Building this target explicitly requires HIPVS_ROOT
+# (plus DLPACK_INCLUDE_DIR when the headers are not in HIPVS_ROOT).
+genrule(
+    name = "ob_gpu_hnsw_plugin",
+    srcs = [
+        "build_plugin.sh",
+        "ob_gpu_hnsw_plugin.cu",
+        "ob_gpu_hnsw_plugin.h",
+    ],
+    outs = ["libob_gpu_hnsw_plugin.so"],
+    cmd = "OUTPUT_DIR=$$(dirname \"$(OUTS)\") bash $(location build_plugin.sh)",
+    tags = ["manual", "local", "no-sandbox"],
+)
