@@ -99,7 +99,7 @@ int ObDASDomainIdMergeIter::do_table_scan()
       }
     }
   }
-  LOG_INFO("do table scan", K(ret), K(data_table_iter_->get_scan_param()));
+  LOG_TRACE("do table scan", K(ret), K(data_table_iter_->get_scan_param()));
   return ret;
 }
 
@@ -119,7 +119,7 @@ int ObDASDomainIdMergeIter::rescan()
       }
     }
   }
-  LOG_INFO("rescan", K(ret), K(data_table_iter_->get_scan_param()));
+  LOG_TRACE("rescan", K(ret), K(data_table_iter_->get_scan_param()));
   return ret;
 }
 
@@ -407,7 +407,7 @@ int ObDASDomainIdMergeIter::build_rowkey_domain_range()
             scan_param.need_switch_param_ = false;
           }
           is_no_sample_ = (scan_param.sample_info_.method_ == common::SampleInfo::NO_SAMPLE);
-          LOG_INFO("build rowkey domain range", K(ret), K(scan_param.key_ranges_), K(scan_param.sample_info_));
+          LOG_TRACE("build rowkey domain range", K(ret), K(scan_param.key_ranges_), K(scan_param.sample_info_));
         }
       }
     }
@@ -420,7 +420,7 @@ int ObDASDomainIdMergeIter::build_rowkey_domain_range()
       need_filter_rowkey_domain_ = true;
     }
   }
-  LOG_INFO("finish build rowkey domain ranges", K(ret), K(need_filter_rowkey_domain_), K(is_no_sample_), K(is_need_multi_get_));
+  LOG_TRACE("finish build rowkey domain ranges", K(ret), K(need_filter_rowkey_domain_), K(is_no_sample_), K(is_need_multi_get_));
   return ret;
 }
 
@@ -491,7 +491,7 @@ int ObDASDomainIdMergeIter::init_rowkey_domain_scan_param(
     }
   }
 
-  LOG_INFO("init rowkey domain table scan param finished", K(scan_param), K(ret));
+  LOG_TRACE("init rowkey domain table scan param finished", K(scan_param), K(ret));
   return ret;
 }
 
@@ -1318,7 +1318,7 @@ int ObDASDomainIdMergeIter::reset_rowkey_domain_iter_scan_range(int64_t iter_idx
       }
       if (OB_FAIL(iter->rescan())) {
       }
-      LOG_INFO("reset domain iter scan range", K(ret), K(iter_idx), K(is_emb_vec_domain), 
+      LOG_TRACE("reset domain iter scan range", K(ret), K(iter_idx), K(is_emb_vec_domain),
                 K(scan_param.key_ranges_), K(data_table_rowkey));
     }
   }
