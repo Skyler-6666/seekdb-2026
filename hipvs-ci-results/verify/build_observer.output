@@ -1,0 +1,4 @@
+Downloading Bazel: https://releases.bazel.build/9.3.0/release/bazel-9.3.0-linux-x86_64
+ERROR: cannot read Bazel options: Extracting Bazel installation...
+OpenJDK 64-Bit Server VM warning: Options -Xverify:none and -noverify were deprecated in JDK 13 and will likely be removed in a future release.
+ERROR: The repo contents cache [/home/runner/work/seekdb-2026/seekdb-2026/.xdg-cache/bazel/_bazel_runner/cache/repos/v1/contents] is inside the main repo [/home/runner/work/seekdb-2026/seekdb-2026]. This can cause spurious failures. Disable the repo contents cache with `--repo_contents_cache=`, or specify `--repo_contents_cache=<path outside the main repo>`.
