@@ -115,7 +115,12 @@ jobs:
           exit "$BUILD_RC"
 
       - name: Run HNSW serial format unit test
-        run: python3 build.py test //unittest/oblib:test_hnsw_serial_format
+        run: |
+          set +e
+          python3 build.py test //unittest/oblib:test_hnsw_serial_format 2>&1 | tee test_hnsw.output
+          TEST_RC=${PIPESTATUS[0]}
+          bash .github/script/seekdb/hb_snapshot.sh "$HB_JOB" test-end test_hnsw.output
+          exit "$TEST_RC"
 
       - name: Dump parser diagnostics on failure
         if: failure()
@@ -147,11 +152,15 @@ jobs:
             echo "sha: $GITHUB_SHA"
             echo "job: compile"
           } > hipvs-ci-results/compile/run-meta.txt
-          for f in deps_init.output build_modules.output root_disk.txt; do
+          for f in deps_init.output build_modules.output test_hnsw.output root_disk.txt; do
             if [ -f "$f" ]; then
               cp "$f" hipvs-ci-results/compile/ 2>/dev/null || true
             fi
           done
+          if [ -d build/testlogs ]; then
+            mkdir -p hipvs-ci-results/compile/testlogs
+            find build/testlogs -type f -size -10M -exec cp {} hipvs-ci-results/compile/testlogs/ \;
+          fi
           if [ -f src/sql/parser/_gen_parser.error ]; then
             cp src/sql/parser/_gen_parser.error hipvs-ci-results/compile/ 2>/dev/null || true
           fi
