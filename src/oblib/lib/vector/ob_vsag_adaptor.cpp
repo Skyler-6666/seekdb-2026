@@ -29,11 +29,950 @@
 #include "lib/oblog/ob_log.h"
 #include "lib/worker.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <new>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+#ifdef SEEKDB_WITH_HIPVS
+#include <cuvs/core/c_api.h>
+#include <cuvs/neighbors/cagra.h>
+#include <cuvs/neighbors/hnsw.h>
+#include <dlpack/dlpack.h>
+#include <unistd.h>
+#endif
+
 namespace oceanbase {
 namespace common {
 namespace obvsag {
 
 using namespace vsag;
+
+#ifdef SEEKDB_WITH_HIPVS
+
+namespace {
+
+constexpr uint64_t HIPVS_HNSW_MAGIC = 0x5344424849505648ULL;  // SDBHIPVH
+constexpr uint64_t HIPVS_HNSW_VERSION = 1;
+constexpr uint64_t HIPVS_HNSW_MAX_SERIALIZED_BYTES = 1ULL << 40;
+
+std::string lower_ascii(std::string value)
+{
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return value;
+}
+
+bool env_disables_hipvs()
+{
+  const char *value = std::getenv("SEEKDB_HIPVS");
+  if (value == nullptr || value[0] == '\0') {
+    return false;
+  }
+  const std::string normalized = lower_ascii(value);
+  return normalized == "0" || normalized == "false" || normalized == "off" || normalized == "disabled";
+}
+
+bool use_gpu_hnsw_hierarchy()
+{
+  const char *value = std::getenv("SEEKDB_HIPVS_GPU_HIERARCHY");
+  if (value == nullptr || value[0] == '\0') {
+    return false;
+  }
+  const std::string normalized = lower_ascii(value);
+  return normalized == "1" || normalized == "true" || normalized == "on" || normalized == "enabled";
+}
+
+bool hipvs_float_dtype(const char *dtype)
+{
+  if (dtype == nullptr) {
+    return false;
+  }
+  const std::string normalized = lower_ascii(dtype);
+  return normalized == "float32" || normalized == "float";
+}
+
+size_t cagra_graph_degree(int hnsw_m)
+{
+  size_t degree = 32;
+  while (degree < static_cast<size_t>(std::max(hnsw_m, 1)) && degree < 128) {
+    degree <<= 1U;
+  }
+  return degree;
+}
+
+bool hipvs_metric(const char *metric, cuvsDistanceType &result)
+{
+  if (metric == nullptr) {
+    return false;
+  }
+  const std::string normalized = lower_ascii(metric);
+  if (normalized == "l2" || normalized == "l2sq" || normalized == "l2_squared") {
+    result = L2Expanded;
+    return true;
+  }
+  if (normalized == "ip" || normalized == "inner_product" || normalized == "innerproduct") {
+    result = InnerProduct;
+    return true;
+  }
+  return false;
+}
+
+vsag::Error make_hipvs_error(const char *operation)
+{
+  const char *detail = cuvsGetLastErrorText();
+  std::string message(operation == nullptr ? "hipVS operation failed" : operation);
+  if (detail != nullptr && detail[0] != '\0') {
+    message.append(": ");
+    message.append(detail);
+  }
+  return vsag::Error(vsag::ErrorType::UNKNOWN_ERROR, std::move(message));
+}
+
+std::string make_hipvs_temp_file()
+{
+  char path[] = "/tmp/seekdb_hipvs_hnsw_XXXXXX";
+  const int fd = mkstemp(path);
+  if (fd >= 0) {
+    close(fd);
+    return std::string(path);
+  }
+  return std::string();
+}
+
+void remove_hipvs_temp_file(const std::string &path)
+{
+  if (!path.empty()) {
+    std::remove(path.c_str());
+  }
+}
+
+void init_host_float_tensor(DLManagedTensor &tensor, void *data, int64_t *shape)
+{
+  tensor = DLManagedTensor{};
+  tensor.dl_tensor.data = data;
+  tensor.dl_tensor.device.device_type = kDLCPU;
+  tensor.dl_tensor.device.device_id = 0;
+  tensor.dl_tensor.ndim = 2;
+  tensor.dl_tensor.dtype.code = kDLFloat;
+  tensor.dl_tensor.dtype.bits = 32;
+  tensor.dl_tensor.dtype.lanes = 1;
+  tensor.dl_tensor.shape = shape;
+  tensor.dl_tensor.strides = nullptr;
+  tensor.dl_tensor.byte_offset = 0;
+}
+
+void init_host_uint64_tensor(DLManagedTensor &tensor, void *data, int64_t *shape)
+{
+  tensor = DLManagedTensor{};
+  tensor.dl_tensor.data = data;
+  tensor.dl_tensor.device.device_type = kDLCPU;
+  tensor.dl_tensor.device.device_id = 0;
+  tensor.dl_tensor.ndim = 2;
+  tensor.dl_tensor.dtype.code = kDLUInt;
+  tensor.dl_tensor.dtype.bits = 64;
+  tensor.dl_tensor.dtype.lanes = 1;
+  tensor.dl_tensor.shape = shape;
+  tensor.dl_tensor.strides = nullptr;
+  tensor.dl_tensor.byte_offset = 0;
+}
+
+int parse_ef_search(const std::string &parameters, int fallback)
+{
+  const std::string key = "\"ef_search\"";
+  const auto key_pos = parameters.find(key);
+  if (key_pos == std::string::npos) {
+    return fallback;
+  }
+  const auto colon_pos = parameters.find(':', key_pos + key.size());
+  if (colon_pos == std::string::npos) {
+    return fallback;
+  }
+  const char *begin = parameters.c_str() + colon_pos + 1;
+  char *end = nullptr;
+  const long value = std::strtol(begin, &end, 10);
+  if (end == begin || value <= 0 || value > std::numeric_limits<int>::max()) {
+    return fallback;
+  }
+  return static_cast<int>(value);
+}
+
+template <typename T>
+bool write_scalar(std::ostream &stream, T value)
+{
+  stream.write(reinterpret_cast<const char *>(&value), sizeof(T));
+  return stream.good();
+}
+
+template <typename T>
+bool read_scalar(std::istream &stream, T &value)
+{
+  stream.read(reinterpret_cast<char *>(&value), sizeof(T));
+  return stream.good();
+}
+
+class HipVSHnswIndex final : public vsag::Index {
+public:
+  HipVSHnswIndex(int dim,
+                 cuvsDistanceType metric,
+                 int max_degree,
+                 int ef_construction,
+                 int ef_search,
+                 vsag::Allocator *allocator)
+      : dim_(dim),
+        metric_(metric),
+        max_degree_(std::max(max_degree, 2)),
+        ef_construction_(std::max(ef_construction, 1)),
+        ef_search_(std::max(ef_search, 1)),
+        allocator_(allocator),
+        use_gpu_hierarchy_(use_gpu_hnsw_hierarchy())
+  {
+    if (cuvsResourcesCreate(&resources_) == CUVS_SUCCESS &&
+        cuvsHnswIndexCreate(&index_) == CUVS_SUCCESS) {
+      available_ = true;
+    } else {
+      const char *detail = cuvsGetLastErrorText();
+      LOG_WARN("[OBVSAG][HIPVS] failed to create hipVS resources or HNSW index",
+               KCSTRING(detail == nullptr ? "" : detail));
+      if (index_ != nullptr) {
+        cuvsHnswIndexDestroy(index_);
+        index_ = nullptr;
+      }
+      if (resources_ != 0) {
+        cuvsResourcesDestroy(resources_);
+        resources_ = 0;
+      }
+    }
+  }
+
+  ~HipVSHnswIndex() override
+  {
+    if (index_ != nullptr) {
+      cuvsHnswIndexDestroy(index_);
+      index_ = nullptr;
+    }
+    if (resources_ != 0) {
+      cuvsResourcesDestroy(resources_);
+      resources_ = 0;
+    }
+  }
+
+  [[nodiscard]] bool available() const { return available_; }
+
+  [[nodiscard]] vsag::IndexType GetIndexType() const override
+  {
+    return vsag::IndexType::HGRAPH;
+  }
+
+  tl::expected<std::vector<int64_t>, vsag::Error> Build(const vsag::DatasetPtr &base) override
+  {
+    if (!available_ || base == nullptr) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_ARGUMENT,
+                                        "hipVS HNSW build requires an available backend and dataset"));
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (built_ || !external_ids_.empty()) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::BUILD_TWICE,
+                                        "hipVS HNSW index has already been built"));
+    }
+    const int64_t count = base->GetNumElements();
+    if (dim_ <= 0 || count < 0 || base->GetDim() != dim_) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::DIMENSION_NOT_EQUAL,
+                                        "hipVS HNSW build dimension mismatch"));
+    }
+    if (count == 0) {
+      return std::vector<int64_t>();
+    }
+    const float *vectors = base->GetFloat32Vectors();
+    if (vectors == nullptr) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_ARGUMENT,
+                                        "hipVS HNSW build requires float32 vectors"));
+    }
+    if (count > static_cast<int64_t>(std::numeric_limits<size_t>::max() / sizeof(float) /
+                                     static_cast<size_t>(dim_))) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::NO_ENOUGH_MEMORY,
+                                        "hipVS HNSW vector payload is too large"));
+    }
+
+    cuvsCagraIndexParams_t cagra_params = nullptr;
+    cuvsCagraIndex_t cagra_index = nullptr;
+    cuvsHnswIndexParams_t hnsw_params = nullptr;
+    auto cleanup = [&]() {
+      if (hnsw_params != nullptr) {
+        cuvsHnswIndexParamsDestroy(hnsw_params);
+      }
+      if (cagra_index != nullptr) {
+        cuvsCagraIndexDestroy(cagra_index);
+      }
+      if (cagra_params != nullptr) {
+        cuvsCagraIndexParamsDestroy(cagra_params);
+      }
+    };
+
+    if (cuvsCagraIndexParamsCreate(&cagra_params) != CUVS_SUCCESS ||
+        cuvsCagraIndexCreate(&cagra_index) != CUVS_SUCCESS) {
+      cleanup();
+      return tl::unexpected(make_hipvs_error("create hipVS CAGRA parameters"));
+    }
+
+    const size_t cagra_degree = cagra_graph_degree(max_degree_);
+    cagra_params->metric = metric_;
+    cagra_params->graph_degree = cagra_degree;
+    cagra_params->intermediate_graph_degree = std::min<size_t>(cagra_degree * 2U, 256U);
+    cagra_params->build_algo = AUTO_SELECT;
+    cagra_params->nn_descent_niter = 0;
+    cagra_params->compression = nullptr;
+
+    int64_t dataset_shape[2] = {count, dim_};
+    DLManagedTensor dataset_tensor{};
+    init_host_float_tensor(dataset_tensor, const_cast<float *>(vectors), dataset_shape);
+    if (cuvsCagraBuild(resources_, cagra_params, &dataset_tensor, cagra_index) != CUVS_SUCCESS) {
+      cleanup();
+      return tl::unexpected(make_hipvs_error("build hipVS CAGRA graph"));
+    }
+
+    if (cuvsHnswIndexParamsCreate(&hnsw_params) != CUVS_SUCCESS) {
+      cleanup();
+      return tl::unexpected(make_hipvs_error("create hipVS HNSW parameters"));
+    }
+    hnsw_params->hierarchy = use_gpu_hierarchy_ ? cuvsHnswHierarchy::GPU : cuvsHnswHierarchy::CPU;
+    hnsw_params->ef_construction = ef_construction_;
+    hnsw_params->num_threads = 0;
+    if (cuvsHnswFromCagra(resources_, hnsw_params, cagra_index, index_) != CUVS_SUCCESS) {
+      cleanup();
+      return tl::unexpected(make_hipvs_error("convert CAGRA graph to hipVS HNSW"));
+    }
+    cleanup();
+    index_->dtype.code = kDLFloat;
+    index_->dtype.bits = 32;
+    index_->dtype.lanes = 1;
+
+    external_ids_.resize(static_cast<size_t>(count));
+    vectors_.resize(static_cast<size_t>(count) * static_cast<size_t>(dim_));
+    row_by_id_.clear();
+    row_by_id_.reserve(static_cast<size_t>(count));
+    const int64_t *ids = base->GetIds();
+    for (int64_t i = 0; i < count; ++i) {
+      external_ids_[static_cast<size_t>(i)] = ids == nullptr ? i : ids[i];
+      row_by_id_[external_ids_[static_cast<size_t>(i)]] = static_cast<size_t>(i);
+    }
+    std::copy(vectors, vectors + static_cast<size_t>(count) * static_cast<size_t>(dim_),
+              vectors_.begin());
+    built_ = true;
+    serialized_bytes_ = 0;
+    LOG_INFO("[OBVSAG][HIPVS] built HNSW index on GPU",
+             K(count), K(dim_), K(max_degree_), K(ef_construction_),
+             K(use_gpu_hierarchy_));
+    return std::vector<int64_t>();
+  }
+
+  tl::expected<std::vector<int64_t>, vsag::Error> Add(const vsag::DatasetPtr &base) override
+  {
+    if (!built_ || !available_ || base == nullptr) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INDEX_EMPTY,
+                                        "hipVS HNSW add requires a built index"));
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (use_gpu_hierarchy_) {
+      return tl::unexpected(vsag::Error(
+          vsag::ErrorType::UNSUPPORTED_INDEX_OPERATION,
+          "hipVS GPU hierarchy is immutable; use CPU hierarchy for incremental HNSW adds"));
+    }
+    const int64_t count = base->GetNumElements();
+    const float *vectors = base->GetFloat32Vectors();
+    if (dim_ <= 0 || count <= 0 || vectors == nullptr || base->GetDim() != dim_) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_ARGUMENT,
+                                        "invalid hipVS HNSW add dataset"));
+    }
+    if (count > static_cast<int64_t>(std::numeric_limits<size_t>::max() / sizeof(float) /
+                                     static_cast<size_t>(dim_)) ||
+        vectors_.size() > std::numeric_limits<size_t>::max() -
+                              static_cast<size_t>(count) * static_cast<size_t>(dim_)) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::NO_ENOUGH_MEMORY,
+                                        "hipVS HNSW vector payload is too large"));
+    }
+    cuvsHnswExtendParams_t extend_params = nullptr;
+    if (cuvsHnswExtendParamsCreate(&extend_params) != CUVS_SUCCESS || extend_params == nullptr) {
+      return tl::unexpected(make_hipvs_error("create hipVS HNSW extend parameters"));
+    }
+    extend_params->num_threads = 0;
+
+    int64_t dataset_shape[2] = {count, dim_};
+    DLManagedTensor dataset_tensor{};
+    init_host_float_tensor(dataset_tensor, const_cast<float *>(vectors), dataset_shape);
+    const cuvsError_t result = cuvsHnswExtend(resources_, extend_params, &dataset_tensor, index_);
+    cuvsHnswExtendParamsDestroy(extend_params);
+    if (result != CUVS_SUCCESS) {
+      return tl::unexpected(make_hipvs_error("extend hipVS HNSW index"));
+    }
+
+    const int64_t *ids = base->GetIds();
+    const size_t old_count = external_ids_.size();
+    external_ids_.reserve(old_count + static_cast<size_t>(count));
+    vectors_.reserve(vectors_.size() + static_cast<size_t>(count) * static_cast<size_t>(dim_));
+    for (int64_t i = 0; i < count; ++i) {
+      const int64_t id = ids == nullptr ? static_cast<int64_t>(old_count + static_cast<size_t>(i)) : ids[i];
+      external_ids_.push_back(id);
+      row_by_id_[id] = old_count + static_cast<size_t>(i);
+    }
+    vectors_.insert(vectors_.end(), vectors,
+                    vectors + static_cast<size_t>(count) * static_cast<size_t>(dim_));
+    serialized_bytes_ = 0;
+    return std::vector<int64_t>();
+  }
+
+  [[nodiscard]] tl::expected<vsag::DatasetPtr, vsag::Error> KnnSearch(
+      const vsag::DatasetPtr &query,
+      int64_t k,
+      const std::string &parameters,
+      vsag::BitsetPtr invalid = nullptr) const override
+  {
+    if (invalid == nullptr) {
+      return do_knn_search(query, k, parameters, allocator_, nullptr, 1.0F);
+    }
+    std::function<bool(int64_t)> valid_filter = [invalid](int64_t id) {
+      return !invalid->Test(id);
+    };
+    const int64_t total = static_cast<int64_t>(external_ids_.size());
+    const int64_t invalid_count = static_cast<int64_t>(invalid->Count());
+    const float valid_ratio = total <= 0 ? 0.0F
+                                         : static_cast<float>(std::max<int64_t>(0, total - invalid_count)) /
+                                               static_cast<float>(total);
+    return do_knn_search(query, k, parameters, allocator_, &valid_filter, valid_ratio);
+  }
+
+  [[nodiscard]] tl::expected<vsag::DatasetPtr, vsag::Error> KnnSearch(
+      const vsag::DatasetPtr &query,
+      int64_t k,
+      const std::string &parameters,
+      const std::function<bool(int64_t)> &filter) const override
+  {
+    return do_knn_search(query, k, parameters, allocator_, filter ? &filter : nullptr, 0.5F);
+  }
+
+  [[nodiscard]] tl::expected<vsag::DatasetPtr, vsag::Error> KnnSearch(
+      const vsag::DatasetPtr &query,
+      int64_t k,
+      vsag::SearchParam &search_param) const override
+  {
+    if (search_param.iter_ctx != nullptr) {
+      return tl::unexpected(vsag::Error(
+          vsag::ErrorType::UNSUPPORTED_INDEX_OPERATION,
+          "hipVS HNSW does not support iterative search"));
+    }
+    if (search_param.filter == nullptr) {
+      return do_knn_search(query, k, search_param.parameters, search_param.allocator, nullptr, 1.0F);
+    }
+    const vsag::FilterPtr filter = search_param.filter;
+    std::function<bool(int64_t)> valid_filter = [filter](int64_t id) {
+      return filter->CheckValid(id);
+    };
+    return do_knn_search(query, k, search_param.parameters, search_param.allocator,
+                         &valid_filter, filter->ValidRatio());
+  }
+
+  [[nodiscard]] tl::expected<vsag::DatasetPtr, vsag::Error> RangeSearch(
+      const vsag::DatasetPtr &,
+      float,
+      const std::string &,
+      int64_t = -1) const override
+  {
+    return tl::unexpected(vsag::Error(vsag::ErrorType::UNSUPPORTED_INDEX_OPERATION,
+                                      "hipVS HNSW does not support range search"));
+  }
+
+  [[nodiscard]] tl::expected<vsag::DatasetPtr, vsag::Error> RangeSearch(
+      const vsag::DatasetPtr &,
+      float,
+      const std::string &,
+      vsag::BitsetPtr,
+      int64_t = -1) const override
+  {
+    return tl::unexpected(vsag::Error(vsag::ErrorType::UNSUPPORTED_INDEX_OPERATION,
+                                      "hipVS HNSW does not support range search"));
+  }
+
+  [[nodiscard]] tl::expected<vsag::DatasetPtr, vsag::Error> RangeSearch(
+      const vsag::DatasetPtr &,
+      float,
+      const std::string &,
+      const std::function<bool(int64_t)> &,
+      int64_t = -1) const override
+  {
+    return tl::unexpected(vsag::Error(vsag::ErrorType::UNSUPPORTED_INDEX_OPERATION,
+                                      "hipVS HNSW does not support range search"));
+  }
+
+  [[nodiscard]] tl::expected<vsag::BinarySet, vsag::Error> Serialize() const override
+  {
+    return tl::unexpected(vsag::Error(vsag::ErrorType::UNSUPPORTED_INDEX_OPERATION,
+                                      "use streaming serialization for hipVS HNSW"));
+  }
+
+  tl::expected<void, vsag::Error> Serialize(std::ostream &out_stream) override
+  {
+    if (!built_ || index_ == nullptr) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INDEX_EMPTY,
+                                        "cannot serialize an empty hipVS HNSW index"));
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    const std::string temp_path = make_hipvs_temp_file();
+    if (temp_path.empty()) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::UNKNOWN_ERROR,
+                                        "failed to create temporary hipVS serialization file"));
+    }
+    const cuvsError_t result = cuvsHnswSerialize(resources_, temp_path.c_str(), index_);
+    if (result != CUVS_SUCCESS) {
+      remove_hipvs_temp_file(temp_path);
+      return tl::unexpected(make_hipvs_error("serialize hipVS HNSW index"));
+    }
+    std::ifstream input(temp_path, std::ios::binary | std::ios::ate);
+    if (!input.good()) {
+      remove_hipvs_temp_file(temp_path);
+      return tl::unexpected(vsag::Error(vsag::ErrorType::READ_ERROR,
+                                        "failed to read temporary hipVS serialization file"));
+    }
+    const std::streamoff file_size = input.tellg();
+    input.seekg(0, std::ios::beg);
+    if (file_size < 0) {
+      remove_hipvs_temp_file(temp_path);
+      return tl::unexpected(vsag::Error(vsag::ErrorType::READ_ERROR,
+                                        "invalid hipVS serialization size"));
+    }
+    std::vector<char> blob(static_cast<size_t>(file_size));
+    if (!blob.empty()) {
+      input.read(blob.data(), static_cast<std::streamsize>(blob.size()));
+    }
+    const bool read_ok = input.good() || input.eof();
+    input.close();
+    remove_hipvs_temp_file(temp_path);
+    if (!read_ok) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::READ_ERROR,
+                                        "failed to read hipVS serialization payload"));
+    }
+
+    const uint64_t count = static_cast<uint64_t>(external_ids_.size());
+    const uint64_t blob_size = static_cast<uint64_t>(blob.size());
+    if (!write_scalar(out_stream, HIPVS_HNSW_MAGIC) ||
+        !write_scalar(out_stream, HIPVS_HNSW_VERSION) ||
+        !write_scalar(out_stream, static_cast<uint64_t>(dim_)) ||
+        !write_scalar(out_stream, static_cast<uint64_t>(metric_)) ||
+        !write_scalar(out_stream, static_cast<uint64_t>(max_degree_)) ||
+        !write_scalar(out_stream, static_cast<uint64_t>(ef_construction_)) ||
+        !write_scalar(out_stream, static_cast<uint64_t>(ef_search_)) ||
+        !write_scalar(out_stream, static_cast<uint64_t>(use_gpu_hierarchy_ ? 1 : 0)) ||
+        !write_scalar(out_stream, count) ||
+        (!external_ids_.empty() &&
+         !out_stream.write(reinterpret_cast<const char *>(external_ids_.data()),
+                           static_cast<std::streamsize>(count * sizeof(int64_t)))) ||
+        (!vectors_.empty() &&
+         !out_stream.write(reinterpret_cast<const char *>(vectors_.data()),
+                           static_cast<std::streamsize>(vectors_.size() * sizeof(float)))) ||
+        !write_scalar(out_stream, blob_size) ||
+        (!blob.empty() &&
+         !out_stream.write(blob.data(), static_cast<std::streamsize>(blob.size())))) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::UNKNOWN_ERROR,
+                                        "failed to write hipVS HNSW serialization stream"));
+    }
+    return {};
+  }
+
+  tl::expected<void, vsag::Error> Deserialize(const vsag::BinarySet &) override
+  {
+    return tl::unexpected(vsag::Error(vsag::ErrorType::UNSUPPORTED_INDEX_OPERATION,
+                                      "use streaming deserialization for hipVS HNSW"));
+  }
+
+  tl::expected<void, vsag::Error> Deserialize(const vsag::ReaderSet &) override
+  {
+    return tl::unexpected(vsag::Error(vsag::ErrorType::UNSUPPORTED_INDEX_OPERATION,
+                                      "use streaming deserialization for hipVS HNSW"));
+  }
+
+  tl::expected<void, vsag::Error> Deserialize(std::istream &in_stream) override
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (built_ || !external_ids_.empty()) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INDEX_NOT_EMPTY,
+                                        "cannot deserialize into a non-empty hipVS HNSW index"));
+    }
+    uint64_t magic = 0;
+    uint64_t version = 0;
+    uint64_t dim = 0;
+    uint64_t metric = 0;
+    uint64_t max_degree = 0;
+    uint64_t ef_construction = 0;
+    uint64_t ef_search = 0;
+    uint64_t gpu_hierarchy = 0;
+    uint64_t count = 0;
+    if (!read_scalar(in_stream, magic) || magic != HIPVS_HNSW_MAGIC ||
+        !read_scalar(in_stream, version) || version != HIPVS_HNSW_VERSION ||
+        !read_scalar(in_stream, dim) || dim != static_cast<uint64_t>(dim_) ||
+        !read_scalar(in_stream, metric) || metric != static_cast<uint64_t>(metric_) ||
+        !read_scalar(in_stream, max_degree) ||
+        !read_scalar(in_stream, ef_construction) ||
+        !read_scalar(in_stream, ef_search) ||
+        !read_scalar(in_stream, gpu_hierarchy) ||
+        !read_scalar(in_stream, count)) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_BINARY,
+                                        "invalid hipVS HNSW header"));
+    }
+    max_degree_ = static_cast<int>(max_degree);
+    ef_construction_ = static_cast<int>(ef_construction);
+    ef_search_ = static_cast<int>(ef_search);
+    use_gpu_hierarchy_ = gpu_hierarchy != 0;
+
+    if (count > std::numeric_limits<size_t>::max() / sizeof(int64_t) ||
+        count > static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max()) / sizeof(int64_t)) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_BINARY,
+                                        "hipVS HNSW id table is too large"));
+    }
+    std::vector<int64_t> ids(static_cast<size_t>(count));
+    if (count > 0 &&
+        !in_stream.read(reinterpret_cast<char *>(ids.data()),
+                        static_cast<std::streamsize>(count * sizeof(int64_t)))) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_BINARY,
+                                        "truncated hipVS HNSW id table"));
+    }
+    if (count > std::numeric_limits<size_t>::max() / sizeof(float) /
+                    static_cast<size_t>(dim_) ||
+        count * static_cast<uint64_t>(dim_) * sizeof(float) >
+            static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max())) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_BINARY,
+                                        "hipVS HNSW vector payload is too large"));
+    }
+    std::vector<float> vectors(static_cast<size_t>(count) * static_cast<size_t>(dim_));
+    if (!vectors.empty() &&
+        !in_stream.read(reinterpret_cast<char *>(vectors.data()),
+                        static_cast<std::streamsize>(vectors.size() * sizeof(float)))) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_BINARY,
+                                        "truncated hipVS HNSW vector payload"));
+    }
+    uint64_t blob_size = 0;
+    if (!read_scalar(in_stream, blob_size) || blob_size > HIPVS_HNSW_MAX_SERIALIZED_BYTES ||
+        blob_size > std::numeric_limits<size_t>::max()) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_BINARY,
+                                        "invalid hipVS HNSW payload size"));
+    }
+    std::vector<char> blob(static_cast<size_t>(blob_size));
+    if (blob_size > 0 &&
+        !in_stream.read(blob.data(), static_cast<std::streamsize>(blob.size()))) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_BINARY,
+                                        "truncated hipVS HNSW payload"));
+    }
+
+    const std::string temp_path = make_hipvs_temp_file();
+    if (temp_path.empty()) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::UNKNOWN_ERROR,
+                                        "failed to create temporary hipVS deserialization file"));
+    }
+    {
+      std::ofstream output(temp_path, std::ios::binary | std::ios::trunc);
+      if (!output.good() ||
+          (!blob.empty() &&
+           !output.write(blob.data(), static_cast<std::streamsize>(blob.size())))) {
+        remove_hipvs_temp_file(temp_path);
+        return tl::unexpected(vsag::Error(vsag::ErrorType::READ_ERROR,
+                                          "failed to stage hipVS HNSW payload"));
+      }
+    }
+
+    index_->dtype.code = kDLFloat;
+    index_->dtype.bits = 32;
+    index_->dtype.lanes = 1;
+    cuvsHnswIndexParams_t hnsw_params = nullptr;
+    if (cuvsHnswIndexParamsCreate(&hnsw_params) != CUVS_SUCCESS || hnsw_params == nullptr) {
+      remove_hipvs_temp_file(temp_path);
+      return tl::unexpected(make_hipvs_error("create hipVS HNSW deserialize parameters"));
+    }
+    hnsw_params->hierarchy = use_gpu_hierarchy_ ? cuvsHnswHierarchy::GPU : cuvsHnswHierarchy::CPU;
+    hnsw_params->ef_construction = ef_construction_;
+    hnsw_params->num_threads = 0;
+    const cuvsError_t result = cuvsHnswDeserialize(
+        resources_, hnsw_params, temp_path.c_str(), dim_, metric_, index_);
+    cuvsHnswIndexParamsDestroy(hnsw_params);
+    remove_hipvs_temp_file(temp_path);
+    if (result != CUVS_SUCCESS) {
+      return tl::unexpected(make_hipvs_error("deserialize hipVS HNSW index"));
+    }
+    external_ids_ = std::move(ids);
+    vectors_ = std::move(vectors);
+    row_by_id_.clear();
+    row_by_id_.reserve(external_ids_.size());
+    for (size_t i = 0; i < external_ids_.size(); ++i) {
+      row_by_id_[external_ids_[i]] = i;
+    }
+    serialized_bytes_ = blob_size;
+    built_ = true;
+    return {};
+  }
+
+  [[nodiscard]] int64_t GetNumElements() const override
+  {
+    return static_cast<int64_t>(external_ids_.size());
+  }
+
+  [[nodiscard]] tl::expected<float, vsag::Error> CalcDistanceById(
+      const float *vector,
+      int64_t id,
+      bool = true) const override
+  {
+    if (vector == nullptr || dim_ <= 0) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_ARGUMENT,
+                                        "invalid hipVS HNSW distance query"));
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = row_by_id_.find(id);
+    if (it == row_by_id_.end()) {
+      return -1.0F;
+    }
+    const float *stored = vectors_.data() + it->second * static_cast<size_t>(dim_);
+    double value = 0.0;
+    if (metric_ == L2Expanded) {
+      for (int i = 0; i < dim_; ++i) {
+        const double diff = static_cast<double>(vector[i]) - static_cast<double>(stored[i]);
+        value += diff * diff;
+      }
+    } else {
+      double dot = 0.0;
+      for (int i = 0; i < dim_; ++i) {
+        dot += static_cast<double>(vector[i]) * static_cast<double>(stored[i]);
+      }
+      value = 1.0 - dot;
+    }
+    return static_cast<float>(value);
+  }
+
+  [[nodiscard]] tl::expected<std::pair<int64_t, int64_t>, vsag::Error>
+  GetMinAndMaxId() const override
+  {
+    if (external_ids_.empty()) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INDEX_EMPTY,
+                                        "hipVS HNSW index has no ids"));
+    }
+    const auto bounds = std::minmax_element(external_ids_.begin(), external_ids_.end());
+    return std::make_pair(*bounds.first, *bounds.second);
+  }
+
+  [[nodiscard]] uint64_t GetMemoryUsage() const override
+  {
+    const uint64_t vector_bytes = vectors_.capacity() * sizeof(float);
+    const uint64_t graph_bytes =
+        static_cast<uint64_t>(external_ids_.size()) * static_cast<uint64_t>(max_degree_) * 2U * sizeof(uint32_t);
+    return vector_bytes + graph_bytes + external_ids_.capacity() * sizeof(int64_t) + serialized_bytes_;
+  }
+
+  [[nodiscard]] uint64_t EstimateMemory(uint64_t num_elements) const override
+  {
+    return num_elements * (static_cast<uint64_t>(dim_) * sizeof(float) +
+                           static_cast<uint64_t>(max_degree_) * 2U * sizeof(uint32_t) +
+                           sizeof(int64_t));
+  }
+
+  [[nodiscard]] uint64_t EstimateBuildMemory(uint64_t num_elements) const override
+  {
+    return EstimateMemory(num_elements) * 2U;
+  }
+
+private:
+  tl::expected<vsag::DatasetPtr, vsag::Error> do_knn_search(
+      const vsag::DatasetPtr &query,
+      int64_t k,
+      const std::string &parameters,
+      vsag::Allocator *result_allocator,
+      const std::function<bool(int64_t)> *valid_filter,
+      float valid_ratio) const
+  {
+    if (!built_ || index_ == nullptr) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INDEX_EMPTY,
+                                        "hipVS HNSW index is empty"));
+    }
+    if (query == nullptr || k <= 0 || query->GetDim() != dim_) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_ARGUMENT,
+                                        "invalid hipVS HNSW query"));
+    }
+    const int64_t query_count = query->GetNumElements();
+    if (query->GetFloat32Vectors() == nullptr) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_ARGUMENT,
+                                        "hipVS HNSW query requires float32 vectors"));
+    }
+    const int64_t total = static_cast<int64_t>(external_ids_.size());
+    const int64_t effective_k = std::min<int64_t>(k, total);
+    if (query_count <= 0 || effective_k <= 0) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_ARGUMENT,
+                                        "hipVS HNSW query is empty"));
+    }
+    int64_t candidate_k = effective_k;
+    if (valid_filter != nullptr) {
+      const float safe_ratio = std::max(valid_ratio, 0.001F);
+      const int64_t ratio_candidates = static_cast<int64_t>(
+          std::ceil(static_cast<double>(effective_k) / static_cast<double>(safe_ratio)));
+      candidate_k = std::min<int64_t>(total, std::max(ratio_candidates, effective_k * 8));
+    }
+    if (query_count > std::numeric_limits<int64_t>::max() / candidate_k ||
+        query_count > std::numeric_limits<int64_t>::max() / effective_k) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_ARGUMENT,
+                                        "hipVS HNSW result dimensions overflow"));
+    }
+    const uint64_t candidate_count =
+        static_cast<uint64_t>(query_count) * static_cast<uint64_t>(candidate_k);
+    const uint64_t output_count =
+        static_cast<uint64_t>(query_count) * static_cast<uint64_t>(effective_k);
+    if (candidate_count > std::numeric_limits<size_t>::max() / sizeof(uint64_t) ||
+        output_count > std::numeric_limits<size_t>::max() / sizeof(uint64_t)) {
+      return tl::unexpected(vsag::Error(vsag::ErrorType::INVALID_ARGUMENT,
+                                        "hipVS HNSW search result is too large"));
+    }
+    std::vector<uint64_t> neighbors(static_cast<size_t>(candidate_count));
+    std::vector<float> distances(static_cast<size_t>(candidate_count));
+
+    cuvsHnswSearchParams_t search_params = nullptr;
+    if (cuvsHnswSearchParamsCreate(&search_params) != CUVS_SUCCESS || search_params == nullptr) {
+      return tl::unexpected(make_hipvs_error("create hipVS HNSW search parameters"));
+    }
+    const int candidate_ef = candidate_k > std::numeric_limits<int>::max()
+                                 ? std::numeric_limits<int>::max()
+                                 : static_cast<int>(candidate_k);
+    search_params->ef = std::max(parse_ef_search(parameters, ef_search_), candidate_ef);
+    search_params->num_threads = 0;
+
+    int64_t query_shape[2] = {query_count, dim_};
+    int64_t output_shape[2] = {query_count, candidate_k};
+    DLManagedTensor query_tensor{};
+    DLManagedTensor neighbor_tensor{};
+    DLManagedTensor distance_tensor{};
+    init_host_float_tensor(query_tensor,
+                           const_cast<float *>(query->GetFloat32Vectors()),
+                           query_shape);
+    init_host_uint64_tensor(neighbor_tensor, neighbors.data(), output_shape);
+    init_host_float_tensor(distance_tensor, distances.data(), output_shape);
+    const cuvsError_t result = cuvsHnswSearch(
+        resources_, search_params, index_, &query_tensor, &neighbor_tensor, &distance_tensor);
+    cuvsHnswSearchParamsDestroy(search_params);
+    if (result != CUVS_SUCCESS) {
+      return tl::unexpected(make_hipvs_error("search hipVS HNSW index"));
+    }
+
+    int64_t *result_ids = nullptr;
+    float *result_distances = nullptr;
+    if (result_allocator != nullptr) {
+      result_ids = static_cast<int64_t *>(result_allocator->Allocate(output_count * sizeof(int64_t)));
+      result_distances = static_cast<float *>(result_allocator->Allocate(output_count * sizeof(float)));
+      if (result_ids == nullptr || result_distances == nullptr) {
+        if (result_ids != nullptr) {
+          result_allocator->Deallocate(result_ids);
+        }
+        if (result_distances != nullptr) {
+          result_allocator->Deallocate(result_distances);
+        }
+        return tl::unexpected(vsag::Error(vsag::ErrorType::NO_ENOUGH_MEMORY,
+                                          "failed to allocate hipVS HNSW search result"));
+      }
+    } else {
+      try {
+        result_ids = new int64_t[static_cast<size_t>(output_count)];
+        result_distances = new float[static_cast<size_t>(output_count)];
+      } catch (const std::bad_alloc &) {
+        delete[] result_ids;
+        delete[] result_distances;
+        return tl::unexpected(vsag::Error(vsag::ErrorType::NO_ENOUGH_MEMORY,
+                                          "failed to allocate hipVS HNSW search result"));
+      }
+    }
+
+    for (int64_t query_idx = 0; query_idx < query_count; ++query_idx) {
+      int64_t emitted = 0;
+      const uint64_t candidate_base = static_cast<uint64_t>(query_idx) * static_cast<uint64_t>(candidate_k);
+      const uint64_t output_base = static_cast<uint64_t>(query_idx) * static_cast<uint64_t>(effective_k);
+      for (int64_t candidate_idx = 0;
+           candidate_idx < candidate_k && emitted < effective_k;
+           ++candidate_idx) {
+        const uint64_t offset = candidate_base + static_cast<uint64_t>(candidate_idx);
+        const uint64_t inner_id = neighbors[static_cast<size_t>(offset)];
+        if (inner_id >= external_ids_.size()) {
+          continue;
+        }
+        const int64_t external_id = external_ids_[static_cast<size_t>(inner_id)];
+        if (valid_filter != nullptr && !(*valid_filter)(external_id)) {
+          continue;
+        }
+        result_ids[output_base + static_cast<uint64_t>(emitted)] = external_id;
+        result_distances[output_base + static_cast<uint64_t>(emitted)] = distances[static_cast<size_t>(offset)];
+        ++emitted;
+      }
+      for (; emitted < effective_k; ++emitted) {
+        result_ids[output_base + static_cast<uint64_t>(emitted)] = -1;
+        result_distances[output_base + static_cast<uint64_t>(emitted)] =
+            std::numeric_limits<float>::infinity();
+      }
+    }
+
+    vsag::DatasetPtr result_dataset = vsag::Dataset::Make();
+    result_dataset->NumElements(query_count)
+        ->Dim(effective_k)
+        ->Ids(result_ids)
+        ->Distances(result_distances)
+        ->Owner(true, result_allocator);
+    return result_dataset;
+  }
+
+  int dim_{0};
+  cuvsDistanceType metric_{L2Expanded};
+  int max_degree_{16};
+  int ef_construction_{200};
+  int ef_search_{200};
+  vsag::Allocator *allocator_{nullptr};
+  cuvsResources_t resources_{0};
+  cuvsHnswIndex_t index_{nullptr};
+  std::vector<int64_t> external_ids_;
+  std::vector<float> vectors_;
+  std::unordered_map<int64_t, size_t> row_by_id_;
+  bool available_{false};
+  bool built_{false};
+  bool use_gpu_hierarchy_{false};
+  uint64_t serialized_bytes_{0};
+  mutable std::mutex mutex_;
+};
+
+std::shared_ptr<vsag::Index> create_hipvs_hnsw_if_supported(
+    int dim,
+    const char *dtype,
+    const char *metric,
+    int max_degree,
+    int ef_construction,
+    int ef_search,
+    vsag::Allocator *allocator,
+    int extra_info_size)
+{
+  if (dim <= 0 || env_disables_hipvs() || extra_info_size != 0 || !hipvs_float_dtype(dtype)) {
+    return nullptr;
+  }
+  cuvsDistanceType hipvs_metric = L2Expanded;
+  if (!hipvs_metric(metric, hipvs_metric)) {
+    return nullptr;
+  }
+  auto index = std::make_shared<HipVSHnswIndex>(
+      dim, hipvs_metric, max_degree, ef_construction, ef_search, allocator);
+  if (!index->available()) {
+    LOG_WARN("[OBVSAG][HIPVS] backend unavailable, falling back to VSAG");
+    return nullptr;
+  }
+  return index;
+}
+
+}  // namespace
+
+#endif  // SEEKDB_WITH_HIPVS
 
 static constexpr int64_t VSAG_SINDI_N_CANDIDATE_FACTOR = 500;
 
@@ -813,6 +1752,27 @@ int create_index(VectorIndexPtr &index_handler,
   
     adjust_create_index_max_degree(index_type, max_degree);
 
+#ifdef SEEKDB_WITH_HIPVS
+    if (index_type == HNSW_TYPE) {
+      std::shared_ptr<vsag::Index> hipvs_index = create_hipvs_hnsw_if_supported(
+          dim, dtype, metric, max_degree, ef_construction, ef_search,
+          vsag_allocator, extra_info_size);
+      if (hipvs_index != nullptr) {
+        HnswIndexHandler *hnsw_index = new HnswIndexHandler(
+            true, false, false, dtype, metric, max_degree, ef_construction,
+            ef_search, dim, index_type, hipvs_index, vsag_allocator, extra_info_size,
+            refine_type, bq_bits_query, bq_use_fht);
+        if (OB_ISNULL(hnsw_index)) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else {
+          index_handler = static_cast<VectorIndexPtr>(hnsw_index);
+          LOG_INFO("[OBVSAG][HIPVS] selected hipVS HNSW backend", K(dim), K(max_degree));
+        }
+        return ret;
+      }
+    }
+#endif
+
     const char* index_type_str = get_index_type_str(index_type);
     char result_param_str[1024] = {0};
     if (OB_FAIL(construct_vsag_create_param(
@@ -1332,9 +2292,24 @@ int fdeserialize(VectorIndexPtr &index_handler,
     if (OB_FAIL(ret)) {
     } else {
       const std::string input_json_str(result_param_str);
-      tl::expected<std::shared_ptr<Index>, Error> index = vsag::Factory::CreateIndex(index_type_str, input_json_str, hnsw->get_allocator());
-      if (index.has_value()) {
-        hnsw_index = index.value();
+#ifdef SEEKDB_WITH_HIPVS
+      if (index_type == HNSW_TYPE) {
+        hnsw_index = create_hipvs_hnsw_if_supported(
+            dim, dtype, metric, max_degree, ef_construction, ef_search,
+            hnsw->get_allocator(), static_cast<int>(extra_info_size));
+      }
+#endif
+      if (hnsw_index == nullptr) {
+        tl::expected<std::shared_ptr<Index>, Error> index =
+            vsag::Factory::CreateIndex(index_type_str, input_json_str, hnsw->get_allocator());
+        if (index.has_value()) {
+          hnsw_index = index.value();
+        } else {
+          ret = vsag_errcode2ob(index.error().type);
+          LOG_WARN("[OBVSAG] create index error", K(ret), K(index.error().type));
+        }
+      }
+      if (OB_SUCC(ret)) {
         tl::expected<void, Error> bs = hnsw_index->Deserialize(in_stream);
         if (bs.has_value()) {
           hnsw->set_index(hnsw_index);
@@ -1343,9 +2318,6 @@ int fdeserialize(VectorIndexPtr &index_handler,
           ret = vsag_errcode2ob(bs.error().type);
           LOG_WARN("[OBVSAG] fdeserialize error", K(ret), K(bs.error().type));
         }
-      } else {
-        ret = vsag_errcode2ob(index.error().type);
-        LOG_WARN("[OBVSAG] create index error", K(ret), K(index.error().type));
       }
     }
   }

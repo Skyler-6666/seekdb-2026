@@ -1,3 +1,5 @@
+option(SEEKDB_ENABLE_HIPVS "Enable the optional hipVS GPU HNSW build backend" OFF)
+
 add_subdirectory(compress)
 add_subdirectory(restore)
 
@@ -50,6 +52,19 @@ else()
     PUBLIC ob_malloc compress restore
     ${DEP_DIR}/lib/libxml2.a
     ${DEP_DIR}/lib/liblzma.a)
+endif()
+
+if(SEEKDB_ENABLE_HIPVS)
+  if(WIN32 OR APPLE OR ANDROID)
+    message(FATAL_ERROR "SEEKDB_ENABLE_HIPVS requires a Linux AMD ROCm host")
+  endif()
+  if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$")
+    message(FATAL_ERROR "SEEKDB_ENABLE_HIPVS currently supports x86_64 hosts only")
+  endif()
+  find_package(cuvs CONFIG REQUIRED)
+  target_compile_definitions(oblib_lib PRIVATE SEEKDB_WITH_HIPVS=1)
+  target_link_libraries(oblib_lib PRIVATE cuvs::c_api)
+  message(STATUS "hipVS HNSW backend enabled through cuvs::c_api")
 endif()
 
 if(ANDROID)
