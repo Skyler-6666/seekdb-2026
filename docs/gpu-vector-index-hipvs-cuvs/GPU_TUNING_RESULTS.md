@@ -99,3 +99,32 @@ shared rank hash table, eliminates the per-row Bloom allocation, delays graph
 allocations until their consuming phases, and collects reverse edges in rank
 order. It adds opt-in synchronized phase timings to locate remaining cost.
 Its quality, timing, and actual resource use are unmeasured until a new GPU run.
+
+## Shared-rank revision: diagnostic result and environment reset
+
+The user supplied two alternating trace rounds for candidate
+`06a662940de619c48f8943de2ac9e7baa48d7176` on newly generated 250K x 128
+synthetic data (seed 20261029, 256 queries). Ready seconds were 19.148122849
+and 16.095424537 for V5, and 14.365920920 and 13.930208458 for the candidate.
+The trace-run median ratio was 1.245525x. Median Recall@10 delta was
++0.00214844; Recall@100 delta was -0.00068359. These trace results fit the
+paired 0.005 recall-loss target for this synthetic case, not official gates.
+
+Candidate phase milliseconds were:
+
+| Round | Train | IVF-PQ lookup | FP32 refine | Prune | Reverse/merge |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 1600.705 | 11443.288 | 489.160 | 131.446 | 182.861 |
+| 2 | 1225.072 | 11401.261 | 489.601 | 131.541 | 182.119 |
+
+Candidate lookup dominates this synchronized diagnostic. Clean untraced timing
+and both dimensions remain unverified. All reported VRAM initial and peak
+samples were exactly 624242688 bytes for both libraries, so the printed 1.0x
+ratio is discarded as inconclusive. GPU attribution was not captured then.
+
+The user next reported a Jupyter kernel-start failure. A later terminal showed
+GPU[0] at 0000:43:00.0, 28028928 VRAM bytes used, cgroup memory.current
+162508800, memory.max 59055800320, and all OOM counters zero. The former test
+library was absent. This establishes changed environment state, not the cause
+of the prior failure; zero current OOM counters cannot diagnose a previous
+environment. Recovery now rebuilds pinned inputs and selects the current bus.

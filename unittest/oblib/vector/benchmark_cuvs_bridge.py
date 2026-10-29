@@ -19,6 +19,7 @@ class VramSampler:
         self.path = Path(path)
         self.initial = int(self.path.read_text().strip())
         self.peak = self.initial
+        self.minimum = self.initial
         self.samples = 1
         self.error = None
         self.stop = threading.Event()
@@ -27,7 +28,9 @@ class VramSampler:
     def poll(self):
         while not self.stop.wait(0.02):
             try:
-                self.peak = max(self.peak, int(self.path.read_text().strip()))
+                value = int(self.path.read_text().strip())
+                self.peak = max(self.peak, value)
+                self.minimum = min(self.minimum, value)
                 self.samples += 1
             except (OSError, ValueError) as error:
                 self.error = error
@@ -42,6 +45,16 @@ class VramSampler:
         self.thread.join()
         if self.error is not None and kind is None:
             raise RuntimeError(f"VRAM sampling failed: {self.error}")
+
+
+def summarize_vram(runs):
+    activity = {
+        name: any(r["vram_peak_sampled_bytes"] > r["vram_min_sampled_bytes"] for r in values)
+        for name, values in runs.items()
+    }
+    peaks = {name: max(r["vram_peak_sampled_bytes"] for r in values) for name, values in runs.items()}
+    ratio = peaks["candidate"] / peaks["baseline"] if all(activity.values()) and peaks["baseline"] else None
+    return activity, ratio
 
 
 def recall_at_k(returned, truth, rows, k):
@@ -207,6 +220,7 @@ def main():
                     if sampler is not None:
                         measured["vram_initial_bytes"] = sampler.initial
                         measured["vram_peak_sampled_bytes"] = sampler.peak
+                        measured["vram_min_sampled_bytes"] = sampler.minimum
                         measured["vram_samples"] = sampler.samples
                     return measured
 
@@ -225,9 +239,11 @@ def main():
         for k in (10, 100)
     }
     if args.vram_used_file:
-        peaks = {name: max(r["vram_peak_sampled_bytes"] for r in runs)
-                 for name, runs in report["runs"].items()}
-        report["sampled_vram_peak_ratio"] = peaks["candidate"] / peaks["baseline"] if peaks["baseline"] else None
+        activity, ratio = summarize_vram(report["runs"])
+        report["vram_counter_activity_detected"] = activity
+        report["sampled_vram_peak_ratio"] = ratio
+        if ratio is None:
+            print("VRAM counter did not vary for both libraries; sampled peak ratio is inconclusive.", flush=True)
     output.write_text(json.dumps(report, indent=2), encoding="utf-8")
     summary = {k: report[k] for k in ("bridge_ready_speedup", "median_recall_delta")}
     if args.vram_used_file:
