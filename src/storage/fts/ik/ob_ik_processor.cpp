@@ -52,7 +52,9 @@ TokenizeContext::TokenizeContext(ObCollationType coll_type,
                                  int64_t fulltext_len,
                                  bool is_smart)
     : coll_type_(coll_type), fulltext_(fulltext), fulltext_len_(fulltext_len), cursor_(0),
-      next_char_len_(0), handle_size_(0), is_smart_(is_smart), token_list_(allocator),
+      next_char_len_(0), handle_size_(0),
+      ascii_compatible_(ObCharset::charset_type_by_coll(coll_type) == CHARSET_UTF8MB4),
+      is_smart_(is_smart), token_list_(allocator),
       result_list_(allocator)
 {
 }
@@ -102,14 +104,19 @@ int TokenizeContext::current_char_type(ObFTCharUtil::CharType &type)
 int TokenizeContext::prepare_next_char()
 {
   int ret = OB_SUCCESS;
-  if (OB_FAIL(ObCharset::first_valid_char(coll_type_,
-                                          fulltext_ + cursor_,
-                                          fulltext_len_ - cursor_,
-                                          next_char_len_))) {
-  } else if (OB_FAIL(ObFTCharUtil::classify_first_char(coll_type_,
-                                                       fulltext_ + cursor_,
-                                                       next_char_len_,
-                                                       next_char_type_))) {
+  if (ascii_compatible_
+      && static_cast<unsigned char>(fulltext_[cursor_]) < 0x80) {
+    next_char_len_ = 1;
+  } else if (OB_FAIL(ObCharset::first_valid_char(coll_type_,
+                                                 fulltext_ + cursor_,
+                                                 fulltext_len_ - cursor_,
+                                                 next_char_len_))) {
+  }
+  if (OB_SUCC(ret)
+      && OB_FAIL(ObFTCharUtil::classify_first_char(coll_type_,
+                                                   fulltext_ + cursor_,
+                                                   next_char_len_,
+                                                   next_char_type_))) {
   }
   return ret;
 }
