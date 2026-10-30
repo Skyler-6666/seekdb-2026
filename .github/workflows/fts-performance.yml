@@ -56,7 +56,9 @@ jobs:
           GITHUB_WORKSPACE: ${{ github.workspace }}
           SEEKDB_TASK_DIR: ${{ github.workspace }}/seekdb_build
           MAKE_ARGS: -j4
-        run: .github/script/seekdb/compile.sh
+        run: |
+          set -o pipefail
+          .github/script/seekdb/compile.sh 2>&1 | tee compile_seekdb.log
 
       - name: Verify build artifacts
         run: |
@@ -197,6 +199,9 @@ jobs:
           for f in fts_large_bench_score.txt fts_large_bench_report.txt fts_diag_report.txt; do
             if [ -f "$f" ]; then cp "$f" fts-ci-results/; fi
           done
+          if [ -f compile_seekdb.log ]; then
+            tail -c 3000000 compile_seekdb.log > fts-ci-results/compile_seekdb.log.tail
+          fi
           git add -f fts-ci-results >/dev/null 2>&1
           if git commit -m "ci: diagnostics for run $GITHUB_RUN_NUMBER sha $GITHUB_SHA" >/dev/null 2>&1; then
             git push --force origin "HEAD:$RESBRANCH" >/dev/null 2>&1 && echo "published diagnostics to branch $RESBRANCH"
