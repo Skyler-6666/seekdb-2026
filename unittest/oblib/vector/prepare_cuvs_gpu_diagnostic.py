@@ -12,6 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 BASELINE = "634888d9b037153fa143d2c913ba4b25503e1d62"
+BASELINES = {
+    "v5": ("oceanbase/seekdb", BASELINE),
+    "known-good": ("wswsadad/seekdb", "556065c62578673d6313f2fdd798cc8753cbb662"),
+}
 
 
 def single_gpu_bus(output):
@@ -27,6 +31,8 @@ def main(token=None, argv=None):
     parser.add_argument("--root", type=Path, default=Path("/workspace/seekdb-gpu-diagnostic"))
     parser.add_argument("--dim", type=int, choices=(128, 256), default=128)
     parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--baseline", choices=BASELINES, default="v5",
+                        help="official V5 or the user's previously successful submission")
     parser.add_argument("--trace", action="store_true", help="enable synchronized construction phase timings")
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[0-9a-f]{40}", args.revision) or args.rounds < 2:
@@ -64,9 +70,10 @@ def main(token=None, argv=None):
     benchmark = candidate_root / "benchmark_cuvs_bridge.py"
     download("wswsadad/seekdb", args.revision,
              "unittest/oblib/vector/benchmark_cuvs_bridge.py", benchmark)
-    baseline_root = root / ("baseline-" + BASELINE[:12])
+    baseline_repo, baseline_revision = BASELINES[args.baseline]
+    baseline_root = root / ("baseline-" + baseline_revision[:12])
     for name in ("build.sh", "seekdb_cuvs_bridge.c", "seekdb_cuvs_bridge.h"):
-        download("oceanbase/seekdb", BASELINE, "tools/hipvs_bridge/" + name, baseline_root / "src" / name)
+        download(baseline_repo, baseline_revision, "tools/hipvs_bridge/" + name, baseline_root / "src" / name)
 
     env = os.environ.copy()
     env["LD_LIBRARY_PATH"] = "/opt/hipvs/lib:/opt/rocm/lib"
@@ -101,7 +108,7 @@ def main(token=None, argv=None):
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     report = candidate_root / f"comparison-{args.dim}-{'trace' if args.trace else 'plain'}-{stamp}.json"
     report.with_suffix(".setup.json").write_text(json.dumps({
-        "candidate_revision": args.revision, "baseline_revision": BASELINE,
+        "candidate_revision": args.revision, "baseline_revision": baseline_revision,
         "gpu_bus": bus, "hardware": hardware, "vram_used_file": str(counter),
         "synthetic_seed": 20261029, "dim": args.dim, "trace": args.trace,
         "scope": "synthetic bridge diagnostic, not official evaluation",

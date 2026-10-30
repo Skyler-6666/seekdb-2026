@@ -1,8 +1,5 @@
 ﻿# V5 contest readiness — 2026-10-29
 
-This is the first candidate's readiness record. For the subsequent candidate
-see [ITERATIVE_BUILD_CANDIDATE.md](ITERATIVE_BUILD_CANDIDATE.md).
-
 The candidate branch `contest/hipvs-improve-20261029` now contains official V5
 `634888d9b037153fa143d2c913ba4b25503e1d62` through merge commit `1789c0e9a`.
 `git merge-base --is-ancestor 634888d9b HEAD` returned exit code 0.

@@ -1,11 +1,12 @@
 # hipVS/cuVS GPU vector backend
 
-This branch is the isolated IVF-PQ experiment, not the submission branch.
-See [IVFPQ_GPU_EXPERIMENT.md](IVFPQ_GPU_EXPERIMENT.md) for its unverified status.
+This branch starts at the officially successful submission `556065c6...` and
+isolates GPU bridge optimization while retaining that commit's server source.
+See [FROM_SUCCESSFUL_SUBMISSION.md](FROM_SUCCESSFUL_SUBMISSION.md) for the exact
+scope, comparison baselines, and remaining full-server validation requirements.
 
-The latest GPU measurements and current builder choice are documented in
-[GPU_TUNING_RESULTS.md](GPU_TUNING_RESULTS.md). Iterative construction regressed
-in these diagnostics; the submission branch uses V5 NN-Descent again.
+The V5-based optimization candidate and its current verification limits are
+documented in [BUILD_REPORT.md](BUILD_REPORT.md) and [V5_READINESS.md](V5_READINESS.md).
 
 Status: **Phase 1 implemented and review-gated** on AMD `gfx1100` with ROCm
 7.2.4. This directory documents the current integration and its reproducible
