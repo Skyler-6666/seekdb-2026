@@ -94,7 +94,11 @@ int ObFTDictHub::get_shared_range_dict(const ObFTDictDesc &desc, ObFTRangeDict *
           }
         }
         if (OB_SUCC(ret)) {
-          if (OB_ISNULL(range_dict = OB_NEWx(ObFTRangeDict, &shared_alloc_, container, desc))) {
+          if (OB_ISNULL(range_dict = OB_NEWx(ObFTRangeDict,
+                                             &shared_alloc_,
+                                             shared_alloc_,
+                                             container,
+                                             desc))) {
             ret = OB_ALLOCATE_MEMORY_FAILED;
           } else if (OB_FAIL(range_dict->init())) {
           } else {
