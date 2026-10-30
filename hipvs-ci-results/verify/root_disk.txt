@@ -1,14 +1,14 @@
 === before ===
 Filesystem      Size  Used Avail Use% Mounted on
-/dev/root       146G  145G  851M 100% /
+/dev/root       146G  144G  1.6G  99% /
 === deleted-but-open files (space held by daemons) ===
 COMMAND    PID     USER   FD   TYPE DEVICE      SIZE/OFF NLINK  NODE NAME
-php-fpm8.  601     root    4u   REG  259,1             0     0 20220 /tmp/.ZendSem.iS8wNb (deleted)
-php-fpm8.  943 www-data    4u   REG  259,1             0     0 20220 /tmp/.ZendSem.iS8wNb (deleted)
-php-fpm8.  944 www-data    4u   REG  259,1             0     0 20220 /tmp/.ZendSem.iS8wNb (deleted)
-provjobd2 1656     root  txt    REG  259,1      49197180     0 85382 /tmp/provjobd2898827842 (deleted)
-Runner.Li 1794   runner    8u   REG    0,1 2199023255552     0     9 /memfd:doublemapper (deleted)
-Runner.Wo 1813   runner    8u   REG    0,1 2199023255552     0  2055 /memfd:doublemapper (deleted)
+php-fpm8.  601     root    4u   REG  259,1             0     0 20220 /tmp/.ZendSem.2AQfYF (deleted)
+php-fpm8. 1032 www-data    4u   REG  259,1             0     0 20220 /tmp/.ZendSem.2AQfYF (deleted)
+php-fpm8. 1041 www-data    4u   REG  259,1             0     0 20220 /tmp/.ZendSem.2AQfYF (deleted)
+provjobd1 1667     root  txt    REG  259,1      49197180     0 85347 /tmp/provjobd1325211147 (deleted)
+Runner.Li 1786   runner    8u   REG    0,1 2199023255552     0  2057 /memfd:doublemapper (deleted)
+Runner.Wo 1806   runner    8u   REG    0,1 2199023255552     0  3077 /memfd:doublemapper (deleted)
 === cleanup ===
 removed /usr/share/swift
 removed /opt/az
