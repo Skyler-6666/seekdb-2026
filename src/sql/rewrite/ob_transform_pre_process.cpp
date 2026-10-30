@@ -178,13 +178,29 @@ int ObTransformPreProcess::transform_one_stmt(common::ObIArray<ObParentDMLStmt> 
       }
     }
     if (OB_SUCC(ret)) {
-      // relevance order is unobservable inside derived tables / subqueries;
-      // skipping the default MATCH order there avoids full BM25 + sort
+      // the implicit relevance order is unobservable when this stmt feeds a
+      // derived table; skipping it there avoids a full BM25 + sort before LIMIT.
+      // subqueries in insert/update/delete or scalar/union positions keep the
+      // implicit order since their output order may be observed.
+      bool need_preserve = true;
       if (!parent_stmts.empty()) {
-        // do nothing
-      } else if (stmt->get_match_exprs().count() > 0 &&
+        const ObParentDMLStmt &parent = parent_stmts.at(parent_stmts.count() - 1);
+        ObDMLStmt *parent_stmt = parent.stmt_;
+        if (OB_NOT_NULL(parent_stmt)) {
+          const ObIArray<TableItem*> &table_items = parent_stmt->get_table_items();
+          for (int64_t i = 0; i < table_items.count(); ++i) {
+            const TableItem *table_item = table_items.at(i);
+            if (OB_NOT_NULL(table_item) && table_item->is_generated_table()
+                && static_cast<ObDMLStmt *>(table_item->ref_query_) == stmt) {
+              need_preserve = false;
+              break;
+            }
+          }
+        }
+      }
+      if (need_preserve && stmt->get_match_exprs().count() > 0 &&
           OB_FAIL(preserve_order_for_fulltext_search(stmt, is_happened))) {
-      } else {
+      } else if (need_preserve) {
         trans_happened |= is_happened;
       }
     }
