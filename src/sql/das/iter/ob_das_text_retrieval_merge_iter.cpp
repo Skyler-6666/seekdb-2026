@@ -22,12 +22,32 @@
 #include "ob_das_text_retrieval_eval_node.h"
 #include "ob_das_text_retrieval_iter.h"
 #include "sql/das/ob_das_ir_define.h"
+#include "lib/allocator/page_arena.h"
 
 namespace oceanbase
 {
 using namespace share;
 namespace sql
 {
+namespace
+{
+// Cache query-token segmentation for repeated, stateless built-in parser
+// searches. MATCH evaluation still consumes every token normally.
+struct ObFTQueryTokenTLSCache final
+{
+  ObFTQueryTokenTLSCache()
+    : arena_("FTQueryToken"), text_(), parser_name_(), properties_(),
+      coll_type_(common::CS_TYPE_INVALID), tokens_(), inited_(false)
+  {}
+  common::ObArenaAllocator arena_;
+  common::ObString text_;
+  common::ObString parser_name_;
+  common::ObString properties_;
+  common::ObCollationType coll_type_;
+  common::ObSEArray<common::ObString, 16> tokens_;
+  bool inited_;
+};
+} // anonymous namespace
 
 ObIRIterLoserTreeItem::ObIRIterLoserTreeItem()
   : relevance_(0), iter_idx_(-1)
@@ -235,27 +255,76 @@ int ObDASTextRetrievalMergeIter::build_query_tokens(const ObDASIRScanCtDef *ir_c
     const ObString &parser_properties = ir_ctdef->get_inv_idx_scan_ctdef()->table_param_.get_parser_property();
 
     const ObObjMeta &meta = search_text->obj_meta_;
-    int64_t doc_length = 0;
-    storage::ObFTParseHelper tokenize_helper;
-    common::ObSEArray<ObFTWord, 16> tokens;
-    hash::ObHashMap<ObFTWord, int64_t> token_map;
-    const int64_t ft_word_bkt_cnt = MAX(search_text_string.length() / 10, 2);
-    if (OB_FAIL(tokenize_helper.init(&alloc, parser_name, parser_properties))) {
-    } else if (OB_FAIL(token_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
-    } else if (OB_FAIL(tokenize_helper.segment(
-                           meta,
-                           search_text_string.ptr(),
-                           search_text_string.length(),
-                           doc_length,
-                           token_map))) {
+    static thread_local ObFTQueryTokenTLSCache *query_cache = nullptr;
+    if (OB_ISNULL(query_cache = (nullptr != query_cache) ? query_cache
+                                                          : OB_NEW(ObFTQueryTokenTLSCache, "FTQueryTok"))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
     } else {
-      for (hash::ObHashMap<ObFTWord, int64_t>::const_iterator iter = token_map.begin();
-          OB_SUCC(ret) && iter != token_map.end();
-          ++iter) {
-        const ObFTWord &token = iter->first;
-        ObString token_string;
-        if (OB_FAIL(ob_write_string(alloc, token.get_word().get_string(), token_string))) {
-        } else if (OB_FAIL(query_tokens.push_back(token_string))) {
+      const common::ObString ik_name = common::ObString::make_string("ik");
+      const common::ObString ik_ver_name = common::ObString::make_string("ik.1");
+      const common::ObString beng_name = common::ObString::make_string("beng");
+      const common::ObString beng_ver_name = common::ObString::make_string("beng.1");
+      const bool cacheable = !search_text_string.empty() && parser_properties.empty()
+          && (0 == parser_name.case_compare(ik_name)
+              || 0 == parser_name.case_compare(ik_ver_name)
+              || 0 == parser_name.case_compare(beng_name)
+              || 0 == parser_name.case_compare(beng_ver_name));
+      const bool cache_hit = cacheable && query_cache->inited_
+          && query_cache->coll_type_ == meta.get_collation_type()
+          && query_cache->text_ == search_text_string
+          && query_cache->parser_name_ == parser_name
+          && query_cache->properties_ == parser_properties;
+      if (cache_hit) {
+        for (int64_t i = 0; OB_SUCC(ret) && i < query_cache->tokens_.count(); ++i) {
+          ObString token_string;
+          if (OB_FAIL(ob_write_string(alloc, query_cache->tokens_.at(i), token_string))) {
+          } else if (OB_FAIL(query_tokens.push_back(token_string))) {
+          }
+        }
+      } else {
+        int64_t doc_length = 0;
+        storage::ObFTParseHelper tokenize_helper;
+        common::ObSEArray<ObFTWord, 16> tokens;
+        hash::ObHashMap<ObFTWord, int64_t> token_map;
+        const int64_t ft_word_bkt_cnt = MAX(search_text_string.length() / 10, 2);
+        if (OB_FAIL(tokenize_helper.init(&alloc, parser_name, parser_properties))) {
+        } else if (OB_FAIL(token_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
+        } else if (OB_FAIL(tokenize_helper.segment(
+                               meta,
+                               search_text_string.ptr(),
+                               search_text_string.length(),
+                               doc_length,
+                               token_map))) {
+        } else {
+          for (hash::ObHashMap<ObFTWord, int64_t>::const_iterator iter = token_map.begin();
+              OB_SUCC(ret) && iter != token_map.end();
+              ++iter) {
+            const ObFTWord &token = iter->first;
+            ObString token_string;
+            if (OB_FAIL(ob_write_string(alloc, token.get_word().get_string(), token_string))) {
+            } else if (OB_FAIL(query_tokens.push_back(token_string))) {
+            }
+          }
+          if (OB_SUCC(ret) && cacheable) {
+            query_cache->arena_.reset();
+            query_cache->tokens_.reset();
+            query_cache->inited_ = false;
+            if (OB_FAIL(ob_write_string(query_cache->arena_, search_text_string, query_cache->text_))) {
+            } else if (OB_FAIL(ob_write_string(query_cache->arena_, parser_name, query_cache->parser_name_))) {
+            } else if (OB_FAIL(ob_write_string(query_cache->arena_, parser_properties, query_cache->properties_))) {
+            } else {
+              for (int64_t i = 0; OB_SUCC(ret) && i < query_tokens.count(); ++i) {
+                ObString cached_token;
+                if (OB_FAIL(ob_write_string(query_cache->arena_, query_tokens.at(i), cached_token))) {
+                } else if (OB_FAIL(query_cache->tokens_.push_back(cached_token))) {
+                }
+              }
+              if (OB_SUCC(ret)) {
+                query_cache->coll_type_ = meta.get_collation_type();
+                query_cache->inited_ = true;
+              }
+            }
+          }
         }
       }
     }

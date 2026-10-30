@@ -72,6 +72,12 @@ int ObTextTaaTIter::pre_process()
       const int64_t total_doc_cnt = bm25_param_estimator_.get_total_doc_cnt();
       partition_cnt_ = MIN((total_doc_cnt-1) / OB_HASHMAP_DEFAULT_SIZE + 1, OB_MAX_HASHMAP_COUNT);
     }
+    if (OB_SUCC(ret)) {
+      // re-derive on every call: reuse() resets direct_fill_mode_ but the
+      // cached estimate can skip re-estimation above
+      direct_fill_mode_ = bm25_param_estimator_.get_total_doc_cnt()
+          <= OB_TAAT_DIRECT_FILL_DOC_CNT_LIMIT;
+    }
   }
   return ret;
 }

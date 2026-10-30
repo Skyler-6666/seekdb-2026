@@ -48,10 +48,12 @@ protected:
   virtual int load_next_hash_map();
   virtual int project_results(const int64_t safe_capacity, int64_t &count);
   virtual int update_dim_iter(const int64_t dim_idx); // should return OB_ITER_END if no more dimensions
+  int insert_into_hash_map(const common::ObDatum &id_datum, common::ObDatum *relevance_datum);
 protected:
   typedef hash::ObHashMap<ObDocIdExt, double> ObSRTaaTHashMap;
   static const int64_t OB_MAX_HASHMAP_COUNT = 20;
   static const int64_t OB_HASHMAP_DEFAULT_SIZE = 1000;
+  static const int64_t OB_TAAT_DIRECT_FILL_DOC_CNT_LIMIT = 1 << 20;
   ObIAllocator *iter_allocator_;
   ObSparseRetrievalMergeParam *iter_param_;
   ObISparseRetrievalDimIter *dim_iter_;
@@ -66,6 +68,7 @@ protected:
   ObDocIdExt cache_first_id_;
   bool are_chunk_stores_inited_;
   bool are_chunk_stores_filled_;
+  bool direct_fill_mode_;
   void (*set_datum_func_)(ObDatum &, const ObDocIdExt &);
 private:
   DISALLOW_COPY_AND_ASSIGN(ObSRTaaTIterImpl);
