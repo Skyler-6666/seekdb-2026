@@ -55,6 +55,9 @@ public:
   const char *fulltext() const;
   int64_t fulltext_len() const;
   int64_t get_cursor() const;
+  // Per-byte-offset char type recorded by prepare_next_char(); valid for
+  // offsets < get_cursor().
+  const char *char_type_map() const { return char_type_map_; }
 
   bool is_last() const;
   bool iter_end() const;
@@ -77,12 +80,14 @@ private:
   int prepare_next_char();
 
   ObCollationType coll_type_;
+  ObIAllocator &allocator_;
   const char *fulltext_;
   int64_t fulltext_len_;
 
   int64_t cursor_;
   int64_t next_char_len_;
   ObFTCharUtil::CharType next_char_type_;
+  char *char_type_map_;
 
   uint32_t handle_size_;
   bool ascii_compatible_;

@@ -120,6 +120,9 @@ int ObIKArbitrator::output_result(TokenizeContext &ctx)
                                             ctx.fulltext() + current,
                                             ctx.fulltext_len() - current,
                                             char_len))) {
+    } else if (current < ctx.get_cursor() && OB_NOT_NULL(ctx.char_type_map())) {
+      // type already classified while tokenizing this char
+      type = static_cast<ObFTCharUtil::CharType>(ctx.char_type_map()[current]);
     } else if (OB_FAIL(ObFTCharUtil::classify_first_char(ctx.collation(),
                                                          ctx.fulltext() + current,
                                                          char_len,
