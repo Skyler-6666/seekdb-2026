@@ -3,36 +3,39 @@
 
 // CPU shim for the separate HIP translation unit. This checks ownership only.
 int seekdb_cuvs_build_graph(cuvsResources_t res, cuvsCagraIndexParams_t params,
-                           DLManagedTensor* dataset, cuvsCagraIndex_t index,
+                           const float* base, uint32_t rows, unsigned dim,
                            unsigned int** graph)
 {
+  (void)params; (void)base;
   assert(graph != NULL);
   assert(*graph == NULL);
-  if (cuvsRMMAlloc(res, (void**)graph, sizeof(unsigned)*(size_t)dataset->dl_tensor.shape[0]*128) != CUVS_SUCCESS) return 1;
-  return cuvsCagraBuild(res, params, dataset, index);
+  if (cuvsRMMAlloc(res, (void**)graph, sizeof(unsigned)*(size_t)rows*128) != CUVS_SUCCESS) return 1;
+  if (dim != 4 || fail_build) return 1;
+  saved_n = rows; saved_dim = dim;
+  return 0;
 }
 
 int main(void)
 {
-  float base[256 * 4] = {0}, query[8] = {3}, distances[200];
+  float base[512 * 4] = {0}, query[8] = {3}, distances[200];
   unsigned ids[200];
-  assert(seekdb_cuvs_build(base, 256, 0) == NULL);
-  assert(seekdb_cuvs_build(NULL, 256, 4) == NULL);
+  assert(seekdb_cuvs_build(base, 512, 0) == NULL);
+  assert(seekdb_cuvs_build(NULL, 512, 4) == NULL);
   fail_allocation = allocations + 1;
-  assert(seekdb_cuvs_build(base, 256, 4) == NULL && live == 0);
+  assert(seekdb_cuvs_build(base, 512, 4) == NULL && live == 0);
   fail_allocation = 0;
-  fail_allocation = allocations + 2; // graph allocation after the device dataset
-  assert(seekdb_cuvs_build(base, 256, 4) == NULL && live == 0);
+  fail_allocation = allocations + 2; // device dataset after the graph
+  assert(seekdb_cuvs_build(base, 512, 4) == NULL && live == 0);
   fail_allocation = 0;
   fail_copy = copies + 1;
-  assert(seekdb_cuvs_build(base, 256, 4) == NULL && live == 0);
+  assert(seekdb_cuvs_build(base, 512, 4) == NULL && live == 0);
   fail_copy = 0;
   fail_build = 1;
-  assert(seekdb_cuvs_build(base, 256, 4) == NULL && live == 0);
+  assert(seekdb_cuvs_build(base, 512, 4) == NULL && live == 0);
   fail_build = 0;
   const int before_build = allocations;
   const int before_frees = frees;
-  void *h = seekdb_cuvs_build(base, 256, 4);
+  void *h = seekdb_cuvs_build(base, 512, 4);
   assert(h);
   assert(seekdb_cuvs_search(h, query, 1, 10, ids, distances) == 0);
   assert(allocations == before_build + 5 && live == 5 && distances[0] == 3);
@@ -58,7 +61,7 @@ int main(void)
   assert(seekdb_cuvs_search(h, query, 1, 10, ids, distances) == 17);
   fail_copy = 0;
   assert(seekdb_cuvs_search(h, query, 1, 10, ids, distances) == 0);
-  assert(seekdb_cuvs_search(h, query, 1, 257, ids, distances) == 1);
+  assert(seekdb_cuvs_search(h, query, 1, 513, ids, distances) == 1);
   assert(seekdb_cuvs_search(h, query, 0, 10, ids, distances) == 1);
   seekdb_cuvs_free(h);
   assert(live == 0);
@@ -66,8 +69,8 @@ int main(void)
   assert(h && ((sk_cuvs_index*)h)->device_graph == NULL);
   seekdb_cuvs_free(h);
   assert(live == 0);
-  saved_n = 256; saved_dim = 4;
-  h = seekdb_cuvs_deserialize("mock", 256, 4);
+  saved_n = 512; saved_dim = 4;
+  h = seekdb_cuvs_deserialize("mock", 512, 4);
   assert(h && seekdb_cuvs_search(h, query, 1, 100, ids, distances) == 0);
   seekdb_cuvs_free(h);
   assert(live == 0);

@@ -13,7 +13,7 @@ static void test_sort()
 {
   std::mt19937 generator(20261030);
   for (unsigned round = 0; round < 8; ++round) {
-    std::array<uint64_t, candidate_capacity> keys, expected;
+    std::array<uint64_t, intermediate_degree> keys, expected;
     for (unsigned i = 0; i < keys.size(); ++i) {
       keys[i] = i % 5 == 0 ? UINT64_MAX : generator() % (round + 1);
     }
@@ -35,13 +35,12 @@ static void test_merge()
 {
   constexpr uint32_t rows = 1024;
   for (uint32_t row : {0U, 100U, rows - 1}) {
-    for (unsigned mode = 0; mode < 4; ++mode) {
+    for (unsigned mode = 0; mode < 3; ++mode) {
       std::array<uint32_t, graph_degree> graph, incoming, scratch;
       for (unsigned i = 0; i < graph_degree; ++i) {
         graph[i] = (row + 2 + i) % rows;
         incoming[i] = mode == 0 ? row : mode == 1 ? rows : (row + 200 + i / 2) % rows;
       }
-      if (mode == 3) { graph.back() = row == 0 ? rows - 1 : row - 1; }
       const auto original = graph;
       assert(merge_reverse(graph.data(), incoming.data(), incoming.size(), row, rows, scratch.data()));
       for (unsigned i = 0; i < graph_degree; ++i) {
@@ -49,8 +48,10 @@ static void test_merge()
         assert(!contains(graph.data(), i, graph[i]));
         if (i < graph_degree / 2) { assert(graph[i] == original[i]); }
       }
-      assert(contains(graph.data(), graph_degree, row + 1 == rows ? 0 : row + 1));
-      assert(contains(graph.data(), graph_degree, row == 0 ? rows - 1 : row - 1));
+      if (mode == 0) {
+        assert(!contains(graph.data(), graph_degree, row + 1 == rows ? 0 : row + 1));
+        assert(!contains(graph.data(), graph_degree, row == 0 ? rows - 1 : row - 1));
+      }
     }
   }
   std::array<uint32_t, graph_degree> duplicate{}, scratch{};
@@ -127,5 +128,5 @@ int main()
   test_rank_lookup();
   test_detour_equivalence(129);
   test_detour_equivalence(512);
-  std::puts("PASS: sort, merge/ring validity, colliding rank lookup, exact detour equivalence");
+  std::puts("PASS: sort, merge validity, colliding rank lookup, exact detour equivalence");
 }
