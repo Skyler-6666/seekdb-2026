@@ -17,6 +17,9 @@
 #include "storage/fts/dict/ob_ft_range_dict.h"
 #include "share/rc/ob_server_runtime.h"
 
+#include <algorithm>
+#include <cstring>
+
 #include "storage/fts/dict/ob_ik_dic.h"
 #include "lib/allocator/page_arena.h"
 #include "lib/charset/ob_charset.h"
@@ -43,6 +46,19 @@ namespace oceanbase
 {
 namespace storage
 {
+namespace
+{
+// Byte-order compare. For CS_TYPE_UTF8MB4_BIN the collation handler is
+// ob_strnncoll_mb_bin, i.e. plain memcmp plus a length tiebreak, so this is
+// exactly equivalent to ObCharset::strcmp(CS_TYPE_UTF8MB4_BIN, ...) on valid
+// UTF-8 while skipping the collation dispatch.
+int utf8mb4_bin_cmp(const ObString &l_str, const ObString &r_str)
+{
+  const int64_t min_len = std::min(l_str.length(), r_str.length());
+  const int cmp = memcmp(l_str.ptr(), r_str.ptr(), min_len);
+  return 0 == cmp ? (l_str.length() - r_str.length()) : cmp;
+}
+} // namespace
 
 
 int ObFTRangeDict::build_cache_from_ik_dict(const ObFTDictDesc &desc, ObFTCacheRangeContainer &range_container)
@@ -382,17 +398,28 @@ int ObFTRangeDict::find_first_char_range(const ObString &single_word, ObIFTDict 
 {
   int ret = OB_SUCCESS;
   bool found = false;
-  for (int i = 0; OB_SUCC(ret) && !found && i < range_dicts_.size(); ++i) {
-    if (ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                          range_dicts_[i].start_.get_word(),
-                          single_word)
-            <= 0
-        && ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                             range_dicts_[i].end_.get_word(),
-                             single_word)
-               >= 0) {
-      dict = range_dicts_[i].dict_;
+  const int64_t range_cnt = range_dicts_.size();
+  // Probe the most recently used range first: adjacent chars of a text usually
+  // land in the same range, so the common case costs two byte compares instead
+  // of a full scan. A stale hint (dict is shared across threads) is harmless
+  // because the probe result is verified and a miss falls back to the scan.
+  const int64_t hint = range_hint_.load(std::memory_order_relaxed);
+  if (hint >= 0 && hint < range_cnt) {
+    const ObFTRange &range = range_dicts_[hint];
+    if (utf8mb4_bin_cmp(range.start_.get_word(), single_word) <= 0
+        && utf8mb4_bin_cmp(range.end_.get_word(), single_word) >= 0) {
+      dict = range.dict_;
       found = true;
+    }
+  }
+  if (!found) {
+    for (int64_t i = 0; OB_SUCC(ret) && !found && i < range_cnt; ++i) {
+      if (utf8mb4_bin_cmp(range_dicts_[i].start_.get_word(), single_word) <= 0
+          && utf8mb4_bin_cmp(range_dicts_[i].end_.get_word(), single_word) >= 0) {
+        dict = range_dicts_[i].dict_;
+        found = true;
+        range_hint_.store(i, std::memory_order_relaxed);
+      }
     }
   }
   if (!found) {

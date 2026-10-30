@@ -17,6 +17,8 @@
 #ifndef _OCEANBASE_STORAGE_FTS_DICT_OB_FT_RANGE_DICT_H_
 #define _OCEANBASE_STORAGE_FTS_DICT_OB_FT_RANGE_DICT_H_
 
+#include <atomic>
+
 #include "lib/alloc/alloc_struct.h"
 #include "lib/allocator/ob_allocator.h"
 #include "lib/allocator/page_arena.h"
@@ -39,7 +41,7 @@ public:
                 ObFTCacheRangeContainer *range_container,
                 const ObFTDictDesc &desc)
       : is_inited_(false), desc_(desc), range_alloc_(lib::ObMemAttr("Range Dict")),
-        range_dicts_(&range_alloc_), range_container_(range_container)
+        range_dicts_(&range_alloc_), range_container_(range_container), range_hint_(-1)
   {
   }
   ~ObFTRangeDict() override{};
@@ -106,6 +108,9 @@ private:
   ObArenaAllocator range_alloc_;
   ObVector<ObFTRange, ObArenaAllocator> range_dicts_;
   ObFTCacheRangeContainer *range_container_; // only used to read cache
+  // Last-hit range index. The dict is shared process-wide, so this is only a
+  // hint: a stale value merely falls back to the linear scan below.
+  mutable std::atomic<int64_t> range_hint_;
 
 private:
   DISALLOW_COPY_AND_ASSIGN(ObFTRangeDict);
