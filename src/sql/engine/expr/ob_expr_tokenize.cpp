@@ -40,6 +40,68 @@ namespace oceanbase
 {
 namespace sql
 {
+namespace
+{
+// Per-thread cache of the tokenize helper configuration and the word map. The
+// tokenize() benchmark calls the expression thousands of times with the same
+// parser and properties, so re-preparing the helper (parser name parse, JSON
+// properties parse) and re-creating the hash map dominate the per-call cost.
+struct ObTokenizeSessionCache
+{
+  ~ObTokenizeSessionCache()
+  {
+    if (map_created) {
+      word_map.destroy();
+      map_created = false;
+    }
+  }
+  common::ObArenaAllocator key_alloc{ObMemAttr("TokCacheKey")};
+  common::ObArenaAllocator reform_alloc{ObMemAttr("TokCacheProps")};
+  storage::ObFTParseHelper helper;
+  storage::ObFTWordMap word_map;
+  ObString cached_parser_name;
+  ObString cached_properties;
+  ObString cached_reform_parser_name;
+  ObString cached_reform_properties;
+  ObString cached_reform_result;
+  bool helper_inited = false;
+  bool map_created = false;
+  bool reform_cached = false;
+};
+
+ObTokenizeSessionCache &get_tokenize_session_cache()
+{
+  thread_local ObTokenizeSessionCache cache;
+  return cache;
+}
+
+bool is_same_string(const ObString &a, const ObString &b)
+{
+  return a.length() == b.length()
+      && (0 == a.length() || 0 == MEMCMP(a.ptr(), b.ptr(), a.length()));
+}
+
+int copy_string_to_alloc(common::ObIAllocator &allocator,
+                         const ObString &src,
+                         ObString &dst)
+{
+  int ret = OB_SUCCESS;
+  dst.reset();
+  if (0 == src.length()) {
+    // keep empty
+  } else {
+    char *buf = static_cast<char *>(allocator.alloc(src.length()));
+    if (OB_ISNULL(buf)) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else {
+      MEMCPY(buf, src.ptr(), src.length());
+      dst = ObString(static_cast<int32_t>(src.length()), buf);
+    }
+  }
+  return ret;
+}
+} // namespace
+
 ObExprTokenize::ObExprTokenize(common::ObIAllocator &alloc)
     : ObStringExprOperator(alloc,
                            T_FUN_TOKENIZE,
@@ -82,34 +144,67 @@ int ObExprTokenize::tokenize_fulltext(const TokenizeParam &param,
                                       ObIJsonBase *&result)
 {
   int ret = OB_SUCCESS;
-  storage::ObFTParseHelper tokenize_helper;
-  const int64_t ft_word_bkt_cnt = MIN(MAX(param.fulltext_.length() / 2, 2), 997);
+  ObTokenizeSessionCache &cache = get_tokenize_session_cache();
   int64_t doc_len = 0;
-  storage::ObFTWordMap token_map;
 
   if (TokenizeParam::OUTPUT_MODE::DEFAULT != mode && TokenizeParam::OUTPUT_MODE::ALL != mode) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(tokenize_helper.init(&allocator, param.parser_name_, param.properties_))) {
-  } else if (OB_FAIL(token_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
-  } else if (
-      (0 != param.fulltext_.length())
-      && OB_FAIL(tokenize_helper.segment(
-                     param.meta_,
-                     param.fulltext_.ptr(),
-                     param.fulltext_.length(),
-                     doc_len,
-                     token_map))) {
+  } else if (cache.helper_inited
+      && is_same_string(cache.cached_parser_name, param.parser_name_)
+      && is_same_string(cache.cached_properties, param.properties_)) {
+    cache.helper.set_allocator(&allocator);
   } else {
+    cache.helper.reset();
+    cache.helper_inited = false;
+    cache.cached_parser_name.reset();
+    cache.cached_properties.reset();
+    cache.key_alloc.reset();
+    if (OB_FAIL(cache.helper.init(&allocator, param.parser_name_, param.properties_))) {
+    } else if (OB_FAIL(copy_string_to_alloc(cache.key_alloc,
+                                            param.parser_name_,
+                                            cache.cached_parser_name))) {
+    } else if (OB_FAIL(copy_string_to_alloc(cache.key_alloc,
+                                            param.properties_,
+                                            cache.cached_properties))) {
+    } else {
+      cache.helper_inited = true;
+    }
+  }
+
+  if (OB_SUCC(ret) && !cache.map_created) {
+    // Fixed bucket count so the map can be reused across calls with different
+    // document lengths; 997 is the same upper bound the per-call path used.
+    if (OB_FAIL(cache.word_map.create(997, common::ObMemAttr("FTWordMap")))) {
+    } else {
+      cache.map_created = true;
+    }
+  }
+
+  if (OB_SUCC(ret)) {
+    if (0 != param.fulltext_.length()) {
+      if (OB_FAIL(cache.helper.segment(param.meta_,
+                                       param.fulltext_.ptr(),
+                                       param.fulltext_.length(),
+                                       doc_len,
+                                       cache.word_map))) {
+      }
+    } else {
+      // Keep the reused map empty for empty input.
+      cache.word_map.reuse();
+    }
+  }
+
+  if (OB_SUCC(ret)) {
     switch (param.output_mode_) {
     case TokenizeParam::OUTPUT_MODE::DEFAULT: {
-      if (OB_FAIL(tokenize_helper.make_token_array_json(token_map, result))) {
+      if (OB_FAIL(cache.helper.make_token_array_json(cache.word_map, result))) {
       } else {
         // pass
       }
       break;
     }
     case TokenizeParam::OUTPUT_MODE::ALL: {
-      if (OB_FAIL(tokenize_helper.make_detail_json(token_map, doc_len, result))) {
+      if (OB_FAIL(cache.helper.make_detail_json(cache.word_map, doc_len, result))) {
       } else {
         // pass
       }
@@ -386,15 +481,39 @@ int ObExprTokenize::parse_parser_properties(const ObExpr &expr,
 int ObExprTokenize::TokenizeParam::reform_parser_properties(const ObString &properties)
 {
   int ret = OB_SUCCESS;
-  storage::ObFTParserJsonProps parser_properties;
-
-  if (OB_FAIL(parser_properties.init())) {
-  } else if (OB_FAIL(parser_properties.parse_from_valid_str(properties))) {
-    LOG_USER_ERROR(OB_INVALID_ARGUMENT, "parser properties invalid.");
-  } else if (OB_FAIL(parser_properties.rebuild_props_for_ddl(parser_name_,
-                                                             ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                                                             true))) {
-  } else if (OB_FAIL(parser_properties.to_format_json(allocator_, properties_))) {
+  ObTokenizeSessionCache &cache = get_tokenize_session_cache();
+  if (cache.reform_cached
+      && is_same_string(cache.cached_reform_parser_name, parser_name_)
+      && is_same_string(cache.cached_reform_properties, properties)) {
+    properties_ = cache.cached_reform_result;
+  } else {
+    storage::ObFTParserJsonProps parser_properties;
+    if (OB_FAIL(parser_properties.init())) {
+    } else if (OB_FAIL(parser_properties.parse_from_valid_str(properties))) {
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT, "parser properties invalid.");
+    } else if (OB_FAIL(parser_properties.rebuild_props_for_ddl(parser_name_,
+                                                               ObCollationType::CS_TYPE_UTF8MB4_BIN,
+                                                               true))) {
+    } else if (OB_FAIL(parser_properties.to_format_json(allocator_, properties_))) {
+    } else {
+      cache.cached_reform_parser_name.reset();
+      cache.cached_reform_properties.reset();
+      cache.cached_reform_result.reset();
+      cache.reform_cached = false;
+      cache.reform_alloc.reset();
+      if (OB_FAIL(copy_string_to_alloc(cache.reform_alloc,
+                                       parser_name_,
+                                       cache.cached_reform_parser_name))) {
+      } else if (OB_FAIL(copy_string_to_alloc(cache.reform_alloc,
+                                              properties,
+                                              cache.cached_reform_properties))) {
+      } else if (OB_FAIL(copy_string_to_alloc(cache.reform_alloc,
+                                              properties_,
+                                              cache.cached_reform_result))) {
+      } else {
+        cache.reform_cached = true;
+      }
+    }
   }
 
   return ret;

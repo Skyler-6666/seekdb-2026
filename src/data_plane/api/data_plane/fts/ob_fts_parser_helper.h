@@ -180,6 +180,9 @@ public:
       const common::ObString &parser_name,
       const common::ObString &parser_properties,
       bool &is_same) const;
+  // Reuse an already-inited helper with a different per-call allocator. The
+  // parser configuration is unchanged.
+  void set_allocator(common::ObIAllocator *allocator) { allocator_ = allocator; }
   /**
    * Make json document for fulltext search
    *
