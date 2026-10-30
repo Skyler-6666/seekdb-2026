@@ -25,6 +25,7 @@
 #include "data_plane/fts/ob_fts_parser_helper.h"
 #include "share/schema/ob_multi_version_schema_service.h"
 #include "share/schema/ob_schema_utils.h"
+#include "lib/cpu/ob_cpu_topology.h"
 
 namespace oceanbase
 {
