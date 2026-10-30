@@ -1,0 +1,63 @@
+=== heartbeat 2026-10-30 00:44:18 run=12 sha=e9f782d2466fce68146a71895fd1a6243c92dd43 job=verify tag=after-free-disk ===
+--- uptime ---
+ 00:44:18 up 5 min,  0 users,  load average: 0.99, 0.45, 0.17
+--- nproc ---
+4
+--- free -m ---
+               total        used        free      shared  buff/cache   available
+Mem:           15988         568       11699          45        3720       15027
+Swap:           4095           0        4095
+--- df ---
+Filesystem                   Size  Used Avail Use% Mounted on
+/dev/root                    146G  130G   16G  90% /
+/dev/mapper/buildvg-buildlv   98G  425M   97G   1% /home/runner/work/seekdb-2026/seekdb-2026
+--- top mem ---
+    PID   RSS COMMAND
+   1667 143380 provjobd1325211
+   1806 131864 Runner.Worker
+   1786 97260 Runner.Listener
+    787 72712 dockerd
+    601 49892 php-fpm8.1
+    201 44244 multipathd
+    620 43640 snapd
+    633 43060 containerd
+    836 42692 mono
+   1236 32900 python3
+    632 28136 python3
+--- dmesg tail ---
+--- log tail: root_disk.txt ---
+=== before ===
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root       146G  144G  1.6G  99% /
+=== deleted-but-open files (space held by daemons) ===
+COMMAND    PID     USER   FD   TYPE DEVICE      SIZE/OFF NLINK  NODE NAME
+php-fpm8.  601     root    4u   REG  259,1             0     0 20220 /tmp/.ZendSem.2AQfYF (deleted)
+php-fpm8. 1032 www-data    4u   REG  259,1             0     0 20220 /tmp/.ZendSem.2AQfYF (deleted)
+php-fpm8. 1041 www-data    4u   REG  259,1             0     0 20220 /tmp/.ZendSem.2AQfYF (deleted)
+provjobd1 1667     root  txt    REG  259,1      49197180     0 85347 /tmp/provjobd1325211147 (deleted)
+Runner.Li 1786   runner    8u   REG    0,1 2199023255552     0  2057 /memfd:doublemapper (deleted)
+Runner.Wo 1806   runner    8u   REG    0,1 2199023255552     0  3077 /memfd:doublemapper (deleted)
+=== cleanup ===
+removed /usr/share/swift
+removed /opt/az
+removed /opt/microsoft
+removed /opt/pipx
+removed /opt/pipx_bin
+removed /usr/local/.ghcup
+removed /imagegeneration
+removed /usr/local/share/powershell
+removed /opt/hostedtoolcache/CodeQL
+removed /usr/share/miniconda
+removed /usr/local/lib/node_modules
+removed /usr/lib/mono
+Total reclaimed space: 0B
+=== after ===
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/root       146G  130G   16G  90% /
+=== du breakdown (post-cleanup, top 12) ===
+5.8G	/opt
+2.4G	/home
+1.7G	/usr/share
+1.1G	/var/lib
+79M	/root
+24K	/snap
