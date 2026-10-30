@@ -17,14 +17,21 @@
 #ifndef _OCEANBASE_STORAGE_FTS_DICT_OB_FT_DICT_HUB_H_
 #define _OCEANBASE_STORAGE_FTS_DICT_OB_FT_DICT_HUB_H_
 
+#include "lib/allocator/page_arena.h"
 #include "lib/charset/ob_charset.h"
 #include "lib/lock/ob_bucket_lock.h"
+#include "lib/lock/ob_mutex.h"
 #include "storage/fts/dict/ob_ft_dict_def.h"
+
+#include <atomic>
 
 namespace oceanbase
 {
 namespace storage
 {
+
+class ObFTRangeDict;
+class ObFTCacheRangeContainer;
 // typedef uint64_t ObFTTableID;
 // typedef ObFTTableID ObFTDictTableID;
 
@@ -96,7 +103,10 @@ class ObFTCacheRangeContainer;
 class ObFTDictHub
 {
 public:
-  ObFTDictHub() : is_inited_(false), dict_map_(), rw_dict_lock_() {}
+  // dict types with process-lifetime shared wrappers, indexed by type - 1
+  static constexpr int64_t SHARED_DICT_COUNT = 3;
+
+  ObFTDictHub() : is_inited_(false), dict_map_(), rw_dict_lock_(), shared_alloc_("FtSharedDict") {}
   ~ObFTDictHub() {}
 
   int init();
@@ -107,17 +117,32 @@ public:
 
   int load_cache(const ObFTDictDesc &desc, ObFTCacheRangeContainer &container);
 
+  // Get a process-lifetime, immutable ObFTRangeDict built from the cached DAT blocks.
+  // The dict is read-only after construction, so it is safe to share across
+  // parsers/threads. The range dicts are built once per built-in dict type.
+  int get_shared_range_dict(const ObFTDictDesc &desc, ObFTRangeDict *&dict);
+
 private:
   int get_dict_info(const ObFTDictInfoKey &key, ObFTDictInfo &info);
 
   int put_dict_info(const ObFTDictInfoKey &key, const ObFTDictInfo &info);
 
+  struct ObFTSharedDictEntry
+  {
+    ObFTSharedDictEntry() : dict_(nullptr), container_(nullptr), lock_() {}
+    std::atomic<ObFTRangeDict *> dict_;
+    ObFTCacheRangeContainer *container_;
+    lib::ObMutex lock_;
+  };
 
 private:
   bool is_inited_;
   // holds info of dict
   hash::ObHashMap<ObFTDictInfoKey, ObFTDictInfo> dict_map_;
   ObBucketLock rw_dict_lock_;
+  // process-lifetime shared range dicts for the built-in IK dicts
+  ObArenaAllocator shared_alloc_;
+  ObFTSharedDictEntry shared_dicts_[SHARED_DICT_COUNT];
 };
 
 } //  namespace storage

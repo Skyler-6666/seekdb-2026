@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - competition/fts-fulltext-opt
+      - competition/fts-perf-v2
 
 permissions:
   contents: write
@@ -116,6 +117,20 @@ jobs:
             "$GITHUB_WORKSPACE/fts_large_bench_report.txt" \
             | tee "$GITHUB_WORKSPACE/fts_large_bench_score.txt"
 
+      - name: Run FTS tokenize micro-benchmark (diagnostic)
+        if: always()
+        run: |
+          if [ ! -f "$GITHUB_WORKSPACE/fts_large_bench_report.txt" ]; then
+            echo "official benchmark did not finish; skip diagnostics"
+            exit 0
+          fi
+          CLIENT_ROOT="$PWD/deps/3rd/u01/obclient"
+          export PATH="$CLIENT_ROOT/bin:$PATH"
+          export LD_LIBRARY_PATH="$CLIENT_ROOT/lib:$CLIENT_ROOT/lib64:${LD_LIBRARY_PATH:-}"
+          export MYSQL="$CLIENT_ROOT/bin/obclient -h127.0.0.1 -P2881 -uroot -N -s --default-character-set=utf8mb4"
+          OUTPUT="$GITHUB_WORKSPACE/fts_diag_report.txt" \
+            bash tools/benchmark/fts_diag_bench.sh
+
       - name: Publish benchmark results to job summary
         if: always()
         run: |
@@ -124,6 +139,9 @@ jobs:
           fi
           if [ -f "$GITHUB_WORKSPACE/fts_large_bench_report.txt" ]; then
             { echo '## Benchmark report'; cat "$GITHUB_WORKSPACE/fts_large_bench_report.txt"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f "$GITHUB_WORKSPACE/fts_diag_report.txt" ]; then
+            { echo '## Tokenize micro-benchmark (diagnostic)'; cat "$GITHUB_WORKSPACE/fts_diag_report.txt"; } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Stop benchmark instance
@@ -142,6 +160,7 @@ jobs:
           path: |
             fts_large_bench_report.txt
             fts_large_bench_score.txt
+            fts_diag_report.txt
             .seekdb_fts_test/work/failures/
             .seekdb_fts_test/instance/log/
             .seekdb_fts_bench/log/
@@ -175,7 +194,7 @@ jobs:
             mkdir -p fts-ci-results/instance-log
             find .seekdb_fts_test/instance -maxdepth 1 -type f \( -name 'seekdb.log*' -o -name '*.log' \) -size -20M -exec cp {} fts-ci-results/instance-log/ \;
           fi
-          for f in fts_large_bench_score.txt fts_large_bench_report.txt; do
+          for f in fts_large_bench_score.txt fts_large_bench_report.txt fts_diag_report.txt; do
             if [ -f "$f" ]; then cp "$f" fts-ci-results/; fi
           done
           git add -f fts-ci-results >/dev/null 2>&1

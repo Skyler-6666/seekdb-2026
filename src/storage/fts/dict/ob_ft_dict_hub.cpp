@@ -44,8 +44,83 @@ int ObFTDictHub::destroy()
 {
   int ret = OB_SUCCESS;
   is_inited_ = false;
+  for (int64_t i = 0; i < SHARED_DICT_COUNT; ++i) {
+    ObFTSharedDictEntry &entry = shared_dicts_[i];
+    ObFTRangeDict *dict = entry.dict_.load(std::memory_order_acquire);
+    if (OB_NOT_NULL(dict)) {
+      entry.dict_.store(nullptr, std::memory_order_release);
+      dict->~ObFTRangeDict();
+      shared_alloc_.free(dict);
+    }
+    if (OB_NOT_NULL(entry.container_)) {
+      entry.container_->~ObFTCacheRangeContainer();
+      shared_alloc_.free(entry.container_);
+      entry.container_ = nullptr;
+    }
+  }
+  shared_alloc_.reset();
   return ret;
 }
+
+int ObFTDictHub::get_shared_range_dict(const ObFTDictDesc &desc, ObFTRangeDict *&dict)
+{
+  int ret = OB_SUCCESS;
+  dict = nullptr;
+  const int64_t idx = static_cast<int64_t>(desc.type_) - 1;
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = OB_NOT_INIT;
+  } else if (OB_UNLIKELY(idx < 0 || idx >= SHARED_DICT_COUNT)) {
+    ret = OB_NOT_SUPPORTED;
+  } else {
+    ObFTSharedDictEntry &entry = shared_dicts_[idx];
+    dict = entry.dict_.load(std::memory_order_acquire);
+    if (OB_ISNULL(dict)) {
+      lib::ObMutexGuard guard(entry.lock_);
+      dict = entry.dict_.load(std::memory_order_acquire);
+      if (OB_ISNULL(dict)) {
+        ObFTCacheRangeContainer *container = nullptr;
+        ObFTRangeDict *range_dict = nullptr;
+        if (OB_ISNULL(container = OB_NEWx(ObFTCacheRangeContainer, &shared_alloc_, shared_alloc_))) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else {
+          int tmp_ret = load_cache(desc, *container);
+          if (OB_SUCCESS == tmp_ret) {
+            // cache already registered by a previous build
+          } else if (OB_ENTRY_NOT_EXIST == tmp_ret) {
+            // dict info not registered yet, build from embedded dict text
+            ret = build_cache(desc, *container);
+          } else {
+            ret = tmp_ret;
+          }
+        }
+        if (OB_SUCC(ret)) {
+          if (OB_ISNULL(range_dict = OB_NEWx(ObFTRangeDict, &shared_alloc_, container, desc))) {
+            ret = OB_ALLOCATE_MEMORY_FAILED;
+          } else if (OB_FAIL(range_dict->init())) {
+          } else {
+            entry.container_ = container;
+            entry.dict_.store(range_dict, std::memory_order_release);
+            dict = range_dict;
+            container = nullptr;
+            range_dict = nullptr;
+          }
+        }
+        if (OB_FAIL(ret)) {
+          if (OB_NOT_NULL(range_dict)) {
+            range_dict->~ObFTRangeDict();
+            shared_alloc_.free(range_dict);
+          }
+          if (OB_NOT_NULL(container)) {
+            container->~ObFTCacheRangeContainer();
+            shared_alloc_.free(container);
+          }
+        }
+      }
+    }
+  }
+  return ret;
+}
+
 int ObFTDictHub::build_cache(const ObFTDictDesc &desc, ObFTCacheRangeContainer &container)
 {
   int ret = OB_SUCCESS;

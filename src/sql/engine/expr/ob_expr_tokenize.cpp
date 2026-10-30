@@ -23,6 +23,7 @@
 #include "common/json_type/ob_json_tree.h"
 #include "lib/ob_errno.h"
 #include "lib/oblog/ob_log_module.h"
+#include "lib/lock/ob_mutex.h"
 #include "lib/string/ob_string.h"
 #include "lib/utility/ob_macro_utils.h"
 #include "object/ob_object.h"
@@ -222,14 +223,25 @@ int ObExprTokenize::construct_ft_parser_inner_name(const ObString &input_str, To
   int ret = OB_SUCCESS;
   storage::ObFTParser parser;
 
-  char *parser_name_buf = nullptr;
-  if (OB_ISNULL(parser_name_buf
-                = static_cast<char *>(param.allocator_.alloc(storage::OB_FT_PARSER_NAME_LENGTH)))) {
-    ret = OB_ALLOCATE_MEMORY_FAILED;
-  } else if (OB_FAIL(parser.init(input_str))) {
-  } else if (OB_FAIL(parser.serialize_to_str(parser_name_buf, storage::OB_FT_PARSER_NAME_LENGTH))) {
+  // built-in parsers always serialize to a fixed "name.1" cstring; point the
+  // param at a static copy instead of allocating and serializing on every call.
+  const char *serialized_name = nullptr;
+  if (OB_FAIL(parser.init(input_str))) {
+  } else if (parser.is_space()) {
+    serialized_name = "space.1";
+  } else if (parser.is_ngram()) {
+    serialized_name = "ngram.1";
+  } else if (parser.is_beng()) {
+    serialized_name = "beng.1";
+  } else if (parser.is_ik()) {
+    serialized_name = "ik.1";
+  } else if (parser.is_ngram2()) {
+    serialized_name = "ngram2.1";
   } else {
-    param.parser_name_ = ObString::make_string(parser_name_buf);
+    ret = OB_ERR_UNEXPECTED;
+  }
+  if (OB_SUCC(ret)) {
+    param.parser_name_ = ObString::make_string(serialized_name);
   }
   return ret;
 }
@@ -392,17 +404,33 @@ int ObExprTokenize::TokenizeParam::try_load_dictionary_for_ik()
 {
   int ret = OB_SUCCESS;
   bool need_to_load_dic = false;
-  storage::ObDicLoaderHandle dic_loader_handle;
   if (OB_FAIL(share::ObFtsIndexBuilderUtil::check_need_to_load_dic(
           parser_name_, need_to_load_dic))) {
   } else if (need_to_load_dic) {
-    if (OB_FAIL(storage::ObGenDicLoader::get_instance().get_dic_loader(
-                    ObString::make_string(storage::ObFTSLiteral::PARSER_NAME_IK), // currently only ik, use parser_name_ without version suffix
-                    ObCharset::charset_type_by_coll(meta_.get_collation_type()),
-                    dic_loader_handle))) {
-    } else if (OB_UNLIKELY(!dic_loader_handle.is_valid())) {
-      ret = OB_ERR_UNEXPECTED;
-    } else if (OB_FAIL(dic_loader_handle.get_loader()->try_load_dictionary_in_trans())) {
+    // the loader for the built-in ik dict is process-lifetime; cache the handle
+    // to avoid the loader-map write lock and refcount churn on every call
+    static lib::ObMutex loader_cache_lock;
+    static ObCharsetType cached_charset = ObCharsetType::CHARSET_INVALID;
+    static storage::ObDicLoaderHandle cached_handle;
+
+    const ObCharsetType charset = ObCharset::charset_type_by_coll(meta_.get_collation_type());
+    if (ObCharsetType::CHARSET_INVALID == charset) {
+      ret = OB_INVALID_ARGUMENT;
+    } else if (cached_charset != charset || !cached_handle.is_valid()) {
+      lib::ObMutexGuard guard(loader_cache_lock);
+      if (cached_charset != charset || !cached_handle.is_valid()) {
+        if (OB_FAIL(storage::ObGenDicLoader::get_instance().get_dic_loader(
+                ObString::make_string(storage::ObFTSLiteral::PARSER_NAME_IK), // currently only ik, use parser_name_ without version suffix
+                charset,
+                cached_handle))) {
+        } else if (OB_UNLIKELY(!cached_handle.is_valid())) {
+          ret = OB_ERR_UNEXPECTED;
+        } else {
+          cached_charset = charset;
+        }
+      }
+    }
+    if (OB_SUCC(ret) && OB_FAIL(cached_handle.get_loader()->try_load_dictionary_in_trans())) {
     }
   }
   return ret;
