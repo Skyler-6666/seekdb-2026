@@ -6,6 +6,7 @@ on:
     branches:
       - competition/fts-fulltext-opt
       - competition/fts-perf-v2
+      - competition/fts-diag
 
 permissions:
   contents: write
@@ -39,7 +40,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update
           sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential \
-            binutils m4 libtool-bin libncurses-dev python3 python3-pip unzip ccache
+            binutils m4 libtool-bin libncurses-dev python3 python3-pip unzip ccache gdb
           python3 -m pip install --user pymysql
 
       - name: Restore compiler cache
@@ -133,6 +134,22 @@ jobs:
           OUTPUT="$GITHUB_WORKSPACE/fts_diag_report.txt" \
             bash tools/benchmark/fts_diag_bench.sh
 
+      - name: Run FTS query/build diagnostics
+        if: always()
+        run: |
+          if [ ! -f "$GITHUB_WORKSPACE/fts_large_bench_report.txt" ]; then
+            echo "official benchmark did not finish; skip query diagnostics"
+            exit 0
+          fi
+          CLIENT_ROOT="$PWD/deps/3rd/u01/obclient"
+          export PATH="$CLIENT_ROOT/bin:$PATH"
+          export LD_LIBRARY_PATH="$CLIENT_ROOT/lib:$CLIENT_ROOT/lib64:${LD_LIBRARY_PATH:-}"
+          export MYSQL="$CLIENT_ROOT/bin/obclient -h127.0.0.1 -P2881 -uroot -N -s --default-character-set=utf8mb4"
+          export MYSQL_VERBOSE="$CLIENT_ROOT/bin/obclient -h127.0.0.1 -P2881 -uroot --default-character-set=utf8mb4"
+          sudo sysctl -w kernel.yama.ptrace_scope=0 || true
+          OUTPUT="$GITHUB_WORKSPACE/fts_diag_report.txt" \
+            bash tools/benchmark/fts_query_diag.sh
+
       - name: Publish benchmark results to job summary
         if: always()
         run: |
@@ -176,7 +193,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           git config user.name "seekdb-ci"
           git config user.email "seekdb-ci@users.noreply.github.com"
-          RESBRANCH="fts-ci-results"
+          RESBRANCH="fts-ci-results-diag"
           git checkout --orphan "$RESBRANCH" >/dev/null 2>&1
           rm -rf fts-ci-results
           mkdir -p fts-ci-results

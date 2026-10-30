@@ -178,7 +178,11 @@ int ObTransformPreProcess::transform_one_stmt(common::ObIArray<ObParentDMLStmt> 
       }
     }
     if (OB_SUCC(ret)) {
-      if (stmt->get_match_exprs().count() > 0 &&
+      // relevance order is unobservable inside derived tables / subqueries;
+      // skipping the default MATCH order there avoids full BM25 + sort
+      if (!parent_stmts.empty()) {
+        // do nothing
+      } else if (stmt->get_match_exprs().count() > 0 &&
           OB_FAIL(preserve_order_for_fulltext_search(stmt, is_happened))) {
       } else {
         trans_happened |= is_happened;
