@@ -1694,7 +1694,7 @@ static int32_t gpu_hnsw_build_algo()
 
 static int64_t gpu_hnsw_max_bytes()
 {
-  static const int64_t max_bytes = []() {
+  static const int64_t max_bytes = []() -> int64_t {
     const char *value = getenv("OB_GPU_HNSW_MAX_BYTES");
     if (value == nullptr || value[0] == '\0') {
       return 4LL * 1024 * 1024 * 1024;
