@@ -53,7 +53,7 @@ touch "$output"
             arguments = capture.read_text().splitlines()
             self.assertEqual(1, arguments.count("--offload-arch=gfx1100"))
             self.assertTrue(any(arg.endswith("/seekdb_cuvs_bridge.c") for arg in arguments))
-            self.assertTrue(any(arg.endswith("/seekdb_cuvs_graph.hip") for arg in arguments))
+            self.assertFalse(any(arg.endswith("/seekdb_cuvs_graph.hip") for arg in arguments))
 
 
 if __name__ == "__main__":

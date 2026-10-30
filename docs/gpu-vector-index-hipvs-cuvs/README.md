@@ -7,8 +7,8 @@ scope, comparison baselines, and remaining full-server validation requirements.
 
 The V5-based optimization candidate and its current verification limits are
 documented in [BUILD_REPORT.md](BUILD_REPORT.md) and [V5_READINESS.md](V5_READINESS.md).
-GPU NN-Descent screening results are documented in
-[NN_DESCENT_RESULTS.md](NN_DESCENT_RESULTS.md).
+GPU bounded-graph screening results are documented in
+[BOUNDED_GRAPH_RESULTS.md](BOUNDED_GRAPH_RESULTS.md).
 
 Status: **Phase 1 implemented and review-gated** on AMD `gfx1100` with ROCm
 7.2.4. This directory documents the current integration and its reproducible
