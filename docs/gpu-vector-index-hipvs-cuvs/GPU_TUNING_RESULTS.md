@@ -128,3 +128,14 @@ GPU[0] at 0000:43:00.0, 28028928 VRAM bytes used, cgroup memory.current
 library was absent. This establishes changed environment state, not the cause
 of the prior failure; zero current OOM counters cannot diagnose a previous
 environment. Recovery now rebuilds pinned inputs and selects the current bus.
+
+## Platform execution failure reported
+
+After preparing the selected candidate, the user reported a contest execution
+failure. Only generic failure text was available; the checked-out commit and
+failure stage are unconfirmed. This supersedes any interpretation that the
+bridge diagnostic established full contest executability. The build now pins
+gfx1100 instead of depending on compiler-host GPU discovery. See
+`EXECUTION_FAILURE_FOLLOWUP.md` for the review, narrow regression evidence, and
+remaining full-server validation requirements. The actual failure cause is
+still unknown.
