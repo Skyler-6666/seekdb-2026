@@ -51,8 +51,8 @@ TokenizeContext::TokenizeContext(ObCollationType coll_type,
                                  const char *fulltext,
                                  int64_t fulltext_len,
                                  bool is_smart)
-    : coll_type_(coll_type), allocator_(allocator), fulltext_(fulltext), fulltext_len_(fulltext_len),
-      cursor_(0), next_char_len_(0), char_type_map_(nullptr), handle_size_(0),
+    : coll_type_(coll_type), fulltext_(fulltext), fulltext_len_(fulltext_len), cursor_(0),
+      next_char_len_(0), handle_size_(0),
       ascii_compatible_(ObCharset::charset_type_by_coll(coll_type) == CHARSET_UTF8MB4),
       is_smart_(is_smart), token_list_(allocator),
       result_list_(allocator)
@@ -65,8 +65,6 @@ int TokenizeContext::init()
 
   if (OB_ISNULL(fulltext_) || fulltext_len_ <= 0) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_ISNULL(char_type_map_ = static_cast<char *>(allocator_.alloc(fulltext_len_)))) {
-    ret = OB_ALLOCATE_MEMORY_FAILED;
   } else if (OB_FAIL(prepare_next_char())) {
   }
   return ret;
@@ -119,8 +117,6 @@ int TokenizeContext::prepare_next_char()
                                                    fulltext_ + cursor_,
                                                    next_char_len_,
                                                    next_char_type_))) {
-  } else if (OB_SUCC(ret)) {
-    char_type_map_[cursor_] = static_cast<char>(next_char_type_);
   }
   return ret;
 }
