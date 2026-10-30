@@ -975,7 +975,7 @@ grouped_unity_cc_library(
     name = "_oblib_vector_impl",
     unity_groups = select_unity_groups(
         OBLIB_UNITY_GROUPS["src/oblib/lib:oblib_lib"],
-        ["oblib_lib_ob_vector_util_0"],
+        ["oblib_lib_ob_hnsw_serial_format_0", "oblib_lib_ob_vector_util_0"],
     ),
     implementation_deps = [
         ":_oblib_implementation_headers",
