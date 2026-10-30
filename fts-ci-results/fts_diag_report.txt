@@ -1,0 +1,28 @@
+========================================
+FTS Tokenize Micro-benchmark (diagnostic)
+========================================
+rounds:                 2000
+samples:                3
+warmup:                 30
+----------------------------------------
+diag_select1_avg_ms:0.0740
+diag_select1_stdev_ms:0.0028
+diag_tok_ik_1char_avg_ms:0.1087
+diag_tok_ik_1char_stdev_ms:0.0031
+diag_tok_ik_2char_avg_ms:0.1098
+diag_tok_ik_2char_stdev_ms:0.0026
+diag_tok_beng_1char_avg_ms:0.1020
+diag_tok_beng_1char_stdev_ms:0.0013
+diag_tok_space_full_avg_ms:0.1136
+diag_tok_space_full_stdev_ms:0.0011
+diag_tok_ngram_full_avg_ms:0.1416
+diag_tok_ngram_full_stdev_ms:0.0048
+diag_tok_ik_full_avg_ms:0.1533
+diag_tok_ik_full_stdev_ms:0.0022
+----------------------------------------
+decompose (avg - select1):
+  ik fixed (1char):      see tok_ik_1char - select1
+  beng fixed (1char):    see tok_beng_1char - select1
+  space full:            SQL+map+json with trivial parser core
+  ngram full:            parser core without dict lookups
+========================================

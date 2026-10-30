@@ -1,0 +1,193 @@
+# Verify the file-as-database (file_sql) implementation: compile the sql
+# modules with Bazel, produce the seekdb binary with the CMake toolchain,
+# and run the file_sql mysqltest cases against it.
+name: file_sql build and test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - competition/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  SEEKDB_CCACHE_MAX_SIZE: 4G
+  # rustup would otherwise install to ~/.rustup on the (full) root fs
+  RUSTUP_HOME: ${{ github.workspace }}/.rustup
+  CARGO_HOME: ${{ github.workspace }}/.cargo
+
+jobs:
+  # Fast compile sanity of the sql side with the Bazel module targets.
+  modules:
+    timeout-minutes: 240
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses-dev python3 unzip
+
+      - name: Install Bazel 8.2.1
+        run: |
+          sudo curl -sSL -o /usr/local/bin/bazel https://github.com/bazelbuild/bazel/releases/download/8.2.1/bazel-8.2.1-linux-x86_64
+          sudo chmod +x /usr/local/bin/bazel
+          bazel --version
+
+      - name: Prepare project dependencies
+        run: bash build.sh release --init
+
+      - name: Trim dependency archives
+        run: rm -rf deps/3rd/pkg/*.rpm || true
+
+      - name: Build share_runtime
+        run: bazel build //src/share:share_runtime
+
+      - name: Build sql_runtime
+        run: bazel build //src/sql:sql_runtime
+
+  # Produce the seekdb binary with the CMake toolchain (ccache is persisted
+  # so the test job below can warm up quickly).
+  build:
+    timeout-minutes: 360
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses-dev python3 unzip ccache
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-seekdb-${{ github.run_number }}
+          restore-keys: |
+            ccache-seekdb-
+
+      - name: Trim restored ccache
+        run: ccache -M 4G && ccache -c || true
+
+      - name: Compile seekdb
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          SEEKDB_TASK_DIR: ${{ github.workspace }}/seekdb_build
+          MAKE_ARGS: -j2
+        run: .github/script/seekdb/compile.sh
+
+      - name: Dump parser diagnostics on failure
+        if: failure()
+        run: |
+          echo "=== _gen_parser.error ==="
+          cat src/sql/parser/_gen_parser.error 2>/dev/null || true
+          echo "=== _gen_parser.output (tail) ==="
+          tail -50 src/sql/parser/_gen_parser.output 2>/dev/null || true
+
+      - name: Verify artifacts
+        run: |
+          test -x build_release/src/observer/seekdb
+          test -x deps/3rd/u01/obclient/bin/obclient
+          test -x deps/3rd/u01/obclient/bin/mysqltest
+          build_release/src/observer/seekdb --help >/dev/null 2>&1 || true
+          echo "seekdb binary: $(stat -c%s build_release/src/observer/seekdb) bytes"
+
+  # Run only the file_sql mysqltest cases against a local instance. The
+  # fixture include copies test data over ssh to 127.0.0.1, so a local
+  # sshd with key auth must be running.
+  test:
+    needs: build
+    timeout-minutes: 360
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses-dev python3 unzip ccache openssh-server
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-seekdb-${{ github.run_number }}
+          restore-keys: |
+            ccache-seekdb-
+
+      - name: Trim restored ccache
+        run: ccache -M 4G && ccache -c || true
+
+      - name: Compile seekdb (ccache warm)
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+          SEEKDB_TASK_DIR: ${{ github.workspace }}/seekdb_build
+          MAKE_ARGS: -j4
+        run: .github/script/seekdb/compile.sh
+
+      - name: Start local sshd with key auth
+        run: |
+          sudo mkdir -p /run/sshd
+          sudo service ssh start
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N '' -q
+          cat ~/.ssh/id_ed25519.pub > ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          ssh-keyscan -H 127.0.0.1 >> ~/.ssh/known_hosts
+          ssh -o BatchMode=yes -o ConnectTimeout=10 127.0.0.1 'echo sshd-ok'
+
+      - name: Run file_sql mysqltest cases
+        run: python3 .github/script/seekdb/run_file_sql_cases.py
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: file-sql-failures
+          path: |
+            .seekdb_test/work/failures/
+            .seekdb_test/instance/log/
+          if-no-files-found: ignore
+          retention-days: 7
