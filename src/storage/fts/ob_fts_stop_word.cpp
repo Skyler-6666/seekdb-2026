@@ -177,21 +177,11 @@ int ObAddWord::casedown_word(const ObFTWord &src, ObFTWord &dst)
   } else if (flag_.casedown()) {
     const ObString &src_str = src.get_word().get_string();
     bool need_casedown = false;
-    for (int64_t i = 0; !need_casedown && i < src_str.length();) {
+    for (int64_t i = 0; !need_casedown && i < src_str.length(); ++i) {
       const unsigned char c = static_cast<unsigned char>(src_str.ptr()[i]);
-      if (c < 0x80) {
-        // ASCII: only uppercase letters need casedown.
-        need_casedown = (c >= 'A' && c <= 'Z');
-        ++i;
-      } else if (c >= 0xE4 && c <= 0xE9 && i + 3 <= src_str.length()) {
-        // 3-byte CJK ideograph block (U+4000-U+9FFF): no case mappings, skip
-        // the collation casedown for the whole char.
-        i += 3;
-      } else {
-        // Other multi-byte blocks (Latin/Greek/Cyrillic/fullwidth/...) may
-        // have case mappings; fall back to the collation casedown.
-        need_casedown = true;
-      }
+      // Non-ASCII characters may have case mappings; only skip the copy when
+      // the entire token is known to be already-lowercase ASCII.
+      need_casedown = c >= 0x80 || (c >= 'A' && c <= 'Z');
     }
     if (!need_casedown) {
       dst = src;
