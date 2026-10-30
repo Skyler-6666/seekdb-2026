@@ -1,0 +1,44 @@
+--- /home/runner/work/seekdb-2026/seekdb-2026/tools/deploy/mysql_test/test_suite/fts_index/r/mysql/simple_query.result	2026-10-30 13:17:52.981620659 +0000
++++ /home/runner/work/seekdb-2026/seekdb-2026/.seekdb_fts_test/work/mysqltest_log/simple_query.reject	2026-10-30 14:02:04.908639412 +0000
+@@ -2205,10 +2205,10 @@
+ | Geoffrey Hinton                  | Geoffrey Everest Hinton CC FRS FRSC (born 6 December 1947) is a British-Canadian computer scientist and cognitive psychologist, most noted for his work on artificial neural networks.                                                                                                            |    3 |
+ | Yann LeCun                       | Yann André LeCun[1] (born 8 July 1960) is a Turing Award winning French computer scientist working primarily in the fields of machine learning, computer vision, mobile robotics and computational neuroscience.                                                                                  |    4 |
+ | Gordon Plotkin                   | Gordon David Plotkin, FRS FRSE MAE (born 9 September 1946) is a theoretical computer scientist in the School of Informatics at the University of Edinburgh. Plotkin is probably best known for his introduction of structural operational semantics (SOS) and his work on denotational semantics. |    6 |
+-| Yann LeCun                       | Yann André LeCun[1] (born 8 July 1960) is a Turing Award winning French computer scientist working primarily in the fields of machine learning, computer vision, mobile robotics and computational neuroscience.                                                                                  |    4 |
+ | Gerard Salton                    | Gerard A. Gerry Salton (8 March 1927 – 28 August 1995) was a professor of Computer Science at Cornell University. Salton was perhaps the leading computer scientist working in the field of information retrieval during his time, and the father of Information Retrieval                        |    0 |
+-| Geoffrey Hinton                  | Geoffrey Everest Hinton CC FRS FRSC (born 6 December 1947) is a British-Canadian computer scientist and cognitive psychologist, most noted for his work on artificial neural networks.                                                                                                            |    3 |
+ | distributed database contirbuter | Edgar Frank Ted Codd (19 August 1923 – 18 April 2003) was an English computer scientist who, while working for IBM, invented the relational model for database management, the theoretical basis for relational databases and relational database management systems.                             |    1 |
++| Geoffrey Hinton                  | Geoffrey Everest Hinton CC FRS FRSC (born 6 December 1947) is a British-Canadian computer scientist and cognitive psychologist, most noted for his work on artificial neural networks.                                                                                                            |    3 |
++| Yann LeCun                       | Yann André LeCun[1] (born 8 July 1960) is a Turing Award winning French computer scientist working primarily in the fields of machine learning, computer vision, mobile robotics and computational neuroscience.                                                                                  |    4 |
+ | Gordon Plotkin                   | Gordon David Plotkin, FRS FRSE MAE (born 9 September 1946) is a theoretical computer scientist in the School of Informatics at the University of Edinburgh. Plotkin is probably best known for his introduction of structural operational semantics (SOS) and his work on denotational semantics. |    6 |
+ +----------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+------+
+ 
+@@ -2221,10 +2221,10 @@
+ | Geoffrey Hinton                  |    3 |
+ | Yann LeCun                       |    4 |
+ | Gordon Plotkin                   |    6 |
+-| Yann LeCun                       |    4 |
+ | Gerard Salton                    |    0 |
+-| Geoffrey Hinton                  |    3 |
+ | distributed database contirbuter |    1 |
++| Geoffrey Hinton                  |    3 |
++| Yann LeCun                       |    4 |
+ | Gordon Plotkin                   |    6 |
+ +----------------------------------+------+
+ update t_ir_multi_column_dml set seq = 
+@@ -2239,10 +2239,10 @@
+ | Geoffrey Hinton                  |    3 |
+ | Yann LeCun                       |    6 |
+ | Gordon Plotkin                   |    6 |
+-| Yann LeCun                       |    6 |
+ | Gerard Salton                    |    0 |
+-| Geoffrey Hinton                  |    3 |
+ | distributed database contirbuter |    1 |
++| Geoffrey Hinton                  |    3 |
++| Yann LeCun                       |    6 |
+ | Gordon Plotkin                   |    6 |
+ +----------------------------------+------+
+ 
+
+[2026-10-30 14:02:04] mysqltest: Result content mismatch
+

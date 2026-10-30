@@ -1,0 +1,5 @@
+Starting seekdb (OceanBase seekdb 1.4.0.0) source revision 1-8d26ac39f4d8ca1332cfc8dba244d1d06846f2c4.
+Change working directory to base dir. path='/home/runner/work/seekdb-2026/seekdb-2026/.seekdb_fts_test/instance/'
+The log file is in the directory: '/home/runner/work/seekdb-2026/seekdb-2026/.seekdb_fts_test/instance/log/'
+The seekdb will be started as a daemon process. You can check the server status by client later.
+    Start seekdb with --nodaemon if you don't want to start as a daemon process.

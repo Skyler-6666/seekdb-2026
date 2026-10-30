@@ -1,0 +1,176 @@
+========================================
+FTS Tokenize Micro-benchmark (diagnostic)
+========================================
+rounds:                 2000
+samples:                3
+warmup:                 30
+----------------------------------------
+diag_select1_avg_ms:0.0941
+diag_select1_stdev_ms:0.0093
+diag_tok_ik_1char_avg_ms:0.1181
+diag_tok_ik_1char_stdev_ms:0.0008
+diag_tok_ik_2char_avg_ms:0.1211
+diag_tok_ik_2char_stdev_ms:0.0030
+diag_tok_beng_1char_avg_ms:0.1167
+diag_tok_beng_1char_stdev_ms:0.0040
+diag_tok_space_full_avg_ms:0.1457
+diag_tok_space_full_stdev_ms:0.0032
+diag_tok_ngram_full_avg_ms:0.1993
+diag_tok_ngram_full_stdev_ms:0.0155
+diag_tok_ik_full_avg_ms:0.2189
+diag_tok_ik_full_stdev_ms:0.0128
+----------------------------------------
+decompose (avg - select1):
+  ik fixed (1char):      see tok_ik_1char - select1
+  beng fixed (1char):    see tok_beng_1char - select1
+  space full:            SQL+map+json with trivial parser core
+  ngram full:            parser core without dict lookups
+========================================
+========================================
+FTS Query/Build Diagnostics
+========================================
+rounds:                 30
+samples:                3
+----------------------------------------
+d_q_content_no_limit_hits: 9333
+d_q_sub_limit20_hits: 20
+d_q_sub_limit1_avg_ms: 0.3586
+d_q_sub_limit20_avg_ms: 0.3599
+d_q_sub_limit200_avg_ms: 0.3579
+d_q_sub_limit2000_avg_ms: 0.3657
+d_q_content_no_limit_avg_ms: 0.3719
+d_q_cn_official_avg_ms: 0.3762
+d_q_beng_official_avg_ms: 0.3702
+d_build_ik_content_first_sec: 8.773
+d_build_ik_content_second_sec: 8.171
+d_gdb_samples: 20
+----------------------------------------
+hits (total matched docs per predicate):
+  d_q_sub_limit20: 20
+  d_q_content_no_limit: 9333
+----------------------------------------
+ns/doc = (avg_ms - select1_avg_ms) * 1e6 / hits
+========================================
+
+### EXPLAIN q_content_no_limit
+-- SELECT COUNT(*) FROM fts_large_bench.docs WHERE MATCH(content) AGAINST('倒排索引 tokenizer')
+Query Plan
+=====================================================================
+|ID|OPERATOR             |NAME                |EST.ROWS|EST.TIME(us)|
+---------------------------------------------------------------------
+|0 |SCALAR GROUP BY      |                    |1       |646183      |
+|1 |└─TEXT RETRIEVAL SCAN|docs(fti_content_ik)|14000   |645930      |
+=====================================================================
+Outputs & filters:
+-------------------------------------
+  0 - output([T_FUN_COUNT(*)]), filter(nil), rowset=256
+      group(nil), agg_func([T_FUN_COUNT(*)])
+  1 - output(nil), filter(nil), rowset=256
+      access(nil), partitions(p0)
+      is_index_back=false, is_global_index=false, 
+      calc_relevance=false, match_expr(MATCH(docs.content) AGAINST('倒排索引 tokenizer')), 
+      pushdown_match_filter(MATCH(docs.content) AGAINST('倒排索引 tokenizer'))
+
+### EXPLAIN q_sub_limit20
+-- SELECT COUNT(*) FROM (SELECT id FROM fts_large_bench.docs WHERE MATCH(content) AGAINST('倒排索引 tokenizer') LIMIT 20) t
+Query Plan
+=======================================================================
+|ID|OPERATOR               |NAME                |EST.ROWS|EST.TIME(us)|
+-----------------------------------------------------------------------
+|0 |SCALAR GROUP BY        |                    |1       |613         |
+|1 |└─SUBPLAN SCAN         |t                   |20      |612         |
+|2 |  └─TEXT RETRIEVAL SCAN|docs(fti_content_ik)|20      |612         |
+=======================================================================
+Outputs & filters:
+-------------------------------------
+  0 - output([T_FUN_COUNT(*)]), filter(nil), rowset=256
+      group(nil), agg_func([T_FUN_COUNT(*)])
+  1 - output(nil), filter(nil), rowset=256
+      access(nil)
+  2 - output([docs.id]), filter(nil), rowset=256
+      access([docs.id]), partitions(p0)
+      limit(20), offset(nil), is_index_back=true, is_global_index=false, 
+      calc_relevance=false, match_expr(MATCH(docs.content) AGAINST('倒排索引 tokenizer')), 
+      pushdown_match_filter(MATCH(docs.content) AGAINST('倒排索引 tokenizer'))
+
+### EXPLAIN q_cn_official
+-- SELECT COUNT(*) FROM fts_large_bench.docs WHERE MATCH(title, content) AGAINST('全文索引 分词器')
+Query Plan
+=================================================================
+|ID|OPERATOR             |NAME            |EST.ROWS|EST.TIME(us)|
+-----------------------------------------------------------------
+|0 |SCALAR GROUP BY      |                |1       |587536      |
+|1 |└─TEXT RETRIEVAL SCAN|docs(fti_all_ik)|12669   |587307      |
+=================================================================
+Outputs & filters:
+-------------------------------------
+  0 - output([T_FUN_COUNT(*)]), filter(nil), rowset=256
+      group(nil), agg_func([T_FUN_COUNT(*)])
+  1 - output(nil), filter(nil), rowset=256
+      access(nil), partitions(p0)
+      is_index_back=false, is_global_index=false, 
+      calc_relevance=false, match_expr(MATCH(docs.title, docs.content) AGAINST('全文索引 分词器')), 
+      pushdown_match_filter(MATCH(docs.title, docs.content) AGAINST('全文索引 分词器'))
+
+### gdb sampled stacks (frames inside src/)
+   1351 oceanbase::lib::Threads::run
+   1220 oceanbase::common::ObSimpleThreadPoolBase<oceanbase::common::ObLightyQueue>::run1
+    851 oceanbase::lib::ObFutex::wait
+    650 oceanbase::common::ObLightyQueue::wait_push
+    650 oceanbase::common::ObLightyQueue::pop
+    650 oceanbase::common::ObLightyCond::wait
+    631 oceanbase::lib::Thread::__th_start
+    610 oceanbase::lib::ObAdaptiveWorkerPool<oceanbase::common::ObSimpleThreadPoolBase<oceanbase::common::ObLightyQueue> >::pop_with_idle<oceanbase::common::ObSimpleThreadPoolBase<oceanbase::common::ObLightyQueue>::run1
+    610 oceanbase::common::ObSimpleThreadPoolBase<oceanbase::common::ObLightyQueue>::Worker::run1
+    441 oceanbase::lib::Thread::run
+    330 oceanbase::common::ObThreadCond::wait_us
+    310 oceanbase::common::ObThreadCond::wait
+    261 oceanbase::common::ob_usleep<
+    201 oceanbase::common::SimpleCond::wait
+    142 oceanbase::common::SCondTemp<3>::wait
+    140 oceanbase::common::ObSimpleThreadPoolBase<oceanbase::common::ObPriorityQueueImpl<1, oceanbase::common::ObLinkQueueImpl<16ul> > >::run1
+    120 oceanbase::share::ObReentrantThread::run1
+    120 oceanbase::share::ObReentrantThread::blocking_run
+    101 oceanbase::sql::ai_column::runtime_detail::Worker::run1
+     90 oceanbase::common::ObPriorityQueueImpl<1, oceanbase::common::ObLinkQueueImpl<16ul> >::pop
+     70 oceanbase::share::ObDagWorker::run1
+     70 oceanbase::lib::ObAdaptiveWorkerPool<oceanbase::common::ObSimpleThreadPoolBase<oceanbase::common::ObPriorityQueueImpl<1, oceanbase::common::ObLinkQueueImpl<16ul> > > >::pop_with_idle<oceanbase::common::ObSimpleThreadPoolBase<oceanbase::common::ObPriorityQueueImpl<1, oceanbase::common::ObLinkQueueImpl<16ul> > >::run1
+     70 oceanbase::common::ObSimpleThreadPoolBase<oceanbase::common::ObPriorityQueueImpl<1, oceanbase::common::ObLinkQueueImpl<16ul> > >::Worker::run1
+     60 oceanbase::rootserver::ObThreadIdling::idle
+     60 oceanbase::rootserver::ObServerThreadHelper::run2
+     40 oceanbase::share::ObAsyncTaskQueue::pop
+     40 oceanbase::rootserver::ObDDLScheduler::do_work
+     40 oceanbase::omt::ObPxPool::run1
+     40 oceanbase::omt::ObPxPool::run
+     40 oceanbase::common::TimeWheelBase::scan
+     40 oceanbase::common::ObPriorityQueue2<0, 1, 0>::pop
+     40 oceanbase::common::ObPriorityQueue2<0, 1, 0>::do_pop
+     40 oceanbase::common::ObClockGenerator::usleep
+     31 oceanbase::omt::ObThWorker::worker
+     31 oceanbase::omt::ObServerRuntime::get_new_request
+     31 oceanbase::lib::ObAdaptiveWorkerPool<oceanbase::omt::ObServerRuntime>::pop_with_idle<oceanbase::omt::ObThWorker::worker
+     31 oceanbase::common::ObPriorityQueue2<1, 2, 3>::pop
+     31 oceanbase::common::ObPriorityQueue2<1, 2, 3>::do_pop
+     28 oceanbase::sql::ObOperator::get_next_batch
+     25 oceanbase::sql::ObDASMergeIter::inner_get_next_rows
+     23 oceanbase::sql::ObTableScanOp::get_next_batch_with_das
+     20 oceanbase::transaction::ObTxTimestampWaiter::run1
+     20 oceanbase::tmp_file::ObTmpFileSwapThread::run1
+     20 oceanbase::storage::ObStorageLogWriter::ObSLogWriteRunner::run
+     20 oceanbase::sql::ObMaintainDepInfoTaskQueue::run2
+     20 oceanbase::share::schema::ObSchemaPublishSignal::wait_after
+     20 oceanbase::share::schema::ObDDLTransController::run1
+     20 oceanbase::share::ObLocalDevice::io_getevents
+     20 oceanbase::share::ObDagScheduler::run1
+     20 oceanbase::share::ObCSFetcher::run1
+     20 oceanbase::share::ObCSDispatcher::run1
+     20 oceanbase::share::ObAsyncTaskQueue::run2
+     20 oceanbase::rootserver::ObMajorMergeScheduler::try_idle
+     20 oceanbase::rootserver::ObMajorMergeScheduler::run3
+     20 oceanbase::palf::LogLoopThread::run1
+     20 oceanbase::palf::LogLoopThread::log_loop_
+     20 oceanbase::palf::LogIOWorker::run_loop_
+     20 oceanbase::observer::ObUniqTaskQueue<oceanbase::observer::ObTabletRuntimeMetaUpdateTask, oceanbase::observer::ObTabletRuntimeMetaUpdater>::run1
+     20 oceanbase::observer::ObUniqTaskQueue<oceanbase::observer::ObServerSchemaTask, oceanbase::observer::ObServerSchemaUpdater>::run1
+     20 oceanbase::observer::ObSignalHandle::run1
+
