@@ -1,0 +1,21 @@
+name: hipVS cmake option
+
+on:
+  push:
+    branches: [competition/hipvs-final-1031]
+  pull_request:
+    branches: [competition/hipvs-final-1031]
+  workflow_dispatch:
+
+jobs:
+  option-check:
+    name: hipVS option wiring
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: cmake --version && python3 --version && uname -m
+
+      - name: Configure-time option tests
+        run: python3 unittest/cmake/hipvs/test_hipvs_option.py -v

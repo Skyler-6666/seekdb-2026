@@ -59,6 +59,14 @@ find hipVS/cpp/install -name 'cuvs-config.cmake' -o -name 'libcuvs_c.so'
 
 ## Build seekdb with hipVS
 
+`SEEKDB_ENABLE_HIPVS` defaults to `AUTO`: the backend is compiled in whenever a
+hipVS install is discoverable through `CMAKE_PREFIX_PATH`, `HIPVS_ROOT`, or the
+usual `/opt/hipvs` locations, so a plain `./build.sh release --init --make` on
+an AMD host builds the accelerated binary. Installations without
+`cuvs/neighbors/hnsw.h` (a plain cuVS) are ignored, and an explicit
+`-DSEEKDB_ENABLE_HIPVS=ON` that cannot find hipVS only warns: the build falls
+back to the VSAG CPU path instead of failing.
+
 ```bash
 export CMAKE_PREFIX_PATH="/path/to/hipVS/cpp/install:${CMAKE_PREFIX_PATH}"
 export LD_LIBRARY_PATH="/path/to/hipVS/cpp/install/lib:${LD_LIBRARY_PATH}"
@@ -69,8 +77,8 @@ cd seekdb-2026
   -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH"
 ```
 
-Without `SEEKDB_ENABLE_HIPVS=ON`, the code contains no hipVS headers, symbols,
-or runtime dependency and the default VSAG build is unchanged.
+With `-DSEEKDB_ENABLE_HIPVS=OFF` the code contains no hipVS headers, symbols, or
+runtime dependency and the default VSAG build is unchanged.
 
 ## Runtime controls
 
