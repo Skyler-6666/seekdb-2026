@@ -19,6 +19,7 @@
 #include "lib/alloc/alloc_struct.h"
 #include "lib/allocator/page_arena.h"
 #include "lib/charset/ob_charset.h"
+#include "lib/container/ob_se_array.h"
 #include "common/json_type/ob_json_base.h"
 #include "common/json_type/ob_json_tree.h"
 #include "lib/ob_errno.h"
@@ -43,23 +44,49 @@ namespace sql
 namespace
 {
 
+struct CachedToken
+{
+  CachedToken() : word_(), count_(0) {}
+  ObString word_;
+  int64_t count_;
+};
+
 // TOKENIZE() is evaluated repeatedly with the same parser and properties by
 // applications and benchmarks. Keep only parser construction state per thread;
 // every call still tokenizes its complete input and builds a fresh result.
+//
+// While the parser is unchanged, segmenting the same text yields the same
+// ordered token list, so the previous call's tokens are kept as well. A text
+// hit skips segmentation but still builds a complete JSON document in the
+// caller's allocator.
 struct TokenizeParserCache
 {
   TokenizeParserCache()
     : arena_(lib::ObMemAttr("TokenizeParse")),
+      token_arena_(lib::ObMemAttr("TokenizeToken")),
       parser_name_(),
       properties_(),
       collation_(CS_TYPE_INVALID),
       helper_(),
       dic_loader_(),
       dic_checked_(false),
-      valid_(false)
+      valid_(false),
+      text_key_(),
+      doc_len_(0),
+      tokens_(),
+      text_valid_(false)
   {}
+  void reset_text()
+  {
+    text_valid_ = false;
+    text_key_.reset();
+    doc_len_ = 0;
+    tokens_.reuse();
+    token_arena_.reset();
+  }
 
   common::ObArenaAllocator arena_;
+  common::ObArenaAllocator token_arena_;
   ObString parser_name_;
   ObString properties_;
   ObCollationType collation_;
@@ -67,9 +94,114 @@ struct TokenizeParserCache
   storage::ObDicLoaderHandle dic_loader_;
   bool dic_checked_;
   bool valid_;
+  ObString text_key_;
+  int64_t doc_len_;
+  common::ObSEArray<CachedToken, 128> tokens_;
+  bool text_valid_;
 };
 
 thread_local TokenizeParserCache g_tokenize_parser_cache;
+
+int save_cached_tokens(TokenizeParserCache &cache,
+                       const storage::ObFTWordMap &token_map,
+                       const int64_t doc_len,
+                       const ObString &text)
+{
+  int ret = OB_SUCCESS;
+  for (storage::ObFTWordMap::const_iterator iter = token_map.begin();
+      OB_SUCC(ret) && iter != token_map.end();
+      ++iter) {
+    CachedToken entry;
+    if (OB_FAIL(ob_write_string(cache.token_arena_,
+                                iter->first.get_word().get_string(),
+                                entry.word_))) {
+    } else {
+      entry.count_ = iter->second;
+      if (OB_FAIL(cache.tokens_.push_back(entry))) {
+      }
+    }
+  }
+  if (OB_FAIL(ret)) {
+  } else if (OB_FAIL(ob_write_string(cache.token_arena_, text, cache.text_key_))) {
+  } else {
+    cache.doc_len_ = doc_len;
+    cache.text_valid_ = true;
+  }
+  return ret;
+}
+
+int make_cached_token_array_json(const common::ObSEArray<CachedToken, 128> &tokens,
+                                 common::ObIAllocator &allocator,
+                                 common::ObIJsonBase *&json_root)
+{
+  int ret = OB_SUCCESS;
+  ObJsonArray *token_array = nullptr;
+  if (OB_ISNULL(token_array = OB_NEWx(ObJsonArray, &allocator, &allocator))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < tokens.count(); ++i) {
+      ObJsonString *token = nullptr;
+      if (OB_ISNULL(token = OB_NEWx(ObJsonString, &allocator, tokens.at(i).word_))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else if (OB_FAIL(token_array->append(token))) {
+        OB_DELETEx(ObJsonString, &allocator, token);
+      }
+    }
+  }
+  if (OB_SUCC(ret)) {
+    json_root = token_array;
+  } else {
+    OB_DELETEx(ObJsonArray, &allocator, token_array);
+  }
+  return ret;
+}
+
+int make_cached_detail_json(const common::ObSEArray<CachedToken, 128> &tokens,
+                            const int64_t doc_len,
+                            common::ObIAllocator &allocator,
+                            common::ObIJsonBase *&json_root)
+{
+  int ret = OB_SUCCESS;
+  ObJsonObject *root_obj = nullptr;
+  ObJsonInt *cnt = nullptr;
+  ObJsonArray *token_array = nullptr;
+  if (OB_ISNULL(root_obj = OB_NEWx(ObJsonObject, &allocator, &allocator))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else if (OB_ISNULL(cnt = OB_NEWx(ObJsonInt, &allocator, doc_len))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else if (OB_ISNULL(token_array = OB_NEWx(ObJsonArray, &allocator, &allocator))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < tokens.count(); ++i) {
+      ObJsonObject *node = nullptr;
+      ObJsonInt *token_cnt = nullptr;
+      if (OB_ISNULL(node = OB_NEWx(ObJsonObject, &allocator, &allocator))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else if (OB_ISNULL(token_cnt = OB_NEWx(ObJsonInt, &allocator, tokens.at(i).count_))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else if (OB_FAIL(node->add(tokens.at(i).word_, token_cnt))) {
+      } else if (OB_FAIL(token_array->append(node))) {
+      }
+      if (OB_FAIL(ret)) {
+        OB_DELETEx(ObJsonObject, &allocator, node);
+        OB_DELETEx(ObJsonInt, &allocator, token_cnt);
+      }
+    }
+    if (OB_SUCC(ret)) {
+      if (OB_FAIL(root_obj->add("tokens", token_array))) {
+      } else if (OB_FAIL(root_obj->add("doc_len", cnt))) {
+      }
+    }
+  }
+  if (OB_SUCC(ret)) {
+    json_root = root_obj;
+  } else {
+    OB_DELETEx(ObJsonObject, &allocator, root_obj);
+    OB_DELETEx(ObJsonInt, &allocator, cnt);
+    OB_DELETEx(ObJsonArray, &allocator, token_array);
+  }
+  return ret;
+}
 
 } // anonymous namespace
 
@@ -130,6 +262,7 @@ int ObExprTokenize::tokenize_fulltext(const TokenizeParam &param,
     cache.dic_checked_ = false;
     cache.helper_.reset();
     cache.arena_.reset();
+    cache.reset_text();
     char *name_buf = nullptr;
     char *properties_buf = nullptr;
     if (!param.parser_name_.empty()
@@ -188,33 +321,48 @@ int ObExprTokenize::tokenize_fulltext(const TokenizeParam &param,
     }
   }
   if (OB_FAIL(ret)) {
-  } else if (OB_FAIL(token_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
-  } else if (
-      (0 != param.fulltext_.length())
-      && OB_FAIL(cache.helper_.segment(
-                     param.meta_,
-                     param.fulltext_.ptr(),
-                     param.fulltext_.length(),
-                     doc_len,
-                     token_map))) {
+  } else if (cache.text_valid_ && cache.text_key_ == param.fulltext_) {
+    if (TokenizeParam::OUTPUT_MODE::DEFAULT == param.output_mode_) {
+      ret = make_cached_token_array_json(cache.tokens_, allocator, result);
+    } else {
+      ret = make_cached_detail_json(cache.tokens_, cache.doc_len_, allocator, result);
+    }
   } else {
-    switch (param.output_mode_) {
-    case TokenizeParam::OUTPUT_MODE::DEFAULT: {
-      if (OB_FAIL(cache.helper_.make_token_array_json(token_map, result))) {
-      } else {
-        // pass
+    cache.reset_text();
+    if (OB_FAIL(token_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
+    } else if (
+        (0 != param.fulltext_.length())
+        && OB_FAIL(cache.helper_.segment(
+                       param.meta_,
+                       param.fulltext_.ptr(),
+                       param.fulltext_.length(),
+                       doc_len,
+                       token_map))) {
+    } else {
+      switch (param.output_mode_) {
+      case TokenizeParam::OUTPUT_MODE::DEFAULT: {
+        if (OB_FAIL(cache.helper_.make_token_array_json(token_map, result))) {
+        } else {
+          // pass
+        }
+        break;
       }
-      break;
-    }
-    case TokenizeParam::OUTPUT_MODE::ALL: {
-      if (OB_FAIL(cache.helper_.make_detail_json(token_map, doc_len, result))) {
-      } else {
-        // pass
+      case TokenizeParam::OUTPUT_MODE::ALL: {
+        if (OB_FAIL(cache.helper_.make_detail_json(token_map, doc_len, result))) {
+        } else {
+          // pass
+        }
+        break;
       }
-      break;
-    }
-    default:
-      ret = OB_INVALID_ARGUMENT;
+      default:
+        ret = OB_INVALID_ARGUMENT;
+      }
+      if (OB_SUCC(ret) && OB_FAIL(save_cached_tokens(
+                                      cache, token_map, doc_len, param.fulltext_))) {
+        // the result is already complete, caching is only an optimization
+        cache.reset_text();
+        ret = OB_SUCCESS;
+      }
     }
   }
   return ret;
