@@ -110,6 +110,7 @@ struct ObSparseRetrievalMergeParam
       relevance_expr_(nullptr),
       relevance_proj_expr_(nullptr),
       filter_expr_(nullptr),
+      match_filter_trivial_(false),
       topk_limit_(0),
       field_boost_(1.0),
       max_batch_size_(1)
@@ -128,6 +129,7 @@ struct ObSparseRetrievalMergeParam
   sql::ObExpr *relevance_expr_;
   sql::ObExpr *relevance_proj_expr_;
   sql::ObExpr *filter_expr_; // filter expr on score
+  bool match_filter_trivial_; // filter is the MATCH expr itself; skip per-row eval
   int64_t topk_limit_;
   double field_boost_;
   int64_t max_batch_size_;

@@ -302,6 +302,13 @@ static inline void ob_tosort_unicode(ObUnicaseInfo *uni_plane, ob_wc_t *wc, unsi
   }
 }
 
+static inline unsigned char ob_ascii_sort_weight(const unsigned char c)
+{
+  // Page-0 unicase table sort value for ASCII: a-z fold to A-Z, all other bytes
+  // keep their value. Identical to ob_tosort_unicode() on ASCII input.
+  return (c >= 'a' && c <= 'z') ? static_cast<unsigned char>(c - 32) : c;
+}
+
 static int ob_strnncoll_utf8mb4(const ObCharsetInfo *cs,
                      const unsigned char *src, size_t srclen,
                      const unsigned char *dst, size_t dstlen,
@@ -312,6 +319,16 @@ static int ob_strnncoll_utf8mb4(const ObCharsetInfo *cs,
   const unsigned char *te = dst + dstlen;
   ObUnicaseInfo *uni_plane = cs->caseinfo;
   while ( src < se && dst < te ) {
+    if (*src < 0x80 && *dst < 0x80) {
+      const unsigned char src_weight = ob_ascii_sort_weight(*src);
+      const unsigned char dst_weight = ob_ascii_sort_weight(*dst);
+      if (src_weight != dst_weight) {
+        return src_weight > dst_weight ? 1 : -1;
+      }
+      ++src;
+      ++dst;
+      continue;
+    }
     int s_res = ob_mb_wc_utf8mb4(cs, &src_wc, src, se);
     int t_res = ob_mb_wc_utf8mb4(cs, &dst_wc, dst, te);
     if ( s_res <= 0 || t_res <= 0 ) {
@@ -382,6 +399,16 @@ static int ob_strnncollsp_utf8mb4(const ObCharsetInfo *cs,
   const unsigned char *se= src + srclen, *te= dst + dstlen;
   ObUnicaseInfo *uni_plane= cs->caseinfo;
   while ( src < se && dst < te ) {
+    if (*src < 0x80 && *dst < 0x80) {
+      const unsigned char src_weight = ob_ascii_sort_weight(*src);
+      const unsigned char dst_weight = ob_ascii_sort_weight(*dst);
+      if (src_weight != dst_weight) {
+        return src_weight > dst_weight ? 1 : -1;
+      }
+      ++src;
+      ++dst;
+      continue;
+    }
     int s_res= ob_mb_wc_utf8mb4(cs, &src_wc, src, se);
     int t_res= ob_mb_wc_utf8mb4(cs, &dst_wc, dst, te);
     if ( s_res <= 0 || t_res <= 0 ) {

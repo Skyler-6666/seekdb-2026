@@ -203,7 +203,7 @@ int ObTextRetrievalTokenIter::get_next_row()
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
-  } else if (!token_doc_cnt_calculated_ && OB_FAIL(estimate_token_doc_cnt())) {
+  } else if (need_calc_relevance() && !token_doc_cnt_calculated_ && OB_FAIL(estimate_token_doc_cnt())) {
   } else if (OB_FAIL(query::das_scan_next_row(inv_idx_scan_iter_))) {
     if (OB_UNLIKELY(OB_ITER_END != ret)) {
     }
@@ -242,7 +242,7 @@ int ObTextRetrievalTokenIter::get_next_batch(const int64_t capacity, int64_t &co
   count = 0;
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
-  } else if (!token_doc_cnt_calculated_ && OB_FAIL(estimate_token_doc_cnt())) {
+  } else if (need_calc_relevance() && !token_doc_cnt_calculated_ && OB_FAIL(estimate_token_doc_cnt())) {
   } else if (OB_FAIL(query::das_scan_next_rows(
                  inv_idx_scan_iter_, count, OB_MIN(max_batch_size_, capacity)))) {
     if (OB_UNLIKELY(OB_ITER_END != ret)) {
@@ -525,9 +525,15 @@ int ObTextRetrievalDaaTTokenIter::save_docids()
   } else {
     cur_idx_ = 0;
     const ObDatumVector &doc_id_datum = inv_scan_domain_id_col_->locate_expr_datumvector(*eval_ctx_);
+    // The fixed array was fully constructed at init and is not resized while
+    // saving a batch. Resolve its storage and the skip vector once, retaining
+    // the normal checked deep-copy operation for every selected datum.
+    ObDocIdExt *doc_ids = doc_id_.get_data();
+    const sql::ObBitVector *skip = token_iter_->get_skip();
     for (int64_t i = 0; OB_SUCC(ret) && i < count_; ++i) {
-      if (OB_LIKELY(!token_iter_->get_skip()->at(i))) {
-        if (OB_FAIL(doc_id_[i].from_datum(*doc_id_datum.at(i)))) {
+      // The doc-only path does not allocate a relevance-evaluation skip vector.
+      if (nullptr == skip || !skip->at(i)) {
+        if (OB_FAIL(doc_ids[i].from_datum(*doc_id_datum.at(i)))) {
         };
       }
     }
@@ -538,6 +544,41 @@ int ObTextRetrievalDaaTTokenIter::save_docids()
 int ObTextRetrievalDaaTTokenIter::get_next_batch(const int64_t capacity, int64_t &count)
 {
   return OB_NOT_IMPLEMENT;
+}
+
+int ObTextRetrievalDaaTTokenIter::get_doc_only_batch(
+    const int64_t capacity, const ObDocIdExt *&ids, int64_t &count)
+{
+  int ret = OB_SUCCESS;
+  ids = nullptr;
+  count = 0;
+  if (IS_NOT_INIT) {
+    ret = OB_NOT_INIT;
+  } else if (OB_UNLIKELY(nullptr != relevance_expr_ || !eval_ctx_->is_vectorized())) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_UNLIKELY(capacity <= 0)) {
+    ret = 0 == capacity ? OB_SUCCESS : OB_INVALID_ARGUMENT;
+  } else {
+    const int64_t fetch_capacity = MIN(max_batch_size_, capacity);
+    do {
+      ret = token_iter_->get_next_batch(fetch_capacity, count_);
+    } while (OB_SUCCESS == ret && 0 == count_);
+    if (OB_ITER_END == ret && count_ > 0) {
+      ret = OB_SUCCESS;
+    }
+    if (OB_SUCC(ret)) {
+      // A storage iterator may return more than the requested small batch.
+      // Keep all returned rows in the existing max-sized owned ID buffer.
+      if (OB_UNLIKELY(count_ < 0 || count_ > max_batch_size_)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (OB_FAIL(save_docids())) {
+      } else {
+        ids = &doc_id_.at(0);
+        count = count_;
+      }
+    }
+  }
+  return ret;
 }
 
 int ObTextRetrievalDaaTTokenIter::advance_to(const ObDatum &id_datum)
@@ -584,6 +625,9 @@ int ObTextRetrievalDaaTTokenIter::get_curr_score(double &score) const
     ret = OB_ARRAY_OUT_OF_RANGE;
   } else if (relevance_expr_) {
     score = relevance_[cur_idx_];
+  } else {
+    // This value is only used for presence merging, never as a visible score.
+    score = 1.0;
   }
   return ret;
 }

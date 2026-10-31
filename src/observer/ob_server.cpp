@@ -866,6 +866,8 @@ int ObServer::init(const ObServerOptions &opts, const ObPLogWriterCfg &log_cfg)
       LOG_WARN("init dictionary loader failed", K(ret));
     } else if (OB_FAIL(ObDDLRedoLock::get_instance().init())) {
       LOG_WARN("init ddl redo lock failed", K(ret));
+    } else if (OB_FAIL(ObFTParseData::instance().warmup_ik_dictionary())) {
+      LOG_ERROR("warm up fulltext dictionaries failed", KR(ret));
 #ifdef ERRSIM
     } else if (OB_FAIL(ObDDLSimPointMgr::get_instance().init())) {
       LOG_WARN("init ddl sim point mgr fail", KR(ret));

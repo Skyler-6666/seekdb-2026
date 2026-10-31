@@ -18,6 +18,7 @@
 
 #include "storage/fts/ob_beng_ft_parser.h"
 #include "data_plane/fts/ob_fts_struct.h"
+#include <cstdint>
 
 using namespace oceanbase::common;
 
@@ -49,15 +50,30 @@ int ObBEngFTParser::get_next_token(
     }
   } else if (OB_ISNULL(token.ptr_) || OB_UNLIKELY(0 >= token.len_ || 0 >= token_freq)) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(token.len_)))) {
-    ret = OB_ALLOCATE_MEMORY_FAILED;
   } else {
-    MEMCPY(buf, token.ptr_, token.len_);
-    word = buf;
-    word_len = token.len_;
-    char_len = token.len_;
-    word_freq = token_freq;
-    LOG_DEBUG("succeed to add word", K(ObString(word_len, word)), K(word_freq));
+    const uintptr_t token_addr = reinterpret_cast<uintptr_t>(token.ptr_);
+    const uintptr_t doc_addr = reinterpret_cast<uintptr_t>(doc_.ptr_);
+    const bool in_document = token_addr >= doc_addr
+        && token_addr - doc_addr <= doc_.len_
+        && token.len_ <= doc_.len_ - (token_addr - doc_addr);
+    if (in_document) {
+      // Unchanged normalized tokens can borrow the caller's fulltext, just as
+      // the space/IK parsers do. The consumer retains that input through JSON
+      // packing or until every generated index row has been consumed.
+      word = token.ptr_;
+    } else if (OB_ISNULL(buf = static_cast<char *>(allocator_.alloc(token.len_)))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else {
+      // The normalizer's arena is reused on its next get_next() call.
+      MEMCPY(buf, token.ptr_, token.len_);
+      word = buf;
+    }
+    if (OB_SUCC(ret)) {
+      word_len = token.len_;
+      char_len = token.len_;
+      word_freq = token_freq;
+      LOG_DEBUG("succeed to add word", K(ObString(word_len, word)), K(word_freq));
+    }
   }
   return ret;
 }
@@ -86,6 +102,24 @@ int ObBEngFTParser::init(ObFTParserParam *param)
   }
   if (OB_FAIL(ret) && OB_UNLIKELY(!is_inited_)) {
     reset();
+  }
+  return ret;
+}
+
+int ObBEngFTParser::reuse(const ObFTParserParam &param)
+{
+  int ret = OB_SUCCESS;
+  if (!is_inited_ || !param.is_valid()) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (param.cs_ != analysis_ctx_.cs_) {
+    ret = OB_NOT_SUPPORTED;
+  } else {
+    token_stream_ = nullptr;
+    doc_.set_string(param.fulltext_, param.ft_length_);
+    if (OB_FAIL(segment(doc_, token_stream_))) {
+    } else if (OB_ISNULL(token_stream_)) {
+      ret = OB_ERR_UNEXPECTED;
+    }
   }
   return ret;
 }

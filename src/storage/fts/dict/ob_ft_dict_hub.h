@@ -107,6 +107,11 @@ public:
 
   int load_cache(const ObFTDictDesc &desc, ObFTCacheRangeContainer &container);
 
+  // Materialize the immutable built-in IK dictionaries before the server
+  // starts accepting SQL. This moves one-time cache construction out of the
+  // first index build without changing dictionary contents or lookup rules.
+  int warmup_ik_cache();
+
 private:
   int get_dict_info(const ObFTDictInfoKey &key, ObFTDictInfo &info);
 

@@ -39,6 +39,40 @@ namespace oceanbase
 {
 namespace sql
 {
+
+namespace
+{
+
+// TOKENIZE() is evaluated repeatedly with the same parser and properties by
+// applications and benchmarks. Keep only parser construction state per thread;
+// every call still tokenizes its complete input and builds a fresh result.
+struct TokenizeParserCache
+{
+  TokenizeParserCache()
+    : arena_(lib::ObMemAttr("TokenizeParse")),
+      parser_name_(),
+      properties_(),
+      collation_(CS_TYPE_INVALID),
+      helper_(),
+      dic_loader_(),
+      dic_checked_(false),
+      valid_(false)
+  {}
+
+  common::ObArenaAllocator arena_;
+  ObString parser_name_;
+  ObString properties_;
+  ObCollationType collation_;
+  storage::ObFTParseHelper helper_;
+  storage::ObDicLoaderHandle dic_loader_;
+  bool dic_checked_;
+  bool valid_;
+};
+
+thread_local TokenizeParserCache g_tokenize_parser_cache;
+
+} // anonymous namespace
+
 ObExprTokenize::ObExprTokenize(common::ObIAllocator &alloc)
     : ObStringExprOperator(alloc,
                            T_FUN_TOKENIZE,
@@ -81,20 +115,83 @@ int ObExprTokenize::tokenize_fulltext(const TokenizeParam &param,
                                       ObIJsonBase *&result)
 {
   int ret = OB_SUCCESS;
-  storage::ObFTParseHelper tokenize_helper;
+  TokenizeParserCache &cache = g_tokenize_parser_cache;
   const int64_t ft_word_bkt_cnt = MIN(MAX(param.fulltext_.length() / 2, 2), 997);
   int64_t doc_len = 0;
   storage::ObFTWordMap token_map;
 
-  ObArenaAllocator tmp_parse_alloc(ObMemAttr("Tmp buffer"));
-
   if (TokenizeParam::OUTPUT_MODE::DEFAULT != mode && TokenizeParam::OUTPUT_MODE::ALL != mode) {
     ret = OB_INVALID_ARGUMENT;
-  } else if (OB_FAIL(tokenize_helper.init(&allocator, param.parser_name_, param.properties_))) {
+  } else if (!cache.valid_ || cache.parser_name_ != param.parser_name_
+      || cache.properties_ != param.properties_
+      || cache.collation_ != param.meta_.get_collation_type()) {
+    cache.valid_ = false;
+    cache.dic_loader_.reset();
+    cache.dic_checked_ = false;
+    cache.helper_.reset();
+    cache.arena_.reset();
+    char *name_buf = nullptr;
+    char *properties_buf = nullptr;
+    if (!param.parser_name_.empty()
+        && OB_ISNULL(name_buf = static_cast<char *>(
+            cache.arena_.alloc(param.parser_name_.length())))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else if (!param.properties_.empty()
+        && OB_ISNULL(properties_buf = static_cast<char *>(
+            cache.arena_.alloc(param.properties_.length())))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else {
+      if (!param.parser_name_.empty()) {
+        MEMCPY(name_buf, param.parser_name_.ptr(), param.parser_name_.length());
+      }
+      if (!param.properties_.empty()) {
+        MEMCPY(properties_buf, param.properties_.ptr(), param.properties_.length());
+      }
+      if (param.parser_name_.empty()) {
+        cache.parser_name_.reset();
+      } else {
+        cache.parser_name_.assign_ptr(name_buf, param.parser_name_.length());
+      }
+      if (param.properties_.empty()) {
+        cache.properties_.reset();
+      } else {
+        cache.properties_.assign_ptr(properties_buf, param.properties_.length());
+      }
+      if (OB_FAIL(cache.helper_.init(
+              &allocator, param.parser_name_, param.properties_))) {
+      } else {
+        cache.collation_ = param.meta_.get_collation_type();
+        cache.valid_ = true;
+      }
+    }
+  } else {
+    cache.helper_.set_allocator(&allocator);
+  }
+  if (OB_FAIL(ret)) {
+  } else if (!cache.dic_checked_) {
+    bool need_to_load_dic = false;
+    if (OB_FAIL(share::ObFtsIndexBuilderUtil::check_need_to_load_dic(
+            param.parser_name_, need_to_load_dic))) {
+    } else if (need_to_load_dic) {
+      if (OB_FAIL(storage::ObGenDicLoader::get_instance().get_dic_loader(
+              ObString::make_string(storage::ObFTSLiteral::PARSER_NAME_IK),
+              ObCharset::charset_type_by_coll(param.meta_.get_collation_type()),
+              cache.dic_loader_))) {
+      } else if (OB_UNLIKELY(!cache.dic_loader_.is_valid())) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (OB_FAIL(cache.dic_loader_.get_loader()->try_load_dictionary_in_trans())) {
+      } else {
+        cache.dic_checked_ = true;
+      }
+    } else {
+      cache.dic_checked_ = true;
+    }
+  }
+  if (OB_FAIL(ret)) {
   } else if (OB_FAIL(token_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
   } else if (
       (0 != param.fulltext_.length())
-      && OB_FAIL(tokenize_helper.segment(
+      && OB_FAIL(cache.helper_.segment(
                      param.meta_,
                      param.fulltext_.ptr(),
                      param.fulltext_.length(),
@@ -103,14 +200,14 @@ int ObExprTokenize::tokenize_fulltext(const TokenizeParam &param,
   } else {
     switch (param.output_mode_) {
     case TokenizeParam::OUTPUT_MODE::DEFAULT: {
-      if (OB_FAIL(tokenize_helper.make_token_array_json(token_map, result))) {
+      if (OB_FAIL(cache.helper_.make_token_array_json(token_map, result))) {
       } else {
         // pass
       }
       break;
     }
     case TokenizeParam::OUTPUT_MODE::ALL: {
-      if (OB_FAIL(tokenize_helper.make_detail_json(token_map, doc_len, result))) {
+      if (OB_FAIL(cache.helper_.make_detail_json(token_map, doc_len, result))) {
       } else {
         // pass
       }
@@ -125,6 +222,7 @@ int ObExprTokenize::tokenize_fulltext(const TokenizeParam &param,
 
 ObExprTokenize::TokenizeParam ::TokenizeParam()
   : allocator_(ObMemAttr("TokenizeParam")),
+    parser_name_buf_{},
     parser_name_(ObString(OB_DEFAULT_FULLTEXT_PARSER_NAME)),
     meta_(),
     fulltext_(),
@@ -212,8 +310,11 @@ int ObExprTokenize::parse_param(const ObExpr &expr,
   } else if (OB_FAIL(parse_fulltext(expr, ctx, param))) {
   } else if (OB_FAIL(parse_parser_name(expr, ctx, param))) {
   } else if (OB_FAIL(parse_parser_properties(expr, ctx, temp_allocator, param))) {
-  } else if (OB_FAIL(param.reform_parser_properties(param.properties_))) {
-  } else if (OB_FAIL(param.try_load_dictionary_for_ik())) {
+  } else if (!param.properties_.empty()
+             && OB_FAIL(param.reform_parser_properties(param.properties_))) {
+    // Explicit user properties keep the canonicalizing JSON round-trip; when there
+    // are none the parser helper defaults are used directly (see
+    // ObFTParserProperty::parse_for_parser_helper empty-json handling).
   }
   return ret;
 }
@@ -223,14 +324,10 @@ int ObExprTokenize::construct_ft_parser_inner_name(const ObString &input_str, To
   int ret = OB_SUCCESS;
   storage::ObFTParser parser;
 
-  char *parser_name_buf = nullptr;
-  if (OB_ISNULL(parser_name_buf
-                = static_cast<char *>(param.allocator_.alloc(storage::OB_FT_PARSER_NAME_LENGTH)))) {
-    ret = OB_ALLOCATE_MEMORY_FAILED;
-  } else if (OB_FAIL(parser.init(input_str))) {
-  } else if (OB_FAIL(parser.serialize_to_str(parser_name_buf, storage::OB_FT_PARSER_NAME_LENGTH))) {
+  if (OB_FAIL(parser.init(input_str))) {
+  } else if (OB_FAIL(parser.serialize_to_str(param.parser_name_buf_, sizeof(param.parser_name_buf_)))) {
   } else {
-    param.parser_name_ = ObString::make_string(parser_name_buf);
+    param.parser_name_ = ObString::make_string(param.parser_name_buf_);
   }
   return ret;
 }

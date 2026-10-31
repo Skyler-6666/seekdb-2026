@@ -21,6 +21,7 @@
 #include "lib/allocator/page_arena.h"
 #include "lib/string/ob_string.h"
 #include "sql/engine/expr/ob_expr_operator.h"
+#include "data_plane/fts/ob_fts_parser_name.h"
 #include "data_plane/fts/ob_fts_parser_property.h"
 
 namespace oceanbase
@@ -69,6 +70,8 @@ private:
   public:
     // for property and tmp json string
     mutable ObArenaAllocator allocator_;
+    // Owned by this evaluation; parser_name_ never escapes TokenizeParam.
+    char parser_name_buf_[storage::OB_FT_PARSER_NAME_LENGTH];
     ObString parser_name_;
     ObString properties_;
     ObObjMeta meta_;

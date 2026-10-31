@@ -29,6 +29,64 @@ using namespace share::schema;
 namespace sql
 {
 
+// A scalar COUNT(*) consumes row cardinality, not any document ID or score. Keep
+// this proof deliberately narrower than general expression liveness: a single
+// positive natural-language MATCH is the entire predicate on one base table.
+static bool is_fulltext_cardinality_only_scan(const ObLogTableScan &op)
+{
+  bool cardinality_only = false;
+  const ObDMLStmt *stmt = op.get_stmt();
+  const ObLogicalOperator *parent = op.get_parent();
+  if (nullptr != stmt && stmt->is_select_stmt() && nullptr != parent
+      && log_op_def::LOG_GROUP_BY == parent->get_type() && nullptr == parent->get_parent()
+      && parent->get_filter_exprs().empty() && parent->get_startup_exprs().empty()
+      && op.get_output_exprs().empty() && op.get_access_exprs().empty()
+      && op.get_filter_exprs().empty() && op.get_startup_exprs().empty()
+      && nullptr == op.get_limit_expr() && !op.use_group_id()
+      && !op.get_index_back() && !op.get_is_index_global() && !op.das_need_keep_ordering()
+      && !op.has_func_lookup() && !op.has_es_match() && !op.use_index_merge()
+      && !op.is_vec_idx_scan()) {
+    const ObSelectStmt *select_stmt = static_cast<const ObSelectStmt *>(stmt);
+    const TableItem *table = 1 == select_stmt->get_table_size() ? select_stmt->get_table_item(0) : nullptr;
+    const ObAggFunRawExpr *count = 1 == select_stmt->get_aggr_item_size()
+        ? select_stmt->get_aggr_item(0) : nullptr;
+    const ObMatchFunRawExpr *match = 1 == select_stmt->get_match_exprs().count()
+        ? select_stmt->get_match_exprs().at(0) : nullptr;
+    const ObRawExpr *predicate = 1 == select_stmt->get_condition_exprs().count()
+        ? select_stmt->get_condition_exprs().at(0) : nullptr;
+    if (nullptr != table && table->is_basic_table() && !table->is_has_sample_info()
+        && TableItem::NOT_USING == table->snapshot_query_type_
+        && 1 == select_stmt->get_from_item_size() && !select_stmt->get_from_item(0).is_joined_
+        && select_stmt->get_from_item(0).table_id_ == table->table_id_
+        && nullptr != count && T_FUN_COUNT == count->get_expr_type()
+        && 0 == count->get_real_param_count() && !count->is_param_distinct()
+        && 1 == select_stmt->get_select_item_size() && select_stmt->get_select_item(0).expr_ == count
+        && select_stmt->is_scala_group_by() && !select_stmt->has_having()
+        && !select_stmt->has_distinct() && !select_stmt->has_window_function()
+        && !select_stmt->has_order_by() && !select_stmt->has_limit() && !select_stmt->is_set_stmt()
+        && select_stmt->get_semi_infos().empty() && !select_stmt->has_subquery()
+        && !select_stmt->has_recursive_cte() && !select_stmt->is_contains_assignment()
+        && 0 == select_stmt->get_user_var_size() && !select_stmt->is_calc_found_rows()
+        && !select_stmt->has_for_update() && !select_stmt->has_select_into()
+        && !select_stmt->has_vec_approx() && select_stmt->get_pseudo_column_like_exprs().empty()
+        && nullptr != match && match == op.get_text_retrieval_info().match_expr_
+        && T_FUN_MATCH_AGAINST == match->get_expr_type() && NATURAL_LANGUAGE_MODE == match->get_mode_flag()
+        && match->get_columns_boosts().empty() && nullptr == match->get_param_text_expr()
+        && nullptr != match->get_search_key() && match->get_search_key()->is_static_scalar_const_expr()
+        && nullptr != predicate
+        && (predicate == match || (T_OP_BOOL == predicate->get_expr_type()
+            && 1 == predicate->get_param_count() && predicate->get_param_expr(0) == match))) {
+      cardinality_only = true;
+      for (int64_t i = 0; cardinality_only && i < match->get_match_columns().count(); ++i) {
+        const ObRawExpr *expr = match->get_match_columns().at(i);
+        cardinality_only = nullptr != expr && expr->is_column_ref_expr()
+            && static_cast<const ObColumnRefRawExpr *>(expr)->get_table_id() == table->table_id_;
+      }
+    }
+  }
+  return cardinality_only;
+}
+
 int ObTscCgService::generate_tsc_ctdef(ObLogTableScan &op, ObTableScanCtDef &tsc_ctdef)
 {
   int ret = OB_SUCCESS;
@@ -230,6 +288,21 @@ int ObTscCgService::generate_tsc_ctdef(ObLogTableScan &op, ObTableScanCtDef &tsc
       tsc_ctdef.lookup_loc_meta_ = nullptr;
     }
     tsc_ctdef.attach_spec_.attach_ctdef_ = root_ctdef;
+  }
+
+  if (OB_SUCC(ret) && need_attach && nullptr != root_ctdef && DAS_OP_IR_SCAN == root_ctdef->op_type_
+      && !tsc_ctdef.is_das_keep_order_ && !tsc_ctdef.ordering_used_by_parent_
+      && tsc_ctdef.bnlj_param_idxs_.empty() && is_fulltext_cardinality_only_scan(op)) {
+    ObDASIRScanCtDef *ir_ctdef = static_cast<ObDASIRScanCtDef *>(root_ctdef);
+    if (ir_ctdef->match_score_unused_ && ir_ctdef->match_filter_is_trivial()
+        && nullptr == ir_ctdef->topk_limit_expr_ && nullptr == ir_ctdef->topk_offset_expr_) {
+      // This is the final attach root, so no lookup/sort/group wrapper can read
+      // these values. Advertise no datums before permitting output-free batches;
+      // posting scan access expressions remain intact for visibility and merge.
+      ir_ctdef->result_output_.reset();
+      ir_ctdef->cardinality_only_ = true;
+      LOG_INFO("enabled fulltext cardinality-only output", "output_count", ir_ctdef->result_output_.count());
+    }
   }
 
   return ret;
@@ -3042,6 +3115,19 @@ int ObTscCgService::generate_text_ir_spec_exprs(const ObTextRetrievalInfo &tr_in
 
   if (OB_SUCC(ret) && nullptr != tr_info.pushdown_match_filter_) {
     if (OB_FAIL(cg_.generate_rt_expr(*tr_info.pushdown_match_filter_, text_ir_scan_ctdef.match_filter_))) {
+    } else {
+      const ObRawExpr *match_filter = tr_info.pushdown_match_filter_;
+      bool is_trivial = (T_FUN_MATCH_AGAINST == match_filter->get_expr_type());
+      if (!is_trivial
+          && T_OP_BOOL == match_filter->get_expr_type()
+          && 1 == match_filter->get_param_count()
+          && nullptr != match_filter->get_param_expr(0)
+          && T_FUN_MATCH_AGAINST == match_filter->get_param_expr(0)->get_expr_type()) {
+        is_trivial = true;
+      }
+      text_ir_scan_ctdef.match_filter_trivial_ = is_trivial;
+      text_ir_scan_ctdef.match_score_unused_ = is_trivial && tr_info.match_score_unused_
+          && !tr_info.need_sort() && nullptr == tr_info.topk_limit_expr_;
     }
   }
 

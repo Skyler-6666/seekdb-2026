@@ -356,6 +356,11 @@ int ObSRDaaTIterImpl::filter_on_demand(const int64_t count, const double relevan
 
   if (!iter_param_->need_filter()) {
     need_project = true;
+  } else if (iter_param_->match_filter_trivial_) {
+    // The pushed-down predicate is the MATCH expression itself: the DAAT merge
+    // only emits documents that already satisfy it, so the per-row evaluation is
+    // redundant. (Score-threshold / compound predicates do not set this flag.)
+    need_project = true;
   } else if (eval_ctx->is_vectorized()) {
     if (OB_UNLIKELY(count >= eval_ctx->max_batch_size_)) {
       ret = OB_ERR_UNEXPECTED;

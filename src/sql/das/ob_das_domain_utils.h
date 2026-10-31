@@ -54,6 +54,9 @@ public:
                "row_count", rows_.count());
 private:
   lib::MemoryContext merge_memctx_;
+  common::ObArenaAllocator retained_text_allocator_;
+  char *retained_text_;
+  int64_t retained_text_capacity_;
   ObDomainIndexRow rows_;
   uint64_t row_idx_;
   bool is_fts_index_aux_;

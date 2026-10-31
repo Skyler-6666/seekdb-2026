@@ -90,6 +90,10 @@ public:
   bool need_block_max_scan() const { return has_block_max_scan_; }
   bool need_avg_doc_len_est() const { return has_avg_doc_len_est_ && nullptr != avg_doc_token_cnt_expr_; }
   bool has_pushdown_topk() const { return nullptr != topk_limit_expr_; }
+  // True when the pushed-down match filter is the MATCH expression itself (or a
+  // single T_OP_BOOL wrapping it): every row emitted by the retrieval engine
+  // already satisfies it, so the engine may skip the per-row filter evaluation.
+  bool match_filter_is_trivial() const { return match_filter_trivial_; }
   bool is_block_scan_valid() const
   {
     return has_block_max_scan_
@@ -191,7 +195,9 @@ public:
       uint8_t reserved_ir_scan_flag_:1;
       uint8_t has_block_max_scan_:1;
       uint8_t has_avg_doc_len_est_:1;
-      uint8_t reserved_:3;
+      uint8_t match_filter_trivial_:1;
+      uint8_t match_score_unused_:1;
+      uint8_t cardinality_only_:1; // strict COUNT(*); result_output_ is empty
     };
   };
   ObExpr *field_boost_expr_;

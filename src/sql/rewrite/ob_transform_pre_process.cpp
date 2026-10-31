@@ -179,7 +179,7 @@ int ObTransformPreProcess::transform_one_stmt(common::ObIArray<ObParentDMLStmt> 
     }
     if (OB_SUCC(ret)) {
       if (stmt->get_match_exprs().count() > 0 &&
-          OB_FAIL(preserve_order_for_fulltext_search(stmt, is_happened))) {
+          OB_FAIL(preserve_order_for_fulltext_search(parent_stmts, stmt, is_happened))) {
       } else {
         trans_happened |= is_happened;
       }
@@ -3788,9 +3788,83 @@ int ObTransformPreProcess::do_flatten_conditions(ObDMLStmt *stmt, ObIArray<ObRaw
   return ret;
 }
 
+// A root COUNT(*) over a single limited derived table observes only its cardinality:
+// min(limit, max(matches - offset, 0)). The implicit relevance order cannot affect
+// that value. Check this before creating an order item, so an explicit user order
+// is never confused with the synthetic full-text order. Keep other consumers and
+// error/side-effect-sensitive expressions on the normal score-producing path.
+static bool implicit_fulltext_order_is_unobserved(
+    const ObIArray<ObParentDMLStmt> &parent_stmts,
+    const ObDMLStmt *stmt,
+    const ObMatchFunRawExpr *match)
+{
+  bool unobserved = false;
+  if (nullptr != stmt && stmt->is_select_stmt() && nullptr != match
+      && 1 == parent_stmts.count() && nullptr != parent_stmts.at(0).stmt_
+      && parent_stmts.at(0).stmt_->is_select_stmt()) {
+    const ObSelectStmt *parent = static_cast<const ObSelectStmt *>(parent_stmts.at(0).stmt_);
+    const ObSelectStmt *child = static_cast<const ObSelectStmt *>(stmt);
+    const TableItem *view = 1 == parent->get_table_size() ? parent->get_table_item(0) : nullptr;
+    const TableItem *table = 1 == child->get_table_size() ? child->get_table_item(0) : nullptr;
+    const ObAggFunRawExpr *count = 1 == parent->get_aggr_item_size() ? parent->get_aggr_item(0) : nullptr;
+    const ObRawExpr *predicate = 1 == child->get_condition_exprs().count()
+        ? child->get_condition_exprs().at(0) : nullptr;
+    if (nullptr != view && view->is_generated_table() && view->ref_query_ == child
+        && TableItem::NOT_CTE == view->cte_type_ && !view->is_view_table_
+        && view->exec_params_.empty() && 1 == parent->get_from_item_size()
+        && !parent->get_from_item(0).is_joined_
+        && parent->get_from_item(0).table_id_ == view->table_id_
+        && nullptr != count && T_FUN_COUNT == count->get_expr_type()
+        && 0 == count->get_real_param_count() && !count->is_param_distinct()
+        && 1 == parent->get_select_item_size() && parent->get_select_item(0).expr_ == count
+        && parent->is_scala_group_by() && !parent->has_having()
+        && !parent->has_distinct() && !parent->has_window_function()
+        && !parent->has_order_by() && !parent->has_limit() && !parent->is_set_stmt()
+        && parent->get_condition_exprs().empty() && parent->get_semi_infos().empty()
+        && !parent->has_subquery() && !parent->has_recursive_cte()
+        && !parent->is_contains_assignment() && 0 == parent->get_user_var_size()
+        && !parent->is_calc_found_rows() && !parent->has_for_update() && !parent->has_select_into()
+        && nullptr != table && table->is_basic_table() && !table->is_has_sample_info()
+        && TableItem::NOT_USING == table->snapshot_query_type_
+        && 1 == child->get_from_item_size() && !child->get_from_item(0).is_joined_
+        && child->get_from_item(0).table_id_ == table->table_id_
+        && !child->is_set_stmt() && !child->has_order_by() && !child->has_group_by()
+        && !child->has_having() && !child->has_distinct() && !child->has_window_function()
+        && !child->has_subquery() && !child->has_recursive_cte() && child->get_semi_infos().empty()
+        && !child->is_contains_assignment() && 0 == child->get_user_var_size()
+        && !child->is_calc_found_rows() && !child->has_for_update() && !child->has_select_into()
+        && !child->has_vec_approx() && child->get_pseudo_column_like_exprs().empty()
+        && nullptr != child->get_limit_expr() && child->get_limit_expr()->is_static_scalar_const_expr()
+        && (nullptr == child->get_offset_expr() || child->get_offset_expr()->is_static_scalar_const_expr())
+        && nullptr == child->get_limit_percent_expr() && !child->is_fetch_with_ties()
+        && 1 == child->get_match_exprs().count() && child->get_match_exprs().at(0) == match
+        && T_FUN_MATCH_AGAINST == match->get_expr_type() && NATURAL_LANGUAGE_MODE == match->get_mode_flag()
+        && match->get_columns_boosts().empty() && nullptr == match->get_param_text_expr()
+        && nullptr != match->get_search_key() && match->get_search_key()->is_const_raw_expr()
+        && nullptr != predicate
+        && (predicate == match || (T_OP_BOOL == predicate->get_expr_type()
+            && 1 == predicate->get_param_count() && predicate->get_param_expr(0) == match))) {
+      unobserved = true;
+      for (int64_t i = 0; unobserved && i < child->get_select_item_size(); ++i) {
+        const ObRawExpr *expr = child->get_select_item(i).expr_;
+        unobserved = nullptr != expr && (expr->is_const_raw_expr()
+            || (expr->is_column_ref_expr()
+                && static_cast<const ObColumnRefRawExpr *>(expr)->get_table_id() == table->table_id_));
+      }
+      for (int64_t i = 0; unobserved && i < match->get_match_columns().count(); ++i) {
+        const ObRawExpr *expr = match->get_match_columns().at(i);
+        unobserved = nullptr != expr && expr->is_column_ref_expr()
+            && static_cast<const ObColumnRefRawExpr *>(expr)->get_table_id() == table->table_id_;
+      }
+    }
+  }
+  return unobserved;
+}
+
 // full-text index queries on a single base table are processed with order preservation. 
 // (Order is not preserved in multi-table join scenarios.)
-int ObTransformPreProcess::preserve_order_for_fulltext_search(ObDMLStmt *stmt, bool& trans_happened)
+int ObTransformPreProcess::preserve_order_for_fulltext_search(
+    const ObIArray<ObParentDMLStmt> &parent_stmts, ObDMLStmt *stmt, bool& trans_happened)
 {
   int ret = OB_SUCCESS;
   trans_happened = false;
@@ -3937,10 +4011,29 @@ int ObTransformPreProcess::preserve_order_for_fulltext_search(ObDMLStmt *stmt, b
     }
   }
   if (OB_SUCC(ret) && nullptr != match_expr && !static_cast<ObMatchFunRawExpr*>(match_expr)->is_es_match()) {
-    OrderItem item(match_expr, default_desc_direction());
-    if (OB_FAIL(stmt->add_order_item(item))) {
+    if (implicit_fulltext_order_is_unobserved(parent_stmts, stmt,
+                                             static_cast<ObMatchFunRawExpr *>(match_expr))) {
+      ObSelectStmt *select_stmt = static_cast<ObSelectStmt *>(stmt);
+      for (int64_t i = 0; OB_SUCC(ret) && i < select_stmt->get_select_item_size(); ++i) {
+        ObConstRawExpr *one = nullptr;
+        if (OB_FAIL(ObRawExprUtils::build_const_int_expr(*ctx_->expr_factory_,
+                                                         ObIntType, 1, one))) {
+        } else if (OB_ISNULL(one)) {
+          ret = OB_ERR_UNEXPECTED;
+        } else {
+          select_stmt->get_select_item(i).expr_ = one;
+        }
+      }
+      if (OB_SUCC(ret)) {
+        trans_happened = true;
+      }
+      OPT_TRACE("omit implicit fulltext order and projections for count-only limited view");
     } else {
-      trans_happened = true;
+      OrderItem item(match_expr, default_desc_direction());
+      if (OB_FAIL(stmt->add_order_item(item))) {
+      } else {
+        trans_happened = true;
+      }
     }
   } 
   return ret;

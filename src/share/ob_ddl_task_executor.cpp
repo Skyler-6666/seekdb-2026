@@ -15,6 +15,7 @@
  */
 
 #include "ob_ddl_task_executor.h"
+#include "lib/cpu/ob_cpu_topology.h"
 #include "lib/ob_running_mode.h"
 #include "lib/thread/ob_thread_name.h"
 #include "lib/stat/ob_diagnostic_info_guard.h"
@@ -255,11 +256,12 @@ ObDDLLocalBuilder::~ObDDLLocalBuilder()
 int ObDDLLocalBuilder::init()
 {
   int ret = OB_SUCCESS;
+  const int64_t thread_count = get_thread_cnt_();
   FLOG_INFO("[DDL_LOCAL_BUILDER] begin init ddl local builder",
-            K(is_thread_started_), K(is_stopped_));
+            K(is_thread_started_), K(is_stopped_), K(thread_count));
   if (OB_UNLIKELY(is_thread_started_)) {
     ret = OB_STATE_NOT_MATCH;
-  } else if (OB_FAIL(task_queue_.init(get_thread_cnt_(), 4 << 10, "DdlBuild"))) {
+  } else if (OB_FAIL(task_queue_.init(thread_count, 4 << 10, "DdlBuild"))) {
   } else if (OB_FAIL(task_queue_.start())) {
   } else {
     is_thread_started_ = true;
@@ -350,7 +352,25 @@ int ObDDLLocalBuilder::push_task(ObAsyncTask &task)
 
 int64_t ObDDLLocalBuilder::get_thread_cnt_() const
 {
-  return lib::is_mini_mode() ? 1 : 16;
+  // Choose once at queue initialization from configured resources, not current
+  // free memory. Starting/stopping the scheduler does not resize its workers.
+  return calc_thread_count(lib::is_mini_mode(), common::get_cpu_count(),
+                           lib::ObRunningModeConfig::instance().memory_budget_);
+}
+
+int64_t ObDDLLocalBuilder::calc_thread_count(const bool mini_mode,
+                                           const int64_t cpu_count,
+                                           const int64_t memory_budget)
+{
+  // Independent DDL tasks already execute concurrently in normal mode. Allow
+  // two on larger mini-mode deployments so one index build need not serialize
+  // all of its independent auxiliary tables. Keep the one-worker limit on
+  // smaller deployments and leave headroom for foreground SQL and compaction.
+  const int64_t MIN_PARALLEL_CPU_COUNT = 4;
+  const int64_t MIN_PARALLEL_MEMORY_BUDGET = 4LL << 30;
+  return !mini_mode ? 16
+       : cpu_count >= MIN_PARALLEL_CPU_COUNT && memory_budget >= MIN_PARALLEL_MEMORY_BUDGET ? 2
+       : 1;
 }
 
 }  // end namespace share

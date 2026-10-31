@@ -186,6 +186,9 @@ int ObSRTaaTIterImpl::init_chunk_stores()
   } else {
     void *buf = nullptr;
     int64_t capacity = iter_param_->max_batch_size_;
+    // Partitioning is capped so each map's expected working set is around the
+    // default hash-map size. The legacy ten-bucket map caused long chains here.
+    const int64_t bucket_count = OB_HASHMAP_DEFAULT_SIZE;
     OB_ASSERT(nullptr == hash_maps_ && nullptr == datum_stores_ && nullptr == datum_store_iters_
       && nullptr == skips_); // TODO: to be deleted
     if (OB_FAIL(ret)) {
@@ -218,7 +221,7 @@ int ObSRTaaTIterImpl::init_chunk_stores()
         ret = OB_ALLOCATE_MEMORY_FAILED;
       } else {
         ObSRTaaTHashMap *hash_map = new (buf) ObSRTaaTHashMap();
-        if (OB_FAIL(hash_map->create(10, common::ObMemAttr("FTTaatMap")))) {
+        if (OB_FAIL(hash_map->create(bucket_count, common::ObMemAttr("FTTaatMap")))) {
         } else {
           hash_maps_[i] = hash_map;
         }
@@ -386,7 +389,6 @@ int ObSRTaaTIterImpl::load_next_hash_map()
 
     ObDocIdExt id;
     double cur_relevance = 0.0;
-    double last_relevance = 0.0;
     while (OB_SUCC(ret)) {
       if (OB_FAIL(query::spill_row_store_next_row(
           store_iter, *eval_ctx, exprs))) {
@@ -398,11 +400,11 @@ int ObSRTaaTIterImpl::load_next_hash_map()
         } else if (iter_param_->need_project_relevance()) {
           ObDatum &relevance_datum = iter_param_->relevance_expr_->locate_expr_datum(*eval_ctx);
           cur_relevance = relevance_datum.get_double();
-          if (OB_FAIL(map->get_refactored(id, last_relevance))) {
-            if (OB_HASH_NOT_EXIST != ret) {
-            } else if (OB_FAIL(map->set_refactored(id, cur_relevance, 1 /* overwrite */))) {
-            }
-          } else if (OB_FAIL(map->set_refactored(id, cur_relevance + last_relevance, 1 /* overwrite */))) {
+          auto add_relevance = [cur_relevance](
+              common::hash::HashMapPair<ObDocIdExt, double> &entry) {
+            entry.second += cur_relevance;
+          };
+          if (OB_FAIL(map->set_or_update(id, cur_relevance, add_relevance))) {
           }
         } else {
           if (OB_FAIL(map->set_refactored(id, 1.0, 0 /* overwrite */))) {

@@ -1,0 +1,298 @@
+// Source-extracted functions plus portable allocator/stream/string boundary glue.
+#include <algorithm>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <map>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+using uchar = unsigned char;
+using uint32 = uint32_t;
+using ob_wc_t = unsigned long;
+constexpr int OB_SUCCESS = 0, OB_NOT_INIT = -1, OB_ITER_END = -2,
+    OB_ERR_UNEXPECTED = -3, OB_INVALID_ARGUMENT = -4,
+    OB_ALLOCATE_MEMORY_FAILED = -5, OB_HASH_NOT_EXIST = -6, INPUT_FAILURE = -7;
+#define OB_UNLIKELY(x) (x)
+#define OB_ISNULL(x) ((x) == nullptr)
+#define OB_NOT_NULL(x) ((x) != nullptr)
+#define OB_SUCC(x) ((x) == OB_SUCCESS)
+#define OB_FAIL(x) ((ret = (x)) != OB_SUCCESS)
+#define IS_NOT_INIT (!is_inited_)
+#define MEMCPY std::memcpy
+#define LOG_DEBUG(...) ((void)0)
+#define IS_CONTINUATION_BYTE(code) (((code) >> 6) == 0x02)
+#define ob_charset_assert(x) do { if (!(x)) std::abort(); } while (false)
+#ifdef _MSC_VER
+#define __attribute__(x)
+#endif
+@DEFINITIONS@
+struct ObUnicaseInfoChar { uint32 toupper, tolower, sort; };
+struct ObUnicaseInfo { ob_wc_t maxchar; const ObUnicaseInfoChar **page; };
+@CASE_TABLES@
+enum ObCharsetType { CHARSET_UTF8MB4 = 1, CHARSET_UTF16 = 2 };
+using ObCollationType = int;
+struct ObCharsetInfo;
+struct Handler { size_t (*casedn)(const ObCharsetInfo *, char *, size_t, char *, size_t); };
+struct ObCharsetInfo {
+  int number;
+  const unsigned char *ctype;
+  int casedn_multiply;
+  ObUnicaseInfo *caseinfo;
+  Handler *cset;
+};
+@UTF8_CONVERSION@
+int64_t casefold_calls = 0;
+size_t counted_casefold(const ObCharsetInfo *cs, char *src, size_t size, char *dst, size_t capacity) {
+  ++casefold_calls;
+  return ob_casedn_utf8mb4(cs, src, size, dst, capacity);
+}
+Handler handler{counted_casefold};
+
+struct ObString {
+  using obstr_size_t = int32_t;
+  int64_t size_ = 0;
+  char *data_ = nullptr;
+  ObString() = default;
+  ObString(int64_t size, const char *data) : size_(size), data_(const_cast<char *>(data)) {}
+  int64_t length() const { return size_; }
+  char *ptr() const { return data_; }
+  void assign_ptr(char *data, obstr_size_t size) { data_ = data; size_ = size; }
+  std::string str() const { return size_ ? std::string(data_, static_cast<size_t>(size_)) : std::string(); }
+  bool operator<(const ObString &other) const { return str() < other.str(); }
+  bool operator==(const ObString &other) const { return str() == other.str(); }
+};
+struct ObDatum {
+  const char *ptr_ = nullptr;
+  uint32_t len_ = 0;
+  void reset() { ptr_ = nullptr; len_ = 0; }
+  void set_string(const ObString &s) { ptr_ = s.ptr(); len_ = static_cast<uint32_t>(s.length()); }
+  ObString get_string() const { return ObString(len_, ptr_); }
+};
+struct ObIAllocator {
+  std::vector<std::pair<char *, size_t>> blocks;
+  size_t reused_through = 0;
+  int64_t calls = 0;
+  bool fail_next = false;
+  char *alloc(int64_t size) {
+    ++calls;
+    if (fail_next) { fail_next = false; return nullptr; }
+    char *p = static_cast<char *>(std::malloc(static_cast<size_t>(std::max<int64_t>(size, 1))));
+    blocks.emplace_back(p, static_cast<size_t>(size)); return p;
+  }
+  void reuse() {
+    for (size_t i = reused_through; i < blocks.size(); ++i) std::memset(blocks[i].first, 0xA5, blocks[i].second);
+    reused_through = blocks.size();
+  }
+  void reset() { for (auto b : blocks) std::free(b.first); blocks.clear(); reused_through = 0; }
+  ~ObIAllocator() { reset(); }
+};
+int ob_write_string(ObIAllocator &allocator, const ObString &src, ObString &dst) {
+  char *p = allocator.alloc(src.length());
+  if (!p) return OB_ALLOCATE_MEMORY_FAILED;
+  std::memcpy(p, src.ptr(), static_cast<size_t>(src.length()));
+  dst = ObString(src.length(), p); return OB_SUCCESS;
+}
+struct ObCharset {
+  static ObCharsetType charset_type_by_coll(ObCollationType number) {
+    return number == 45 || number == 46 || number == 224 ? CHARSET_UTF8MB4 : CHARSET_UTF16;
+  }
+  static int tolower(const ObCharsetInfo *, const ObString &, ObString &, ObIAllocator &);
+};
+@LOWERCASE@
+struct ObITokenStream {
+  virtual ~ObITokenStream() = default;
+  virtual int get_next(ObDatum &, int64_t &) = 0;
+  virtual void reuse() = 0;
+};
+struct InputStream : ObITokenStream {
+  std::vector<std::pair<std::string, int64_t>> words;
+  std::string scratch;
+  size_t position = 0;
+  int64_t fail_at = -1;
+  int get_next(ObDatum &token, int64_t &frequency) override {
+    if (static_cast<int64_t>(position) == fail_at) return INPUT_FAILURE;
+    if (position == words.size()) return OB_ITER_END;
+    // Intentionally overwrite/reallocate the prior token's buffer on each call.
+    scratch.assign(words[position].first);
+    token.set_string(ObString(static_cast<int64_t>(scratch.size()), scratch.data()));
+    frequency = words[position++].second; return OB_SUCCESS;
+  }
+  void reuse() override { position = 0; scratch.assign(17, 'Q'); }
+};
+
+namespace oceanbase { namespace share {
+struct ObTokenNormalizer : ObITokenStream {
+  ObITokenStream *in_stream_ = nullptr;
+  const ObCharsetInfo *cs_ = nullptr;
+  bool is_inited_ = true;
+  void reset();
+  void reuse() override;
+};
+@NORMALIZER_BASE@
+struct ObBasicEnglishNormalizer : ObTokenNormalizer {
+  ObIAllocator norm_allocator_;
+  int get_next(ObDatum &, int64_t &) override;
+  void reset(); void reuse() override;
+};
+struct BaselineNormalizer : ObTokenNormalizer {
+  ObIAllocator norm_allocator_;
+  int get_next(ObDatum &, int64_t &) override;
+  void reset(); void reuse() override;
+};
+@NORMALIZERS@
+struct GroupMap {
+  std::map<ObString, int64_t> map;
+  using iterator = decltype(map)::iterator;
+  int get_refactored(const ObString &key, int64_t &frequency) { auto i = map.find(key); if (i == map.end()) return OB_HASH_NOT_EXIST; frequency = i->second; return OB_SUCCESS; }
+  int set_refactored(const ObString &key, int64_t frequency) { map.emplace(key, frequency); return OB_SUCCESS; }
+  int64_t *get(const ObString &key) { return &map.at(key); }
+  iterator begin() { return map.begin(); } iterator end() { return map.end(); }
+};
+struct ObTextTokenGroupNormalizer {
+  ObITokenStream *in_stream_;
+  bool in_stream_iter_end_ = false;
+  ObIAllocator token_allocator_;
+  GroupMap grouping_map_;
+  GroupMap::iterator map_iter_, map_end_iter_;
+  int build_grouping_map();
+};
+@GROUP_CONSUMER@
+}}
+namespace oceanbase { namespace storage {
+struct ObBEngFTParser {
+  ObITokenStream *token_stream_;
+  ObIAllocator allocator_;
+  bool is_inited_ = true;
+  int get_next_token(const char *&, int64_t &, int64_t &, int64_t &);
+};
+@BENG_CONSUMER@
+}}
+using oceanbase::share::BaselineNormalizer;
+using oceanbase::share::ObBasicEnglishNormalizer;
+using oceanbase::share::ObTextTokenGroupNormalizer;
+using oceanbase::storage::ObBEngFTParser;
+
+void require(bool ok, const char *message) { if (!ok) throw std::runtime_error(message); }
+using Words = std::vector<std::pair<std::string, int64_t>>;
+int64_t cases = 0;
+template<class Normalizer> Words drain(Normalizer &normalizer) {
+  Words result;
+  ObDatum datum; int64_t frequency = 0;
+  for (int i = 0; i < 20000; ++i) {
+    const int ret = normalizer.get_next(datum, frequency);
+    if (ret == OB_ITER_END) return result;
+    require(ret == OB_SUCCESS, "unexpected normalizer error");
+    result.emplace_back(datum.get_string().str(), frequency);
+  }
+  throw std::runtime_error("stream did not reach EOF");
+}
+void compare(const Words &words, ObCharsetInfo &cs, bool require_fallback = false) {
+  InputStream old_input, new_input; old_input.words = new_input.words = words;
+  BaselineNormalizer old; ObBasicEnglishNormalizer now;
+  old.in_stream_ = &old_input; now.in_stream_ = &new_input; old.cs_ = now.cs_ = &cs;
+  casefold_calls = 0;
+  const Words a = drain(old);
+  const int64_t old_calls = casefold_calls;
+  casefold_calls = 0;
+  require(a == drain(now), "normalizer bytes/frequency differ");
+  if (require_fallback) require(old_calls == casefold_calls, "non-identity input bypassed charset conversion");
+  ++cases;
+}
+
+void correctness() {
+  for (int number : {45, 46, 224}) for (auto *table : {&ob_unicase_default, &ob_unicase_unicode520}) {
+    ObCharsetInfo cs{number, ctype_utf8mb4, 1, table, &handler};
+    for (int ch = 0; ch < 256; ++ch) compare({{"x" + std::string(1, static_cast<char>(ch)) + "z", ch + 1}}, cs, ch >= 128 || (ch >= 'A' && ch <= 'Z'));
+    for (int a = 0; a < 128; ++a) for (int b = 0; b < 128; ++b)
+      compare({{"x" + std::string(1, static_cast<char>(a)) + std::string(1, static_cast<char>(b)) + "z", 3}}, cs);
+    compare({{"", 5}, {"!?", 9}, {" ((lowercase!)) ", 7}, {"UPPER", 11},
+             {"ÉCLAIR", 3}, {"Straße", 4}, {"İstanbul", 1}, {"中文abc", 2}, {"caféx", 8}}, cs);
+    // UTF8 inputs always use the real upstream Unicode case conversion.
+    compare({{"xéz", 2}, {"xİz", 1}, {"x\xf0\x9f\x98\x80z", 3}, {"x\xffz", 1}}, cs, true);
+  }
+  for (int number : {54, 56, 8, 63}) {
+    ObCharsetInfo cs{number, ctype_utf8mb4, 1, &ob_unicase_default, &handler};
+    // These verify dispatch/fallback, not real UTF16/Latin1/binary case semantics.
+    compare({{"lowercase", 2}, {std::string("a\x01*z", 4), 3}, {"UPPER", 1}}, cs, true);
+  }
+}
+
+void consumers_and_lifecycle() {
+  ObCharsetInfo cs{45, ctype_utf8mb4, 1, &ob_unicase_default, &handler};
+  const Words sequence = {{"UPPER", 3}, {"identity", 2}, {"ÉCLAIR", 1}, {"lowercase", 4}, {"UPPER", 5}, {"identity", 6}};
+  InputStream a, b; a.words = b.words = sequence;
+  BaselineNormalizer old; ObBasicEnglishNormalizer now;
+  old.in_stream_ = &a; now.in_stream_ = &b; old.cs_ = now.cs_ = &cs;
+  ObBEngFTParser old_beng{&old}, new_beng{&now};
+  std::vector<std::pair<const char *, int64_t>> saved_old, saved_new;
+  Words old_words, new_words;
+  for (size_t i = 0; i < sequence.size(); ++i) {
+    const char *p = nullptr; int64_t n = 0, characters = 0, frequency = 0;
+    require(old_beng.get_next_token(p, n, characters, frequency) == OB_SUCCESS, "baseline BENG failed");
+    saved_old.emplace_back(p, n); old_words.emplace_back(std::string(p, static_cast<size_t>(n)), frequency);
+    require(new_beng.get_next_token(p, n, characters, frequency) == OB_SUCCESS, "candidate BENG failed");
+    saved_new.emplace_back(p, n); new_words.emplace_back(std::string(p, static_cast<size_t>(n)), frequency);
+  }
+  require(old_words == new_words, "BENG words/frequency differ");
+  old.reuse(); now.reuse();
+  for (size_t i = 0; i < sequence.size(); ++i)
+    require(std::string(saved_new[i].first, static_cast<size_t>(saved_new[i].second)) == old_words[i].first,
+        "BENG retained token aliases upstream/normalizer storage");
+  require(drain(old) == drain(now), "reuse stream differs");
+  old.reuse(); now.reuse();
+  ObTextTokenGroupNormalizer ga{&old}, gb{&now};
+  require(ga.build_grouping_map() == OB_SUCCESS && gb.build_grouping_map() == OB_SUCCESS, "grouping consumer failed");
+  old.reuse(); now.reuse(); // Poison prior temporary bytes and overwrite input scratch.
+  require(ga.grouping_map_.map == gb.grouping_map_.map, "retained group keys/frequency differ");
+  require(gb.grouping_map_.map.at(ObString(8, "identity")) == 8, "borrowed token frequency grouping differs");
+  old.reset(); now.reset();
+  ObDatum da, db; int64_t fa = 0, fb = 0;
+  require(old.get_next(da, fa) == OB_NOT_INIT && now.get_next(db, fb) == OB_NOT_INIT, "reset validity differs");
+}
+
+void failures_and_counts() {
+  ObCharsetInfo cs{45, ctype_utf8mb4, 1, &ob_unicase_default, &handler};
+  for (const Words &words : {Words{}, Words{{"", 7}}, Words{{"?!", 9}}}) {
+    for (bool initialized : {false, true}) {
+      InputStream first, second; first.words = second.words = words;
+      BaselineNormalizer before; ObBasicEnglishNormalizer after;
+      before.in_stream_ = &first; after.in_stream_ = &second;
+      before.cs_ = after.cs_ = &cs; before.is_inited_ = after.is_inited_ = initialized;
+      ObDatum left, right; left.set_string(ObString(8, "sentinel")); right = left;
+      int64_t left_frequency = 67, right_frequency = 67;
+      require(before.get_next(left, left_frequency) == after.get_next(right, right_frequency), "empty/not-init result differs");
+      require(left.get_string().str() == right.get_string().str() && left_frequency == right_frequency,
+          "empty/not-init output state differs");
+    }
+  }
+  InputStream a, b; a.words = b.words = {{"UPPER", 7}};
+  BaselineNormalizer old; ObBasicEnglishNormalizer now;
+  old.in_stream_ = &a; now.in_stream_ = &b; old.cs_ = now.cs_ = &cs;
+  old.norm_allocator_.fail_next = now.norm_allocator_.fail_next = true;
+  ObDatum da, db; int64_t fa = 0, fb = 0;
+  require(old.get_next(da, fa) == OB_ALLOCATE_MEMORY_FAILED && now.get_next(db, fb) == OB_ALLOCATE_MEMORY_FAILED,
+      "fallback allocation error differs");
+  old.reuse(); now.reuse(); a.fail_at = b.fail_at = 0;
+  require(old.get_next(da, fa) == INPUT_FAILURE && now.get_next(db, fb) == INPUT_FAILURE, "upstream failure differs");
+  old.reuse(); now.reuse(); a.fail_at = b.fail_at = -1;
+  a.words.clear();
+  for (int i = 0; i < 10000; ++i) a.words.emplace_back(i % 5 ? "lowercase" : "UPPERCASE", 1);
+  b.words = a.words;
+  const int64_t old_before = old.norm_allocator_.calls, new_before = now.norm_allocator_.calls;
+  require(drain(old) == drain(now), "count workload output differs");
+  require(old.norm_allocator_.calls - old_before == 10000 && now.norm_allocator_.calls - new_before == 2000,
+      "temporary normalization allocation count regressed");
+  std::cout << "adapter_operation_counts tokens=10000 lowercase_ascii=8000 old_normalizer_allocations=10000 new_normalizer_allocations=2000; BENG stable copies retained\n";
+}
+
+int main() {
+  try {
+    correctness(); consumers_and_lifecycle(); failures_and_counts();
+    std::cout << "PASS: " << cases << " byte/frequency cases with real UTF8 case tables/conversion, BENG and grouped lifetimes, reuse/reset/faults\n";
+    std::cout << "LIMIT: dependency adapters; native charset dispatch/other encodings, allocator, SQL and official performance remain unverified\n";
+    return 0;
+  } catch (const std::exception &e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
+}

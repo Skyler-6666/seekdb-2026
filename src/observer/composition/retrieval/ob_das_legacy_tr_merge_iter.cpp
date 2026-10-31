@@ -340,6 +340,18 @@ int ObDASLegacyTRMergeIter::create_dim_iters()
   return ret;
 }
 
+bool ObDASLegacyTRMergeIter::can_skip_relevance() const
+{
+  // BMW needs real scores for pruning and implicit ranking; TAAT and function
+  // lookup keep their existing behavior. Never substitute presence for a score
+  // in boolean or weighted retrieval.
+  return nullptr != ir_ctdef_ && ir_ctdef_->match_score_unused_
+      && ir_ctdef_->match_filter_is_trivial()
+      && NATURAL_LANGUAGE_MODE == ir_ctdef_->mode_flag_
+      && nullptr == ir_ctdef_->field_boost_expr_ && dim_weights_.empty()
+      && daat_mode_ && !topk_mode_ && !taat_mode_ && !function_lookup_mode_;
+}
+
 int ObDASLegacyTRMergeIter::init_dim_iter_param(ObTextRetrievalScanIterParam &iter_param, const int64_t &idx)
 {
   int ret = OB_SUCCESS;
@@ -363,7 +375,7 @@ int ObDASLegacyTRMergeIter::init_dim_iter_param(ObTextRetrievalScanIterParam &it
     iter_param.allocator_ = &myself_allocator_;
     iter_param.mem_context_ = mem_context_;
     iter_param.eval_ctx_ = ir_rtdef_->eval_ctx_;
-    iter_param.relevance_expr_ = ir_ctdef_->relevance_expr_;
+    iter_param.relevance_expr_ = can_skip_relevance() ? nullptr : ir_ctdef_->relevance_expr_;
     iter_param.inv_scan_doc_length_col_ = ir_ctdef_->inv_scan_doc_length_col_;
     iter_param.inv_scan_domain_id_col_ = ir_ctdef_->inv_scan_domain_id_col_;
     iter_param.inv_idx_agg_cache_mode_ = function_lookup_mode_ && !taat_mode_;
@@ -378,9 +390,10 @@ int ObDASLegacyTRMergeIter::create_sparse_retrieval_iter()
   sr_iter_param_.limit_param_ = &ir_rtdef_->get_inv_idx_scan_rtdef()->limit_param_;
   sr_iter_param_.eval_ctx_ = ir_rtdef_->eval_ctx_;
   sr_iter_param_.id_proj_expr_ = ir_ctdef_->inv_scan_domain_id_col_;
-  sr_iter_param_.relevance_expr_ = ir_ctdef_->relevance_expr_;
+  sr_iter_param_.relevance_expr_ = can_skip_relevance() ? nullptr : ir_ctdef_->relevance_expr_;
   sr_iter_param_.relevance_proj_expr_ = ir_ctdef_->relevance_proj_col_;
   sr_iter_param_.filter_expr_ = ir_ctdef_->match_filter_;
+  sr_iter_param_.match_filter_trivial_ = ir_ctdef_->match_filter_is_trivial();
   sr_iter_param_.topk_limit_ = topk_limit_;
   if (OB_NOT_NULL(ir_ctdef_->field_boost_expr_)) {
     ObDatum *boost_datum = nullptr;
@@ -473,6 +486,13 @@ int ObDASLegacyTRMergeIter::init_daat_iter_param(ObTextDaaTParam &iter_param)
   iter_param.allocator_ = &myself_allocator_;
   iter_param.mode_flag_ = ir_ctdef_->mode_flag_;
   iter_param.function_lookup_mode_ = function_lookup_mode_;
+  // The default 0 also means any matching token: a union never emits a document
+  // absent from all streams. Larger thresholds retain the relevance collector.
+  iter_param.doc_only_union_allowed_ = can_skip_relevance()
+      && ir_rtdef_->minimum_should_match_ >= 0 && ir_rtdef_->minimum_should_match_ <= 1;
+  iter_param.cardinality_only_ = iter_param.doc_only_union_allowed_
+      && ir_ctdef_->cardinality_only_ && ir_ctdef_->result_output_.empty()
+      && !ir_rtdef_->get_inv_idx_scan_rtdef()->need_check_output_datum_;
   iter_param.bm25_param_est_ctx_.total_doc_cnt_expr_
       = ir_ctdef_->get_doc_agg_ctdef()->pd_expr_spec_.pd_storage_aggregate_output_.at(0);
   iter_param.bm25_param_est_ctx_.estimated_total_doc_cnt_ = ir_ctdef_->estimated_total_doc_cnt_;
@@ -1111,7 +1131,7 @@ int ObDASLegacyTRMergeIter::build_query_tokens(const ObDASIRScanCtDef *ir_ctdef,
     int64_t doc_length = 0;
     storage::ObFTParseHelper tokenize_helper;
     common::ObSEArray<ObFTWord, 16> tokens;
-    hash::ObHashMap<ObFTWord, int64_t> token_map;
+    storage::ObFTWordMap token_map;
     const int64_t ft_word_bkt_cnt = MAX(search_text_string.length() / 10, 2);
     if (OB_FAIL(tokenize_helper.init(&alloc, parser_name, parser_properties))) {
     } else if (OB_FAIL(token_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
@@ -1122,7 +1142,7 @@ int ObDASLegacyTRMergeIter::build_query_tokens(const ObDASIRScanCtDef *ir_ctdef,
                            doc_length,
                            token_map))) {
     } else {
-      for (hash::ObHashMap<ObFTWord, int64_t>::const_iterator iter = token_map.begin();
+      for (storage::ObFTWordMap::const_iterator iter = token_map.begin();
           OB_SUCC(ret) && iter != token_map.end();
           ++iter) {
         const ObFTWord &token = iter->first;

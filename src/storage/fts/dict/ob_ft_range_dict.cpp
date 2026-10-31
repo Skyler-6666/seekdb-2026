@@ -378,22 +378,46 @@ int ObFTRangeDict::match_with_hit(const ObString &single_word,
   return last_hit.dict_->match_with_hit(single_word, last_hit, hit);
 }
 
+
+namespace {
+
+// Same result as ObCharset::strcmp(CS_TYPE_UTF8MB4_BIN, lhs, rhs):
+// ob_strnncoll_mb_bin() is memcmp() over the common prefix followed by a length
+// comparison. Used to avoid validation + charset lookup + indirect call for every
+// range check in the dictionary hot path.
+inline int ft_bin_str_cmp(const ObString &lhs, const ObString &rhs)
+{
+  const int64_t cmp_len = MIN(lhs.length(), rhs.length());
+  const int cmp = (cmp_len > 0) ? memcmp(lhs.ptr(), rhs.ptr(), static_cast<size_t>(cmp_len)) : 0;
+  return 0 != cmp ? cmp : static_cast<int>(lhs.length() - rhs.length());
+}
+
+} // anonymous namespace
+
 int ObFTRangeDict::find_first_char_range(const ObString &single_word, ObIFTDict *&dict) const
 {
   int ret = OB_SUCCESS;
   bool found = false;
-  for (int i = 0; OB_SUCC(ret) && !found && i < range_dicts_.size(); ++i) {
-    if (ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                          range_dicts_[i].start_.get_word(),
-                          single_word)
-            <= 0
-        && ObCharset::strcmp(ObCollationType::CS_TYPE_UTF8MB4_BIN,
-                             range_dicts_[i].end_.get_word(),
-                             single_word)
-               >= 0) {
-      dict = range_dicts_[i].dict_;
-      found = true;
+  // Ranges are appended in ascending dictionary-key order (build_one_range()
+  // consumes a sorted dictionary iterator), so the range whose start_word is the
+  // largest one <= single_word is the only candidate. Binary search it instead of
+  // scanning all ranges: O(log n) plain byte comparisons instead of O(n) collation
+  // compares per dictionary lookup.
+  int64_t lo = 0;
+  int64_t hi = range_dicts_.size() - 1;
+  int64_t pos = -1;
+  while (lo <= hi) {
+    const int64_t mid = lo + ((hi - lo) >> 1);
+    if (ft_bin_str_cmp(range_dicts_[mid].start_.get_word(), single_word) <= 0) {
+      pos = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
     }
+  }
+  if (pos >= 0 && ft_bin_str_cmp(range_dicts_[pos].end_.get_word(), single_word) >= 0) {
+    dict = range_dicts_[pos].dict_;
+    found = true;
   }
   if (!found) {
     // not found, dis match

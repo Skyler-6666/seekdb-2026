@@ -191,6 +191,9 @@ public:
   void server_module_thread_wait();
   void destroy();
   int push_task(ObAsyncTask &task);
+  static int64_t calc_thread_count(const bool mini_mode,
+                                  const int64_t cpu_count,
+                                  const int64_t memory_budget);
 
 private:
   int64_t get_thread_cnt_() const;

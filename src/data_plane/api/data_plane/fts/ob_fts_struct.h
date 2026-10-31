@@ -51,7 +51,9 @@ private:
   ObObjMeta meta_;
 };
 
-typedef common::hash::ObHashMap<ObFTWord, int64_t> ObFTWordMap;
+// Each map belongs to one synchronous document, query or TOKENIZE invocation. Parsers and
+// ObAddWord borrow it only until segment() returns; no map is shared by workers.
+typedef common::hash::ObHashMap<ObFTWord, int64_t, common::hash::NoPthreadDefendMode> ObFTWordMap;
 
 class ObAddWordFlag final
 {

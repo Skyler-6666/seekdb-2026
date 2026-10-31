@@ -530,6 +530,35 @@ DEF_TO_STRING(ObTableScanSpec)
   return pos;
 }
 
+bool ObTableScanSpec::supports_fts_ddl_batch_output() const
+{
+  const int64_t col_count = share::ObFtsIndexBuilderUtil::OB_FTS_INDEX_OR_DOC_WORD_TABLE_COL_CNT;
+  const ObExprOperatorType *types = is_fts_index_aux_
+      ? ObFTIndexRowCache::FTS_INDEX_EXPR_TYPE : ObFTIndexRowCache::FTS_DOC_WORD_EXPR_TYPE;
+  bool supported = is_fts_ddl_ && max_batch_size_ > 0
+      && (PHY_TABLE_SCAN == type_ || IS_SAMPLE_SCAN(type_))
+      && !is_global_index_back() && !use_dist_das()
+      && filters_.empty()
+      && ((output_.count() == col_count && nullptr == pdml_partition_id_)
+          || output_.count() == col_count + 1);
+  for (int64_t i = 0; supported && i < output_.count(); ++i) {
+    const ObExpr *expr = output_.at(i);
+    supported = nullptr != expr && expr->is_batch_result();
+    if (supported && i < col_count) {
+      // The doc-id is a projected column adjacent to WORD_SEGMENT, rather
+      // than necessarily a DOC_ID function. Other columns must match exactly.
+      supported = T_FUN_SYS_DOC_ID == types[i] || expr->type_ == types[i];
+    } else if (supported) {
+      supported = T_PDML_PARTITION_ID == expr->type_ && expr == pdml_partition_id_
+          && expr->obj_meta_.is_integer_type();
+    }
+    for (int64_t j = 0; supported && j < i; ++j) {
+      supported = expr != output_.at(j);
+    }
+  }
+  return supported;
+}
+
 int ObTableScanSpec::set_est_row_count_record(const ObIArray<ObEstRowCountRecord> &est_records)
 {
   int ret = OB_SUCCESS;
@@ -679,6 +708,9 @@ ObTableScanOp::ObTableScanOp(ObExecContext &exec_ctx, const ObOpSpec &spec, ObOp
     in_rescan_(false),
     domain_index_(),
     fts_index_(),
+    fts_partition_id_(0),
+    fts_partition_id_null_(true),
+    fts_batch_logged_(false),
     output_   (nullptr),
     fold_iter_(nullptr),
     iter_tree_(nullptr),
@@ -1429,6 +1461,14 @@ int ObTableScanOp::set_need_check_outrow_lob()
 int ObTableScanOp::inner_open()
 {
   int ret = OB_SUCCESS;
+  ObEvalCtx::BatchInfoScopeGuard source_guard(eval_ctx_);
+  if (MY_SPEC.is_fts_ddl_) {
+    // Only expanded token output is batched. Keep the source DAS tree and its
+    // pushdown expression operator in the existing one-document mode.
+    eval_ctx_.set_max_batch_size(0);
+    source_guard.set_batch_size(1);
+    source_guard.set_batch_idx(0);
+  }
   DASTableLocList &table_locs = ctx_.get_das_ctx().get_table_loc_list();
   ObSQLSessionInfo *my_session = NULL;
   cur_trace_id_ = ObCurTraceId::get();
@@ -1497,6 +1537,11 @@ int ObTableScanOp::inner_open()
   }
   output_ = iter_tree_;
   if (OB_SUCC(ret) && OB_FAIL(rand_scan_processor_.init(&spec, this))) {
+  }
+  if (OB_SUCC(ret) && MY_SPEC.is_fts_ddl_ && MY_SPEC.is_vectorized()) {
+    fts_batch_logged_ = false;
+    LOG_INFO("FTS DDL token batch scan opened", "batch_capacity", MY_SPEC.max_batch_size_,
+             "scan_type", MY_SPEC.get_type(), "output_count", MY_SPEC.output_.count());
   }
   return ret;
 }
@@ -1647,6 +1692,15 @@ int ObTableScanOp::fill_storage_feedback_info()
 int ObTableScanOp::inner_rescan()
 {
   int ret = OB_SUCCESS;
+  ObEvalCtx::BatchInfoScopeGuard source_guard(eval_ctx_);
+  if (MY_SPEC.is_fts_ddl_) {
+    eval_ctx_.set_max_batch_size(0);
+    source_guard.set_batch_size(1);
+    source_guard.set_batch_idx(0);
+    fts_index_.reuse();
+    fts_partition_id_null_ = true;
+    fts_batch_logged_ = false;
+  }
   in_rescan_ = true;
   if (OB_FAIL(try_check_status())) {
   } else if (OB_FAIL(ObOperator::inner_rescan())) {
@@ -2199,7 +2253,13 @@ ERRSIM_POINT_DEF(EN_TABLE_SCAN_RETRY_WAIT_EVENT_ERRSIM);
 int ObTableScanOp::inner_get_next_batch(const int64_t max_row_cnt)
 {
   int ret = OB_SUCCESS;
-  if (OB_UNLIKELY(rand_scan_processor_.use_rand_scan())) {
+  if (OB_UNLIKELY(MY_SPEC.is_fts_ddl_)) {
+    if (nullptr != tsc_rtdef_.scan_rtdef_.sample_info_) {
+      ret = inner_get_next_fts_sample_batch();
+    } else {
+      ret = inner_get_next_fts_index_batch(max_row_cnt);
+    }
+  } else if (OB_UNLIKELY(rand_scan_processor_.use_rand_scan())) {
     if (OB_FAIL(rand_scan_processor_.inner_get_next_batch(max_row_cnt))) {
     }
   } else if (OB_FAIL(inner_get_next_batch_for_tsc(max_row_cnt))) {
@@ -3643,9 +3703,125 @@ int ObTableScanOp::inner_get_next_fts_index_row()
   return ret;
 }
 
+int ObTableScanOp::inner_get_next_fts_sample_batch()
+{
+  int ret = OB_SUCCESS;
+  ObEvalCtx::BatchInfoScopeGuard source_guard(eval_ctx_);
+  eval_ctx_.set_max_batch_size(0);
+  source_guard.set_batch_size(1);
+  source_guard.set_batch_idx(0);
+  clear_evaluated_flag();
+  brs_.size_ = 0;
+  brs_.end_ = false;
+  // The sampling pass samples source documents, not expanded token rows.
+  if (OB_FAIL(inner_get_next_row_implement())) {
+    if (OB_ITER_END == ret) {
+      brs_.end_ = true;
+      ret = OB_SUCCESS;
+    }
+  } else {
+    brs_.size_ = 1;
+    brs_.reset_skip(1);
+    FOREACH_CNT_X(e, MY_SPEC.output_, OB_SUCC(ret)) {
+      ObDatum *datum = nullptr;
+      if (OB_FAIL((*e)->eval(eval_ctx_, datum))) {
+      } else {
+        (*e)->get_eval_info(eval_ctx_).projected_ = true;
+        (*e)->get_evaluated_flags(eval_ctx_).set(0);
+      }
+    }
+  }
+  return ret;
+}
+
+int ObTableScanOp::inner_get_next_fts_index_batch(const int64_t max_row_cnt)
+{
+  int ret = OB_SUCCESS;
+  const int64_t capacity = min(max_row_cnt, MY_SPEC.max_batch_size_);
+  const int64_t col_count = share::ObFtsIndexBuilderUtil::OB_FTS_INDEX_OR_DOC_WORD_TABLE_COL_CNT;
+  const ObObjDatumMapType *types = MY_SPEC.is_fts_index_aux_
+      ? ObFTIndexRowCache::FTS_INDEX_TYPES : ObFTIndexRowCache::FTS_DOC_WORD_TYPES;
+  ObEvalCtx::BatchInfoScopeGuard batch_guard(eval_ctx_);
+  batch_guard.set_batch_size(capacity);
+  batch_guard.set_batch_idx(0);
+  clear_evaluated_flag();
+  brs_.size_ = 0;
+  brs_.end_ = false;
+  if (OB_UNLIKELY(capacity <= 0)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    brs_.reset_skip(capacity);
+  }
+  while (OB_SUCC(ret) && brs_.size_ < capacity && !brs_.end_) {
+    blocksstable::ObDatumRow *row = nullptr;
+    if (OB_FAIL(fts_index_.get_next_row(row))) {
+      if (OB_ITER_END != ret) {
+      } else if (brs_.size_ > 0) {
+        // segment() reuses the document arena. Return these rows before any
+        // next-document fetch can invalidate their token/doc-id pointers.
+        ret = OB_SUCCESS;
+        break;
+      } else if (OB_FAIL(fetch_next_fts_index_rows())) {
+        if (OB_ITER_END == ret) {
+          brs_.end_ = true;
+          ret = OB_SUCCESS;
+        }
+      } else if (OB_FAIL(fts_index_.get_next_row(row))) {
+      }
+    }
+    if (OB_SUCC(ret) && !brs_.end_) {
+      if (OB_ISNULL(row)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        batch_guard.set_batch_idx(brs_.size_);
+        for (int64_t i = 0; OB_SUCC(ret) && i < MY_SPEC.output_.count(); ++i) {
+          ObExpr *expr = MY_SPEC.output_.at(i);
+          ObDatum &datum = expr->locate_datum_for_write(eval_ctx_);
+          if (i == col_count) {
+            if (fts_partition_id_null_) {
+              datum.set_null();
+            } else {
+              datum.set_int(fts_partition_id_);
+            }
+          } else if (OB_FAIL(datum.from_storage_datum(row->storage_datums_[i], types[i]))) {
+          }
+          if (OB_SUCC(ret)) {
+            expr->get_eval_info(eval_ctx_).evaluated_ = true;
+            expr->get_eval_info(eval_ctx_).projected_ = true;
+            expr->get_evaluated_flags(eval_ctx_).set(brs_.size_);
+          }
+        }
+        if (OB_SUCC(ret)) {
+          ++brs_.size_;
+        }
+      }
+    }
+  }
+  if (OB_SUCC(ret) && brs_.size_ > 0) {
+    FOREACH_CNT(e, MY_SPEC.output_) {
+      ObEvalInfo &info = (*e)->get_eval_info(eval_ctx_);
+      info.cnt_ = brs_.size_;
+      // Tokens/doc IDs may point into the document cache rather than the
+      // expression's reserved result buffer. Do not retain source-row hints.
+      info.point_to_frame_ = false;
+      info.notnull_ = false;
+    }
+    if (!fts_batch_logged_) {
+      LOG_INFO("FTS DDL first token batch", "row_count", brs_.size_, "batch_capacity", capacity,
+               "is_fts_index_aux", MY_SPEC.is_fts_index_aux_);
+      fts_batch_logged_ = true;
+    }
+  }
+  return ret;
+}
+
 int ObTableScanOp::fetch_next_fts_index_rows()
 {
   int ret = OB_SUCCESS;
+  ObEvalCtx::BatchInfoScopeGuard source_guard(eval_ctx_);
+  eval_ctx_.set_max_batch_size(0);
+  source_guard.set_batch_size(1);
+  source_guard.set_batch_idx(0);
   bool has_segment_word = false;
   while (OB_SUCC(ret) && !has_segment_word) {
     ObExpr *ft_expr = nullptr;
@@ -3679,6 +3855,20 @@ int ObTableScanOp::fetch_next_fts_index_rows()
         ret = OB_SUCCESS;
       } else {
         has_segment_word = true;
+      }
+      if (OB_SUCC(ret) && has_segment_word && MY_SPEC.is_vectorized()
+          && MY_SPEC.output_.count() > share::ObFtsIndexBuilderUtil::OB_FTS_INDEX_OR_DOC_WORD_TABLE_COL_CNT) {
+        ObDatum *partition_id = nullptr;
+        if (OB_FAIL(MY_SPEC.pdml_partition_id_->eval(eval_ctx_, partition_id))) {
+        } else if (OB_ISNULL(partition_id)) {
+          ret = OB_ERR_UNEXPECTED;
+        } else {
+          // Copy the value, not ObDatum's pointer into the source frame.
+          fts_partition_id_null_ = partition_id->is_null();
+          if (!fts_partition_id_null_) {
+            fts_partition_id_ = partition_id->get_int();
+          }
+        }
       }
     }
   }

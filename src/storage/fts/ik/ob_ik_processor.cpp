@@ -76,6 +76,26 @@ int TokenizeContext::reset_resource()
   return OB_SUCCESS;
 }
 
+int TokenizeContext::reset_document(const char *fulltext,
+                                    const int64_t fulltext_len,
+                                    const bool is_smart)
+{
+  int ret = OB_SUCCESS;
+  if (OB_ISNULL(fulltext) || fulltext_len <= 0) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    reset_resource();
+    fulltext_ = fulltext;
+    fulltext_len_ = fulltext_len;
+    cursor_ = 0;
+    next_char_len_ = 0;
+    next_char_type_ = ObFTCharUtil::CharType::USELESS;
+    is_smart_ = is_smart;
+    ret = prepare_next_char();
+  }
+  return ret;
+}
+
 int TokenizeContext::current_char(const char *&ch, uint8_t &char_len)
 {
   int ret = OB_SUCCESS;
@@ -102,10 +122,23 @@ int TokenizeContext::current_char_type(ObFTCharUtil::CharType &type)
 int TokenizeContext::prepare_next_char()
 {
   int ret = OB_SUCCESS;
-  if (OB_FAIL(ObCharset::first_valid_char(coll_type_,
-                                          fulltext_ + cursor_,
-                                          fulltext_len_ - cursor_,
-                                          next_char_len_))) {
+  const unsigned char first = cursor_ < fulltext_len_
+      ? static_cast<unsigned char>(fulltext_[cursor_]) : 0xFF;
+  const bool ascii_fast_path = cursor_ < fulltext_len_ && first < 0x80
+      && CHARSET_UTF8MB4 == ObCharset::charset_type_by_coll(coll_type_);
+  if (ascii_fast_path) {
+    next_char_len_ = 1;
+    if ((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')) {
+      next_char_type_ = ObFTCharUtil::CharType::ENGLISH_LETTER;
+    } else if (first >= '0' && first <= '9') {
+      next_char_type_ = ObFTCharUtil::CharType::ARABIC_LETTER;
+    } else {
+      next_char_type_ = ObFTCharUtil::CharType::USELESS;
+    }
+  } else if (OB_FAIL(ObCharset::first_valid_char(coll_type_,
+                                                 fulltext_ + cursor_,
+                                                 fulltext_len_ - cursor_,
+                                                 next_char_len_))) {
   } else if (OB_FAIL(ObFTCharUtil::classify_first_char(coll_type_,
                                                        fulltext_ + cursor_,
                                                        next_char_len_,

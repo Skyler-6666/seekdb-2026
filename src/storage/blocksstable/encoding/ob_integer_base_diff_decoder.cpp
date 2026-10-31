@@ -122,6 +122,28 @@ int ObIntegerBaseDiffDecoder::update_pointer(const char *old_block, const char *
     } \
   }
 
+namespace {
+
+// The destination buffers may alias externally managed storage, so capture the
+// immutable column metadata before writing the batch. Specializing the normal
+// eight-byte datum avoids redispatching the copy width for every integer.
+template <ObBitStream::ObBitStreamUnpackType UNPACK>
+void decode_nonnull_int64_batch(const unsigned char *data, const int32_t *row_ids,
+    const int64_t row_cap, const int64_t bit_width, const int64_t bit_length,
+    const uint64_t base, common::ObDatum *datums)
+{
+  for (int64_t i = 0; i < row_cap; ++i) {
+    int64_t delta = 0;
+    ObBitStream::get<UNPACK>(data, int64_t(row_ids[i]) * bit_width,
+        bit_width, bit_length, delta);
+    const uint64_t value = static_cast<uint64_t>(delta) + base;
+    MEMCPY(const_cast<char *>(datums[i].ptr_), &value, sizeof(value));
+    datums[i].pack_ = sizeof(value);
+  }
+}
+
+} // namespace
+
 int ObIntegerBaseDiffDecoder::batch_get_bitpacked_values(
     const ObColumnDecoderCtx &ctx,
     const int32_t *row_ids,
@@ -132,7 +154,22 @@ int ObIntegerBaseDiffDecoder::batch_get_bitpacked_values(
 {
   int ret = OB_SUCCESS;
   int64_t packed_len = header_->length_;
-  if (packed_len < 10) {
+  if (!ctx.has_extend_value() && sizeof(uint64_t) == datum_len
+      && 0 == data_offset && packed_len > 0 && packed_len <= 64) {
+    const unsigned char *data = reinterpret_cast<const unsigned char *>(header_)
+        + ctx.col_header_->length_;
+    const int64_t bit_length = packed_len * ctx.micro_block_header_->row_count_;
+    if (packed_len < 10) {
+      decode_nonnull_int64_batch<ObBitStream::PACKED_LEN_LESS_THAN_10>(
+          data, row_ids, row_cap, packed_len, bit_length, base_, datums);
+    } else if (packed_len < 26) {
+      decode_nonnull_int64_batch<ObBitStream::PACKED_LEN_LESS_THAN_26>(
+          data, row_ids, row_cap, packed_len, bit_length, base_, datums);
+    } else {
+      decode_nonnull_int64_batch<ObBitStream::DEFAULT>(
+          data, row_ids, row_cap, packed_len, bit_length, base_, datums);
+    }
+  } else if (packed_len < 10) {
     INT_DIFF_UNPACK_VALUES(
         ctx, row_ids, row_cap, datums, datum_len,
         data_offset, ObBitStream::PACKED_LEN_LESS_THAN_10)

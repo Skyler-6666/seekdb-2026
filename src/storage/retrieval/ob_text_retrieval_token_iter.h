@@ -91,7 +91,7 @@ private:
   int batch_eval_relevance_expr(const int64_t count);
   int estimate_token_doc_cnt();
   inline bool need_inv_idx_agg() { return inv_idx_agg_iter_ != nullptr; }
-  inline bool need_calc_relevance() { return inv_idx_agg_iter_ != nullptr; }
+  inline bool need_calc_relevance() { return relevance_expr_ != nullptr; }
 public:
   static const int64_t INV_IDX_ROWKEY_COL_CNT = 2;
 private:
@@ -132,6 +132,9 @@ public:
   virtual int advance_to(const ObDatum &id_datum) override;
   virtual int get_curr_score(double &score) const override;
   virtual int get_curr_id(const ObDatum *&id_datum) const override;
+  // The returned stable copy belongs to this iterator and lasts until its next
+  // batch read. Used only by the unscored, vectorized natural-language union.
+  int get_doc_only_batch(const int64_t capacity, const ObDocIdExt *&ids, int64_t &count);
 public:
   int get_token_doc_cnt(int64_t &token_doc_cnt) const { return token_iter_->get_token_doc_cnt(token_doc_cnt); }
   virtual int get_dim_max_score(double &score) override {

@@ -99,6 +99,7 @@ private:
       ObTableScanParam &scan_param);
   int create_dim_iters();
   int init_dim_iter_param(ObTextRetrievalScanIterParam &iter_param, const int64_t &idx);
+  bool can_skip_relevance() const;
   int create_sparse_retrieval_iter();
   int init_daat_iter_param(ObTextDaaTParam &iter_param);
   int init_taat_iter_param(ObTextTaaTParam &iter_param);

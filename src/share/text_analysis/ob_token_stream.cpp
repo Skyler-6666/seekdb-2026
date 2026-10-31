@@ -295,7 +295,18 @@ int ObBasicEnglishNormalizer::get_next(ObDatum &next_token, int64_t &token_freq)
     } else {
       ObString norm_alnum_token(norm_token_len, norm_token_ptr);
       ObString norm_lower_token;
-      if (OB_FAIL(ObCharset::tolower(cs_, norm_alnum_token, norm_lower_token, norm_allocator_))) {
+      bool is_lower_ascii = ObCharset::charset_type_by_coll(
+          static_cast<ObCollationType>(cs_->number)) == CHARSET_UTF8MB4;
+      for (uint32_t i = 0; is_lower_ascii && i < norm_token_len; ++i) {
+        const unsigned char ch = static_cast<unsigned char>(norm_token_ptr[i]);
+        is_lower_ascii = ch < 0x80 && !(ch >= 'A' && ch <= 'Z');
+      }
+      if (is_lower_ascii) {
+        // The input stream's token remains valid until the next get_next(),
+        // matching this normalizer's output lifetime. Retaining consumers must
+        // retain the source document or make their own stable copy.
+        next_token.set_string(norm_alnum_token);
+      } else if (OB_FAIL(ObCharset::tolower(cs_, norm_alnum_token, norm_lower_token, norm_allocator_))) {
       } else {
         next_token.set_string(norm_lower_token);
       }

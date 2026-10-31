@@ -1,0 +1,17 @@
+{
+  "categories": {
+    "build": {
+      "improvement": 0.8599203224518728
+    },
+    "query": {
+      "improvement": 0.9033921108944343
+    },
+    "tokenize": {
+      "improvement": 0.7614213971802812
+    }
+  },
+  "config_mismatches": [],
+  "full_score_improvement": 0.5,
+  "mean_improvement": 0.8415779435088627,
+  "score": 100.0
+}

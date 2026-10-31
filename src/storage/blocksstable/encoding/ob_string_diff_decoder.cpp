@@ -27,6 +27,69 @@ namespace blocksstable
 using namespace common;
 const ObColumnHeader::Type ObStringDiffDecoder::type_;
 
+namespace {
+
+// Keep the batch operation distinct in profiles. The 16-byte template is a
+// fixed-size copy; differing spans are decoded from the original column data.
+OB_NOINLINE bool decode_fixed_16_string_batch(
+    const ObStringDiffHeader &header,
+    const unsigned char *col_data,
+    const int32_t *row_ids,
+    const int64_t row_cap,
+    char *buf,
+    const int64_t buf_size,
+    ObDatum *datums)
+{
+  static constexpr int64_t STRING_SIZE = 16;
+  struct DiffSpan {
+    uint8_t output_offset_;
+    uint8_t input_offset_;
+    uint8_t length_;
+  };
+  DiffSpan spans[STRING_SIZE];
+  int64_t span_count = 0;
+  int64_t output_offset = 0;
+  int64_t input_offset = 0;
+  bool supported = header.diff_desc_cnt_ > 0 && header.diff_desc_cnt_ <= STRING_SIZE;
+  for (int64_t i = 0; supported && i < header.diff_desc_cnt_; ++i) {
+    const ObStringDiffHeader::DiffDesc &desc = header.diff_descs_[i];
+    const int64_t length = desc.count_;
+    if (length <= 0 || length > STRING_SIZE - output_offset) {
+      supported = false;
+    } else {
+      if (desc.diff_) {
+        spans[span_count++] = {static_cast<uint8_t>(output_offset),
+                              static_cast<uint8_t>(input_offset),
+                              static_cast<uint8_t>(length)};
+        input_offset += length;
+      }
+      output_offset += length;
+    }
+  }
+  supported = supported && output_offset == STRING_SIZE
+      && input_offset == header.length_ && span_count > 0;
+  if (supported) {
+    char common_template[STRING_SIZE] = {};
+    header.copy_string(ObStringDiffHeader::LeftToRight(), std::logical_not<uint8_t>(),
+        header.common_data(), common_template);
+    for (int64_t i = 0; i < row_cap; ++i) {
+      char *str_ptr = buf + i * buf_size;
+      const unsigned char *cell_data = col_data + row_ids[i] * header.length_;
+      MEMCPY(str_ptr, common_template, STRING_SIZE);
+      for (int64_t j = 0; j < span_count; ++j) {
+        const DiffSpan &span = spans[j];
+        ENCODING_ADAPT_MEMCPY(str_ptr + span.output_offset_,
+            cell_data + span.input_offset_, span.length_);
+      }
+      datums[i].pack_ = STRING_SIZE;
+      datums[i].ptr_ = str_ptr;
+    }
+  }
+  return supported;
+}
+
+} // namespace
+
 ObStringDiffDecoder::ObStringDiffDecoder() : header_(NULL)
 {
 }
@@ -162,9 +225,15 @@ int ObStringDiffDecoder::batch_decode(
     const static uint16_t min_buf_size = 128;
     const int64_t buf_size = std::max(string_size, min_buf_size);
     char *buf = nullptr;
+    bool short_batch_decoded = false;
     if (OB_FAIL(ret)) {
     } else if (OB_ISNULL(buf = static_cast<char *>(ctx.allocator_->alloc(buf_size * row_cap)))) {
       ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else if (16 == string_size && row_cap > 1 && ctx.is_fix_length()
+        && !ctx.has_extend_value() && !header_->is_hex_packing()
+        && decode_fixed_16_string_batch(*header_, col_data, row_ids, row_cap,
+            buf, buf_size, datums)) {
+      short_batch_decoded = true;
     } else {
       for (int64_t i = 0; i < row_cap; ++i) {
         header_->copy_string(ObStringDiffHeader::LeftToRight(), std::logical_not<uint8_t>(),
@@ -173,6 +242,8 @@ int ObStringDiffDecoder::batch_decode(
     }
 
     if (OB_FAIL(ret)) {
+    } else if (short_batch_decoded) {
+      // All requested datums were filled, with the original arena and stride.
     } else if (ctx.is_fix_length()) {
       int64_t row_id = 0;
       const unsigned char *cell_data = nullptr;

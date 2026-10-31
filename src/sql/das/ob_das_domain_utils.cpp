@@ -44,7 +44,11 @@ ObExprOperatorType ObFTIndexRowCache::FTS_INDEX_EXPR_TYPE[] = {T_FUN_SYS_WORD_SE
 ObExprOperatorType ObFTIndexRowCache::FTS_DOC_WORD_EXPR_TYPE[] = {T_FUN_SYS_DOC_ID, T_FUN_SYS_WORD_SEGMENT, T_FUN_SYS_WORD_COUNT, T_FUN_SYS_DOC_LENGTH};
 
 ObFTIndexRowCache::ObFTIndexRowCache()
-  : rows_(),
+  : merge_memctx_(nullptr),
+    retained_text_allocator_(ObMemAttr("FTSDocText")),
+    retained_text_(nullptr),
+    retained_text_capacity_(0),
+    rows_(),
     row_idx_(0),
     is_fts_index_aux_(true),
     helper_(),
@@ -85,14 +89,35 @@ int ObFTIndexRowCache::segment(const common::ObObjMeta &ft_obj_meta,
                                const ObString &fulltext)
 {
   int ret = OB_SUCCESS;
+  ObString retained_fulltext;
   if (OB_UNLIKELY(!is_inited_)) {
     ret = OB_NOT_INIT;
   } else if (FALSE_IT(reuse())) {
+  } else if (fulltext.length() > retained_text_capacity_) {
+    retained_text_allocator_.reset();
+    retained_text_ = static_cast<char *>(retained_text_allocator_.alloc(fulltext.length()));
+    if (OB_ISNULL(retained_text_)) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else {
+      retained_text_capacity_ = fulltext.length();
+    }
+  }
+  if (OB_FAIL(ret)) {
+    // Cached word rows can borrow slices of this text. In particular, the DDL
+    // scan caller's temporary LOB materialization expires as soon as it returns.
+    // Keep the stable copy until all rows have been consumed.
+  } else {
+    if (fulltext.length() > 0) {
+      MEMCPY(retained_text_, fulltext.ptr(), fulltext.length());
+    }
+    retained_fulltext.assign_ptr(retained_text_, fulltext.length());
+  }
+  if (OB_FAIL(ret)) {
   } else if (OB_FAIL(ObDASDomainUtils::generate_fulltext_word_rows(merge_memctx_->get_arena_allocator(),
                                                                    &helper_,
                                                                    ft_obj_meta,
                                                                    doc_id_datum,
-                                                                   fulltext,
+                                                                   retained_fulltext,
                                                                    is_fts_index_aux_,
                                                                    rows_))) {
   } else {
@@ -123,6 +148,9 @@ void ObFTIndexRowCache::reset()
   row_idx_ = 0;
   is_fts_index_aux_ = true;
   helper_.reset();
+  retained_text_allocator_.reset();
+  retained_text_ = nullptr;
+  retained_text_capacity_ = 0;
   if (OB_NOT_NULL(merge_memctx_)) {
     DESTROY_CONTEXT(merge_memctx_);
     merge_memctx_ = nullptr;
@@ -285,7 +313,9 @@ int ObDASDomainUtils::build_ft_doc_word_infos(
   int ret = OB_SUCCESS;
   static int64_t FT_WORD_DOC_COL_CNT = 4;
   static constexpr int64_t FT_MAX_WORD_BUCKET = 997;
-  const int64_t ft_word_bkt_cnt = MIN(MAX(fulltext.length() / 10, 2), FT_MAX_WORD_BUCKET);
+  // A higher bucket count keeps the per-document map at a low load factor;
+  // fewer collisions means fewer collation-aware key comparisons.
+  const int64_t ft_word_bkt_cnt = MIN(MAX(fulltext.length() / 4, 2), FT_MAX_WORD_BUCKET);
   int64_t doc_length = 0;
   ObFTWordMap ft_word_map;
   void *rows_buf = nullptr;

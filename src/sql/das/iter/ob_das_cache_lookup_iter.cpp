@@ -256,6 +256,18 @@ int ObDASCacheLookupIter::inner_get_next_rows(int64_t &count, int64_t capacity)
   int ret = OB_SUCCESS;
   bool get_next_rows = false;
   const bool need_index_proj = index_proj_rows_.index_scan_proj_exprs_.count() > 0;
+  int64_t lookup_batch_row_count = default_batch_row_count_;
+  if (capacity > 0 && capacity < max_size_ && nullptr != lookup_ctdef_
+      && lookup_ctdef_->pd_expr_spec_.pushdown_filters_.empty()
+      && nullptr == lookup_ctdef_->pd_expr_spec_.pd_storage_filters_.get_pushdown_filter()
+      && lookup_ctdef_->pd_expr_spec_.pd_storage_aggregate_output_.empty()
+      && nullptr != lookup_rtdef_ && nullptr == lookup_rtdef_->sample_info_) {
+    // Cache lookups also need to stop gathering keys at a partial output
+    // request. Keep the allocated projection store's member limit unchanged;
+    // save/to_expr continue to track only the keys in this lookup chunk.
+    // Filtered, aggregate and sampled lookups retain their larger prefetch.
+    lookup_batch_row_count = std::min(lookup_batch_row_count, capacity);
+  }
 
   do {
     switch (state_) {
@@ -263,9 +275,9 @@ int ObDASCacheLookupIter::inner_get_next_rows(int64_t &count, int64_t capacity)
         reset_lookup_state();
         int64_t storage_count = 0;
         int64_t index_capacity = 0;
-        while (OB_SUCC(ret) && !index_end_ && lookup_rowkey_cnt_ < default_batch_row_count_) {
+        while (OB_SUCC(ret) && !index_end_ && lookup_rowkey_cnt_ < lookup_batch_row_count) {
           storage_count = 0;
-          index_capacity = std::min(capacity, std::min(max_size_, default_batch_row_count_ - lookup_rowkey_cnt_));
+          index_capacity = std::min(capacity, std::min(max_size_, lookup_batch_row_count - lookup_rowkey_cnt_));
           index_table_iter_->clear_evaluated_flag();
           if (OB_FAIL(index_table_iter_->get_next_rows(storage_count, index_capacity))) {
             if (OB_UNLIKELY(OB_ITER_END != ret)) {

@@ -39,7 +39,14 @@ public:
   int do_process(TokenizeContext &ctx,
                  const char *ch,
                  const uint8_t char_len,
-                 const ObFTCharUtil::CharType type);
+                 const ObFTCharUtil::CharType type) override;
+  void reset() override
+  {
+    start_ = -1;
+    end_ = -1;
+    quan_char_cnt_ = 0;
+    count_hits_.clear();
+  }
 
 private:
   int process_CN_number(TokenizeContext &ctx,
@@ -51,8 +58,6 @@ private:
                        const char *ch,
                        const uint8_t char_len,
                        const ObFTCharUtil::CharType type);
-  void reset();
-
 private:
   bool need_count_scan(TokenizeContext &ctx);
   int output_num_token(TokenizeContext &ctx);

@@ -19,6 +19,7 @@
 #include "storage/fts/dict/ob_ft_dict_hub.h"
 
 #include "lib/ob_errno.h"
+#include "lib/allocator/page_arena.h"
 #include "lib/oblog/ob_log_module.h"
 #include "lib/utility/ob_macro_utils.h"
 #include "storage/fts/dict/ob_ft_cache_container.h"
@@ -111,6 +112,32 @@ int ObFTDictHub::load_cache(const ObFTDictDesc &desc, ObFTCacheRangeContainer &c
     }
   }
 
+  return ret;
+}
+
+int ObFTDictHub::warmup_ik_cache()
+{
+  int ret = OB_SUCCESS;
+  ObArenaAllocator allocator(lib::ObMemAttr("FTDictWarmup"));
+  ObFTCacheRangeContainer range_container(allocator);
+  const ObFTDictDesc main_desc("main_dict",
+                               ObFTDictType::DICT_IK_MAIN,
+                               ObCharsetType::CHARSET_UTF8MB4,
+                               ObCollationType::CS_TYPE_UTF8MB4_BIN);
+  const ObFTDictDesc quantifier_desc("quan_dict",
+                                     ObFTDictType::DICT_IK_QUAN,
+                                     ObCharsetType::CHARSET_UTF8MB4,
+                                     ObCollationType::CS_TYPE_UTF8MB4_BIN);
+  const ObFTDictDesc stopword_desc("stopword",
+                                   ObFTDictType::DICT_IK_STOP,
+                                   ObCharsetType::CHARSET_UTF8MB4,
+                                   ObCollationType::CS_TYPE_UTF8MB4_BIN);
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = OB_NOT_INIT;
+  } else if (OB_FAIL(build_cache(main_desc, range_container))) {
+  } else if (OB_FAIL(build_cache(quantifier_desc, range_container))) {
+  } else if (OB_FAIL(build_cache(stopword_desc, range_container))) {
+  }
   return ret;
 }
 

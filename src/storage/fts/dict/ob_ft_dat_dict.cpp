@@ -127,6 +127,11 @@ int ObFTDATBuilder<DATA_TYPE>::build_from_trie(ObFTTrie<DATA_TYPE> &trie)
               child_code = child_index.child_->dat_build_info_.code_;
               if (check[try_base + child_code] != 0) {
                 conflict = true;
+                // The first candidate also records every child's code. Only
+                // later candidates may stop at the first occupied slot.
+                if (!need_code) {
+                  break;
+                }
               }
             }
           }
@@ -302,15 +307,40 @@ ObArrayHashMap *ObFTDAT::get_map() { return reinterpret_cast<ObArrayHashMap *>(b
 int ObArrayHashMap::find(const ObFTSingleWord &word, ObFTWordCode &code) const
 {
   int ret = OB_ENTRY_NOT_EXIST;
-  uint64_t hash = word.get_word().hash();
-  uint64_t index = hash % header_.capacity_;
+  // A dictionary key contains at most MAX_MB_LEN bytes. Keep ObString's exact
+  // hash, without constructing an out-of-line temporary string for every trie
+  // edge. Empty keys retain ObString::hash()'s zero seed.
+  const uint64_t hash = word.word_len > 0
+      ? common::murmurhash(word.word, word.word_len, 0) : 0;
+  const uint64_t capacity = header_.capacity_;
+  uint64_t index = hash % capacity;
   while (header_.data[index].used) {
-    if (header_.data[index].word == word) {
+    const ObFTSingleWord &entry_word = header_.data[index].word;
+    bool equal = entry_word.word_len == word.word_len;
+    if (equal) {
+      // Constant lengths let the compiler compare short character keys in
+      // registers, while reading exactly the bytes belonging to each key.
+      switch (word.word_len) {
+      case 0: break;
+      case 1: equal = entry_word.word[0] == word.word[0]; break;
+      case 2: equal = 0 == MEMCMP(entry_word.word, word.word, 2); break;
+      case 3: equal = 0 == MEMCMP(entry_word.word, word.word, 3); break;
+      case 4: equal = 0 == MEMCMP(entry_word.word, word.word, 4); break;
+      case 5: equal = 0 == MEMCMP(entry_word.word, word.word, 5); break;
+      default: equal = 0 == MEMCMP(entry_word.word, word.word, word.word_len); break;
+      }
+    }
+    if (equal) {
       code = header_.data[index].code;
       ret = OB_SUCCESS;
       break;
     } else {
-      index = (index + 3) % header_.capacity_;
+      // init() always allocates at least 101 entries. Since index < capacity,
+      // the unchanged +3 probe needs at most one wrap, not another division.
+      index += 3;
+      if (index >= capacity) {
+        index -= capacity;
+      }
     }
   }
   return ret;

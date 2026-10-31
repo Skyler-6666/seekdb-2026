@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_DAS
 #include "sql/das/iter/ob_das_lookup_iter.h"
+#include "sql/das/ob_das_scan_op.h"
 #include "src/sql/engine/ob_exec_context.h"
 
 namespace oceanbase
@@ -173,6 +174,18 @@ int ObDASLookupIter::inner_get_next_rows(int64_t &count, int64_t capacity)
   int64_t simulate_batch_row_cnt = - EVENT_CALL(EventTable::EN_TABLE_LOOKUP_BATCH_ROW_COUNT);
   const bool use_simulate_batch_row_cnt = simulate_batch_row_cnt > 0 && simulate_batch_row_cnt < default_batch_row_count_;
   int64_t default_row_batch_cnt  = use_simulate_batch_row_cnt ? simulate_batch_row_cnt : default_batch_row_count_;
+  if (capacity > 0 && capacity < max_size_ && nullptr != lookup_ctdef_
+      && lookup_ctdef_->pd_expr_spec_.pushdown_filters_.empty()
+      && nullptr == lookup_ctdef_->pd_expr_spec_.pd_storage_filters_.get_pushdown_filter()
+      && lookup_ctdef_->pd_expr_spec_.pd_storage_aggregate_output_.empty()
+      && nullptr != lookup_rtdef_ && nullptr == lookup_rtdef_->sample_info_) {
+    // A partial output request (for example the final LIMIT batch) should not
+    // first gather a full 1000/10000-row unfiltered lookup batch. Filtered or
+    // sampled lookups keep their larger prefetch to avoid many tiny requests
+    // when only a few keys qualify. This bounds prefetch, never total results;
+    // the existing state machine continues until the underlying index ends.
+    default_row_batch_cnt = std::min(default_row_batch_cnt, capacity);
+  }
   do {
     switch (state_) {
       case INDEX_SCAN: {

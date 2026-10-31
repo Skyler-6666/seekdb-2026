@@ -11987,6 +11987,48 @@ int ObLogPlan::construct_startup_filter_for_limit(ObRawExpr *limit_expr, ObLogic
   return ret;
 }
 
+// Keep the normal score-producing plan layout. Only the DAAT implementation may
+// omit scoring, and only when every use of this MATCH is its positive predicate.
+// In particular, do not infer this from an aggregate or the SELECT list alone:
+// ORDER BY, HAVING, window functions, and sibling filters can observe the score.
+static int check_plain_match_score_unused(const ObDMLStmt *stmt,
+                                         ObRawExpr *predicate,
+                                         ObMatchFunRawExpr *match,
+                                         bool &unused)
+{
+  int ret = OB_SUCCESS;
+  unused = false;
+  ObSEArray<ObRawExpr *, 16> exprs;
+  if (OB_ISNULL(stmt) || OB_ISNULL(predicate) || OB_ISNULL(match)) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (!stmt->is_select_stmt() || stmt->has_subquery()
+      || 1 != stmt->get_table_size() || OB_ISNULL(stmt->get_table_item(0))
+      || !stmt->get_table_item(0)->is_basic_table()
+      || static_cast<const ObSelectStmt *>(stmt)->has_window_function()
+      || NATURAL_LANGUAGE_MODE != match->get_mode_flag()
+      || !match->get_columns_boosts().empty() || nullptr != match->get_param_text_expr()
+      || T_OP_BOOL != predicate->get_expr_type() || 1 != predicate->get_param_count()
+      || predicate->get_param_expr(0) != match) {
+    // Other MATCH modes, weighted queries, and expression contexts retain scores.
+  } else if (OB_FAIL(stmt->get_relation_exprs(exprs))) {
+  } else {
+    bool found_predicate = false;
+    bool score_used = false;
+    for (int64_t i = 0; OB_SUCC(ret) && !score_used && i < exprs.count(); ++i) {
+      if (exprs.at(i) == predicate) {
+        found_predicate = true;
+      } else if (nullptr != exprs.at(i)
+          && (exprs.at(i)->has_flag(IS_MATCH_EXPR) || exprs.at(i)->has_flag(CNT_MATCH_EXPR))) {
+        // Even a different raw MATCH may subsequently share a produced score.
+        score_used = true;
+      } else if (OB_FAIL(ObRawExprUtils::find_expr(exprs.at(i), match, score_used))) {
+      }
+    }
+    unused = OB_SUCC(ret) && found_predicate && !score_used;
+  }
+  return ret;
+}
+
 int ObLogPlan::prepare_text_retrieval_scan(const ObIArray<ObRawExpr *> &scan_match_exprs,
                                            const ObIArray<ObRawExpr *> &scan_match_filters,
                                            const ObIArray<ObRawExpr *> &all_match_filters,
@@ -12039,12 +12081,16 @@ int ObLogPlan::prepare_text_retrieval_scan(const ObIArray<ObRawExpr *> &scan_mat
     ObTextRetrievalInfo &tr_info = table_scan->get_text_retrieval_info();
     tr_info.match_expr_ = match_against;
     tr_info.pushdown_match_filter_ = match_pred;
+    if (OB_FAIL(check_plain_match_score_unused(get_stmt(), match_pred, match_against,
+                                              tr_info.match_score_unused_))) {
+    }
     // The mapping table is absent when the data-table rowkey is used as the document ID.
     table_scan->set_doc_id_index_table_id(tr_info.doc_id_idx_tid_);
     if (table_scan->is_vec_adaptive_scan() || table_scan->is_vec_idx_scan_post_filter()) {
       table_scan->set_rowkey_doc_table_id(tr_info.rowkey_idx_tid_);
     }
-    if (OB_FAIL(table_scan->set_is_skip_rowkey_doc(tr_info.doc_id_idx_tid_ == OB_INVALID_ID))) {
+    if (OB_FAIL(ret)) {
+    } else if (OB_FAIL(table_scan->set_is_skip_rowkey_doc(tr_info.doc_id_idx_tid_ == OB_INVALID_ID))) {
     } else if (OB_FAIL(table_scan->set_is_skip_rowkey_doc(tr_info.rowkey_idx_tid_ == OB_INVALID_ID))) {
     }
   }

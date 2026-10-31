@@ -191,12 +191,5 @@ int ObIKQuantifierProcessor::output_num_token(TokenizeContext &ctx)
   return ret;
 }
 
-void ObIKQuantifierProcessor::reset()
-{
-  start_ = -1;
-  end_ = -1;
-  quan_char_cnt_ = 0;
-}
-
 } //  namespace storage
 } //  namespace oceanbase

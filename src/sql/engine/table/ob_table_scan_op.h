@@ -281,6 +281,8 @@ class ObTableScanSpec : public ObOpSpec
 public:
   ObTableScanSpec(common::ObIAllocator &alloc, const ObPhyOperatorType type);
 
+  bool supports_fts_ddl_batch_output() const;
+
   common::ObTableID get_table_loc_id() { return table_loc_id_; }
   uint64_t get_loc_ref_table_id() const { return tsc_ctdef_.scan_ctdef_.ref_table_id_; }
   common::ObTableID get_ref_table_id() const { return ref_table_id_; }
@@ -702,6 +704,8 @@ private:
   int inner_rescan_for_tsc();
 
   int inner_get_next_fts_index_row();
+  int inner_get_next_fts_index_batch(const int64_t max_row_cnt);
+  int inner_get_next_fts_sample_batch();
   int fetch_next_fts_index_rows();
   int fill_generated_fts_cols(blocksstable::ObDatumRow *row);
   int get_output_fts_col_expr_by_type(const ObExprOperatorType &type, ObExpr *&expr);
@@ -735,6 +739,9 @@ protected:
   bool in_rescan_;
   ObDomainIndexCache domain_index_;
   ObFTIndexRowCache fts_index_;
+  int64_t fts_partition_id_;
+  bool fts_partition_id_null_;
+  bool fts_batch_logged_;
 
   // output_ is used to output data, TSC operator directly invokes output_::get_next_row(s),
   // it points to fold_iter_ in group rescan and iter_tree_ in normal scan.

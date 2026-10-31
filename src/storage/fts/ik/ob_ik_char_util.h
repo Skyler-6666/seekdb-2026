@@ -445,26 +445,39 @@ template <ObCharsetType CS_TYPE>
 inline int ObFTCharUtil::do_classify(const char *input, const uint8_t char_len, CharType &type)
 {
   int ret = OB_SUCCESS;
-  bool checker = false;
+  ob_wc_t unicode = 0;
   type = CharType::USELESS;
 
-  if (OB_FAIL(is_alpha<CS_TYPE>(input, char_len, checker))) {
-  } else if (checker) {
-    type = CharType::ENGLISH_LETTER;
-  } else if (OB_FAIL(is_arabic<CS_TYPE>(input, char_len, checker))) {
-  } else if (checker) {
-    type = CharType::ARABIC_LETTER;
-  } else if (OB_FAIL(is_chinese<CS_TYPE>(input, char_len, checker))) {
-  } else if (checker) {
+  // Decode before the fast path to preserve empty/invalid-input behavior.
+  if (OB_FAIL(decode_unicode<CS_TYPE>(input, char_len, unicode))) {
+  } else if (unicode < 0x80) {
+    if ((unicode >= 'A' && unicode <= 'Z') || (unicode >= 'a' && unicode <= 'z')) {
+      type = CharType::ENGLISH_LETTER;
+    } else if (unicode >= '0' && unicode <= '9') {
+      type = CharType::ARABIC_LETTER;
+    }
+  } else if (unicode >= 0xFF00 && unicode <= 0xFFEF) {
+    // This entire block is OTHER_CJK except the fullwidth alpha/digits, whose
+    // categories take precedence. Their code points have a fixed ASCII offset.
+    const ob_wc_t ascii = unicode - 0xFEE0;
+    if ((ascii >= 'A' && ascii <= 'Z') || (ascii >= 'a' && ascii <= 'z')) {
+      type = CharType::ENGLISH_LETTER;
+    } else if (ascii >= '0' && ascii <= '9') {
+      type = CharType::ARABIC_LETTER;
+    } else {
+      type = CharType::OTHER_CJK;
+    }
+  } else if (ObUnicodeBlockUtils::is_chinese(unicode)) {
+    // ASCII/fullwidth above cover all alpha/digit ranges. Other characters
+    // need only the remaining block predicates.
     type = CharType::CHINESE;
-  } else if (OB_FAIL(is_other_cjk<CS_TYPE>(input, char_len, checker))) {
-  } else if (checker) {
+  } else if (ObUnicodeBlockUtils::is_other_cjk(unicode)) {
     type = CharType::OTHER_CJK;
-  } else if (OB_FAIL(is_surrogate_high<CS_TYPE>(input, char_len, checker))) {
-  } else if (checker) {
+  } else if ((CS_TYPE == CHARSET_UTF16 || CS_TYPE == CHARSET_UTF16LE)
+             && ObUnicodeBlockUtils::check_high_surrogate(unicode)) {
     type = CharType::SURROGATE_HIGH;
-  } else if (OB_FAIL(is_surrogate_low<CS_TYPE>(input, char_len, checker))) {
-  } else if (checker) {
+  } else if ((CS_TYPE == CHARSET_UTF16 || CS_TYPE == CHARSET_UTF16LE)
+             && ObUnicodeBlockUtils::check_low_surrogate(unicode)) {
     type = CharType::SURROGATE_LOW;
   }
   return ret;

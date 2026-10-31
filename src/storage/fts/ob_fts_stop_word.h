@@ -17,6 +17,7 @@
 #ifndef OB_FTS_STOP_WORD_H_
 #define OB_FTS_STOP_WORD_H_
 
+#include "lib/charset/ob_charset.h"
 #include "lib/container/ob_iarray.h"
 #include "lib/hash/ob_hashset.h"
 #include "object/ob_object.h"
@@ -133,6 +134,8 @@ private:
   int64_t min_token_size_;
   int64_t max_token_size_;
   ObAddWordFlag flag_;
+  const ObCharsetInfo *casedown_cs_;
+  const ObUnicaseInfo *casedown_caseinfo_;
 };
 
 } // end namespace storage

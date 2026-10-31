@@ -18,6 +18,7 @@
 #define OB_FTS_PARSER_HELPER_H_
 
 #include "lib/allocator/ob_fifo_allocator.h"
+#include "lib/allocator/page_arena.h"
 #include "lib/charset/ob_charset.h"
 #include "lib/string/ob_string.h"
 #include "object/ob_object.h"
@@ -67,10 +68,12 @@ public:
   int serialize_to_str(char *buf, const int64_t buf_len);
   int get_desc(const ObIFTParserDesc *&parser_desc) const;
 
-#define FT_PARSER_TYPE(fts_type, parser_name)                          \
-  OB_INLINE bool is_##parser_name() const {                            \
-    ParserType type = fts_type;                                        \
-    return ObFTParserName(NAME_STR[type]) == parser_name_;             \
+  // Parser names are canonicalized on assignment; all built-in literals above
+  // are already lowercase. Compare them directly without rebuilding a temporary
+  // name on every check. No input, properties, dictionary or result is cached.
+#define FT_PARSER_TYPE(fts_type, parser_name)                            \
+  OB_INLINE bool is_##parser_name() const {                             \
+    return 0 == STRCMP(#parser_name, parser_name_.str());                \
   }
   FTS_BUILD_IN_PARSER_LIST
 #undef FT_PARSER_TYPE
@@ -115,6 +118,7 @@ public:
 
   int init();
   void destroy();
+  int warmup_ik_dictionary();
 
 public:
   ObStopWordChecker *stop_word_checker() const { return stop_word_checker_; }
@@ -204,18 +208,21 @@ public:
 
   void reset();
 
+  // The helper owns reusable parser metadata, while token strings remain in
+  // the caller's current allocator. Repoint it when a cached helper is reused.
+  OB_INLINE void set_allocator(common::ObIAllocator *allocator) { allocator_ = allocator; }
+
   TO_STRING_KV(KP_(allocator), K_(parser_name), KP_(parser_desc), K_(is_inited));
 
 private:
-  static int segment(
+  int segment(
       const ObFTParserProperty &property,
       const int64_t parser_version,
       const ObIFTParserDesc *parser_desc,
       const ObCharsetInfo *cs,
       const char *fulltext,
       const int64_t fulltext_len,
-      common::ObIAllocator &allocator,
-      ObAddWord &add_word);
+      ObAddWord &add_word) const;
   int set_add_word_flag(const ObIFTParserDesc &ftparser_desc);
 private:
   common::ObIAllocator *allocator_;
@@ -223,6 +230,9 @@ private:
   ObFTParser parser_name_;
   ObAddWordFlag add_word_flag_;
   ObFTParserProperty parser_property_;
+  mutable common::ObArenaAllocator parser_allocator_;
+  mutable ObITokenIterator *cached_iter_;
+  mutable ObFTParserParam cached_param_;
   bool is_inited_;
 
 private:
