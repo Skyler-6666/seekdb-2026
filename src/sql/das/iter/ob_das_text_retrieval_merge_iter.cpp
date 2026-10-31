@@ -29,6 +29,52 @@ using namespace share;
 namespace sql
 {
 
+namespace
+{
+
+// The same MATCH query text is tokenized again on every execution, although
+// the parser only depends on (parser name, properties, collation) and the
+// token list only depends on the text. Keep the last result per thread; a hit
+// still copies every token into the caller's allocator.
+struct QueryTokenizeCache
+{
+  QueryTokenizeCache()
+    : arena_(common::ObMemAttr("FtsQryToken")),
+      parser_name_(),
+      parser_properties_(),
+      collation_(ObCollationType::CS_TYPE_INVALID),
+      text_(),
+      helper_(),
+      tokens_(),
+      valid_(false)
+  {}
+
+  void reset_all()
+  {
+    valid_ = false;
+    helper_.reset();
+    arena_.reset();
+    tokens_.reuse();
+    parser_name_.reset();
+    parser_properties_.reset();
+    text_.reset();
+    collation_ = ObCollationType::CS_TYPE_INVALID;
+  }
+
+  common::ObArenaAllocator arena_;
+  common::ObString parser_name_;
+  common::ObString parser_properties_;
+  ObCollationType collation_;
+  common::ObString text_;
+  storage::ObFTParseHelper helper_;
+  common::ObSEArray<common::ObString, 16> tokens_;
+  bool valid_;
+};
+
+thread_local QueryTokenizeCache g_query_tokenize_cache;
+
+} // anonymous namespace
+
 ObIRIterLoserTreeItem::ObIRIterLoserTreeItem()
   : relevance_(0), iter_idx_(-1)
 {
@@ -233,29 +279,68 @@ int ObDASTextRetrievalMergeIter::build_query_tokens(const ObDASIRScanCtDef *ir_c
     const ObString &search_text_string = search_text_datum->get_string();
     const ObString &parser_name = ir_ctdef->get_inv_idx_scan_ctdef()->table_param_.get_parser_name();
     const ObString &parser_properties = ir_ctdef->get_inv_idx_scan_ctdef()->table_param_.get_parser_property();
-
     const ObObjMeta &meta = search_text->obj_meta_;
-    int64_t doc_length = 0;
-    storage::ObFTParseHelper tokenize_helper;
-    common::ObSEArray<ObFTWord, 16> tokens;
-    storage::ObFTWordMap token_map;
-    const int64_t ft_word_bkt_cnt = MAX(search_text_string.length() / 10, 2);
-    if (OB_FAIL(tokenize_helper.init(&alloc, parser_name, parser_properties))) {
-    } else if (OB_FAIL(token_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
-    } else if (OB_FAIL(tokenize_helper.segment(
-                           meta,
-                           search_text_string.ptr(),
-                           search_text_string.length(),
-                           doc_length,
-                           token_map))) {
-    } else {
-      for (storage::ObFTWordMap::const_iterator iter = token_map.begin();
-          OB_SUCC(ret) && iter != token_map.end();
-          ++iter) {
-        const ObFTWord &token = iter->first;
+    QueryTokenizeCache &cache = g_query_tokenize_cache;
+    const bool cache_hit = cache.valid_
+        && cache.collation_ == meta.get_collation_type()
+        && cache.parser_name_ == parser_name
+        && cache.parser_properties_ == parser_properties
+        && cache.text_ == search_text_string;
+    if (cache_hit) {
+      for (int64_t i = 0; OB_SUCC(ret) && i < cache.tokens_.count(); ++i) {
         ObString token_string;
-        if (OB_FAIL(ob_write_string(alloc, token.get_word().get_string(), token_string))) {
+        if (OB_FAIL(ob_write_string(alloc, cache.tokens_.at(i), token_string))) {
         } else if (OB_FAIL(query_tokens.push_back(token_string))) {
+        }
+      }
+    } else {
+      int64_t doc_length = 0;
+      storage::ObFTWordMap token_map;
+      const int64_t ft_word_bkt_cnt = MAX(search_text_string.length() / 10, 2);
+      char *parser_name_buf = nullptr;
+      char *parser_properties_buf = nullptr;
+      cache.reset_all();
+      if (OB_FAIL(cache.helper_.init(&cache.arena_, parser_name, parser_properties))) {
+      } else if (OB_FAIL(token_map.create(ft_word_bkt_cnt, common::ObMemAttr("FTWordMap")))) {
+      } else if (OB_FAIL(cache.helper_.segment(
+                             meta,
+                             search_text_string.ptr(),
+                             search_text_string.length(),
+                             doc_length,
+                             token_map))) {
+      } else if (!parser_name.empty()
+                 && OB_ISNULL(parser_name_buf = static_cast<char *>(
+                     cache.arena_.alloc(parser_name.length())))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else if (!parser_properties.empty()
+                 && OB_ISNULL(parser_properties_buf = static_cast<char *>(
+                     cache.arena_.alloc(parser_properties.length())))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        if (!parser_name.empty()) {
+          MEMCPY(parser_name_buf, parser_name.ptr(), parser_name.length());
+        }
+        if (!parser_properties.empty()) {
+          MEMCPY(parser_properties_buf, parser_properties.ptr(), parser_properties.length());
+        }
+        for (storage::ObFTWordMap::const_iterator iter = token_map.begin();
+            OB_SUCC(ret) && iter != token_map.end();
+            ++iter) {
+          const ObFTWord &token = iter->first;
+          ObString cached_token;
+          ObString token_string;
+          if (OB_FAIL(ob_write_string(cache.arena_, token.get_word().get_string(), cached_token))) {
+          } else if (OB_FAIL(cache.tokens_.push_back(cached_token))) {
+          } else if (OB_FAIL(ob_write_string(alloc, cached_token, token_string))) {
+          } else if (OB_FAIL(query_tokens.push_back(token_string))) {
+          }
+        }
+        if (OB_SUCC(ret) && OB_FAIL(ob_write_string(cache.arena_, search_text_string, cache.text_))) {
+        } else if (OB_SUCC(ret)) {
+          cache.parser_name_.assign_ptr(parser_name_buf, parser_name.length());
+          cache.parser_properties_.assign_ptr(parser_properties_buf, parser_properties.length());
+          cache.collation_ = meta.get_collation_type();
+          cache.valid_ = true;
         }
       }
     }
