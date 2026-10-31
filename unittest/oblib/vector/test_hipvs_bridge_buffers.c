@@ -5,6 +5,8 @@ int main(void)
 {
   static float base[8192 * 4], query[8] = {3}, distances[200];
   unsigned ids[200];
+  // One-shot warm-up builds, searches and frees its own index; nothing may leak.
+  assert(seekdb_cuvs_warmup() == 0 && live == 0);
   assert(seekdb_cuvs_build(base, 8192, 0) == NULL);
   assert(seekdb_cuvs_build(NULL, 8192, 4) == NULL);
   fail_build = 1;

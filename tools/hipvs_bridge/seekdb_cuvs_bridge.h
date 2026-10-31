@@ -27,6 +27,14 @@ int   seekdb_cuvs_search(void* handle, const float* query, long nq, long topk,
 void  seekdb_cuvs_free(void* handle);
 int seekdb_cuvs_serialize(void* handle, const char* filename);
 void* seekdb_cuvs_deserialize(const char* filename, long n, long dim);
+
+/* One-shot runtime warm-up. Creates the HIP/cuVS context and loads the CAGRA
+ * build/search code objects with a tiny synthetic build, then tears them down
+ * again. seekdb calls this on a background thread as soon as a lib=cuvs index is
+ * first touched, so the next real index build does not pay first-use
+ * initialization inside the DDL window. Returns 0 on success, non-zero on error;
+ * a failure is not fatal because the next real build initializes lazily anyway. */
+int seekdb_cuvs_warmup(void);
 #ifdef __cplusplus
 }
 #endif

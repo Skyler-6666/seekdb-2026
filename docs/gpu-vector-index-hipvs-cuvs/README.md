@@ -57,7 +57,26 @@ seekdb_cuvs_build
 seekdb_cuvs_search
 seekdb_cuvs_free
 seekdb_cuvs_cagra_knn
+seekdb_cuvs_serialize
+seekdb_cuvs_deserialize
+seekdb_cuvs_warmup
 ```
+
+## Build-path warm-up
+
+`CREATE VECTOR INDEX` feeds rows through `add_index` and then builds one CAGRA
+graph; the first GPU call in a process also pays HIP context creation and CAGRA
+code-object loading. `mark_cuvs_index()` now starts a one-shot
+`seekdb_cuvs_warmup()` on a detached 32MB-stack thread the first time a
+`lib=cuvs` index is touched. The warm-up builds and searches a 512 x 32 synthetic
+index, so the runtime is initialized while the DDL is still scanning rows instead
+of inside the measured build window. It only runs for `lib=cuvs` indexes, a
+failure is non-fatal (the next real build initializes lazily), and it does not
+change graph parameters, results, or the snapshot format.
+
+Dense `add_index` batches also append to the GPU buffer and read the lazy-fallback
+state under a single registry lock instead of two, because that path runs once per
+indexed row during the DDL scan.
 
 Build seekdb with the resulting library:
 

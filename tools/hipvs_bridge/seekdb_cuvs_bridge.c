@@ -219,3 +219,25 @@ int seekdb_cuvs_cagra_knn(const float* base, long n, long dim,
   seekdb_cuvs_free(h);
   return rc;
 }
+
+int seekdb_cuvs_warmup(void)
+{
+  /* Small enough to be noise on any GPU, large enough to exercise NN-Descent,
+   * host->device copy, graph search and teardown: every kernel the real build
+   * and first query use gets loaded here instead of inside the DDL window. */
+  enum { WARM_N = 512, WARM_DIM = 32, WARM_K = 8 };
+  float base[WARM_N * WARM_DIM];
+  float query[WARM_DIM];
+  unsigned ids[WARM_K];
+  float dist[WARM_K];
+  int i, j;
+  /* Deterministic, non-degenerate values: identical points would give a
+   * distance distribution the build never sees in practice. */
+  for (i = 0; i < WARM_N * WARM_DIM; ++i) base[i] = (float)((i * 31 + 7) % 97) / 97.0f;
+  for (j = 0; j < WARM_DIM; ++j) query[j] = (float)((j * 17 + 3) % 89) / 89.0f;
+  void* h = seekdb_cuvs_build(base, WARM_N, WARM_DIM);
+  if (!h) return 1;
+  int rc = seekdb_cuvs_search(h, query, 1, WARM_K, ids, dist);
+  seekdb_cuvs_free(h);
+  return rc;
+}

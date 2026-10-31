@@ -55,6 +55,7 @@ extern "C" int   seekdb_cuvs_search(void *handle, const float *query, long nq, l
 extern "C" void  seekdb_cuvs_free(void *handle);
 extern "C" int seekdb_cuvs_serialize(void *handle, const char *filename);
 extern "C" void *seekdb_cuvs_deserialize(const char *filename, long n, long dim);
+extern "C" int seekdb_cuvs_warmup(void);
 #else
 // GPU backend not compiled in (OB_BUILD_CUVS=OFF): inert stubs so oblib links
 // without libseekdb_cuvs_bridge.so. ob_cuvs_enabled() is false, so these are
@@ -65,6 +66,7 @@ static int   seekdb_cuvs_search(void *, const float *, long, long, unsigned int 
 static void  seekdb_cuvs_free(void *) {}
 static int seekdb_cuvs_serialize(void *, const char *) { return -1; }
 static void *seekdb_cuvs_deserialize(const char *, long, long) { return nullptr; }
+static int seekdb_cuvs_warmup(void) { return 0; }
 #endif
 
 namespace oceanbase {
@@ -152,6 +154,25 @@ static std::shared_ptr<void> ob_cuvs_build_big_stack(const float *base, long n, 
   pthread_attr_destroy(&attr);
   return ob_cuvs_wrap(job.out);
 }
+#ifdef OB_BUILD_CUVS
+static void *ob_cuvs_warmup_job(void *) {
+  (void)seekdb_cuvs_warmup();
+  return nullptr;
+}
+// First lib=cuvs index starts the GPU runtime in the background, while the DDL
+// is still scanning rows. The real build then reuses the resident HIP context
+// and already-loaded CAGRA code objects instead of paying that first-use cost.
+static void ob_cuvs_warmup_async() {
+  static std::once_flag warmup_once;
+  std::call_once(warmup_once, []() {
+    pthread_t tid; pthread_attr_t attr;
+    if (pthread_attr_init(&attr) != 0) { return; }
+    pthread_attr_setstacksize(&attr, 32UL * 1024 * 1024);
+    if (pthread_create(&tid, &attr, ob_cuvs_warmup_job, nullptr) == 0) { pthread_detach(tid); }
+    pthread_attr_destroy(&attr);
+  });
+}
+#endif
 static void ob_cuvs_register(void *key, const float *vectors, const int64_t *ids,
                              int dim, int size) {
   ObCuvsEntry *ent = new ObCuvsEntry();
@@ -168,17 +189,20 @@ static void ob_cuvs_register(void *key, const float *vectors, const int64_t *ids
 // Buffer vectors arriving via add_index. Plain HNSW builds BOTH its delta and its
 // snapshot incrementally via add_index (one row at a time), so this is where the
 // real data flows -- unlike build_index which is only used by the HNSW_SQ bulk path.
-static void ob_cuvs_add(void *key, const float *vectors, const int64_t *ids,
-                        int dim, int size) {
-  if (vectors == nullptr || ids == nullptr || dim <= 0 || size <= 0) { return; }
+// Returns whether the lazy CPU fallback is already built; the append and that
+// check share one registry lock because this runs once per indexed row.
+static bool ob_cuvs_add_vectors(void *key, const float *vectors, const int64_t *ids,
+                                int dim, int size) {
+  if (vectors == nullptr || ids == nullptr || dim <= 0 || size <= 0) { return false; }
   std::lock_guard<std::mutex> guard(g_ob_cuvs_mu);
   ObCuvsEntry *&slot = g_ob_cuvs_reg[key];
   if (slot == nullptr) { slot = new ObCuvsEntry(); slot->dim_ = dim; }
   if (slot->dim_ == 0) { slot->dim_ = dim; }
-  if (slot->dim_ != dim) { return; }
+  if (slot->dim_ != dim) { return slot->vsag_ready_; }
   slot->buf_vecs_.insert(slot->buf_vecs_.end(), vectors,
                          vectors + static_cast<size_t>(dim) * size);
   slot->buf_ids_.insert(slot->buf_ids_.end(), ids, ids + size);
+  return slot->vsag_ready_;
 }
 static bool ob_cuvs_vsag_ready(void *key) {
   std::lock_guard<std::mutex> guard(g_ob_cuvs_mu);
@@ -1592,8 +1616,7 @@ int add_index(VectorIndexPtr &index_handler, float *vector,
   ob_vsag_trace("add_dense", (const void*)index_handler, (long)(dim), (long)(size));
   if (ob_cuvs_marked(index_handler) && index_handler != nullptr &&
       strcmp(static_cast<HnswIndexHandler *>(index_handler)->get_metric(), "l2") == 0) {
-    ob_cuvs_add(index_handler, vector, ids, dim, size);
-    if (!ob_cuvs_vsag_ready(index_handler)) {
+    if (!ob_cuvs_add_vectors(index_handler, vector, ids, dim, size)) {
       return OB_SUCCESS;
     }
   }
@@ -2128,8 +2151,11 @@ long cuvs_batch_knn(const float *base, long n, long dim,
 void mark_cuvs_index(void *key) {
 #ifdef OB_BUILD_CUVS
   if (key == nullptr) { return; }
-  std::lock_guard<std::mutex> guard(g_ob_cuvs_marked_mu);
-  g_ob_cuvs_marked.insert(key);
+  {
+    std::lock_guard<std::mutex> guard(g_ob_cuvs_marked_mu);
+    g_ob_cuvs_marked.insert(key);
+  }
+  ob_cuvs_warmup_async();
 #else
   (void)key;
 #endif
