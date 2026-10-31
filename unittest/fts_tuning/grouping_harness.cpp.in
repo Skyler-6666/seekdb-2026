@@ -1,0 +1,311 @@
+// Source-extracted regression adapters. This does not compile the seekdb kernel.
+#include <cstdint>
+#include <cstdlib>
+#include <iostream>
+#include <map>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+constexpr int OB_SUCCESS = 0;
+constexpr int OB_INVALID_ARGUMENT = -1;
+constexpr int OB_HASH_NOT_EXIST = -2;
+constexpr int OB_HASH_EXIST = -3;
+constexpr int OB_NOT_INIT = -4;
+constexpr int OB_ALLOCATE_MEMORY_FAILED = -5;
+constexpr int HASH_FAILURE = -6;
+#define OB_UNLIKELY(x) (x)
+#define OB_ISNULL(x) ((x) == nullptr)
+#define OB_SUCC(x) ((x) == OB_SUCCESS)
+#define OB_FAIL(x) (OB_SUCCESS != (ret = (x)))
+#define HASH_WRITE_LOG(...) ((void)0)
+#define TO_STRING_KV(...)
+#define DISALLOW_COPY_AND_ASSIGN(T) T(const T &) = delete; T &operator=(const T &) = delete
+#define abort_unless(x) do { if (!(x)) std::abort(); } while (false)
+#define ATOMIC_INC(x) (++*(x))
+
+template<class T> int copy_assign(T &dst, const T &src) { dst = src; return OB_SUCCESS; }
+namespace oceanbase { namespace common { namespace hash {
+@PAIR_TYPE@
+@PREPROC@
+}}}
+
+// The key's explicit equivalence class models collation-equal, byte-distinct words.
+// Charset parsing/collation itself remains a native integration verification item.
+struct ObFTWord {
+  std::string bytes;
+  std::string equivalence;
+  ObFTWord() = default;
+  ObFTWord(std::string raw, std::string canonical) : bytes(std::move(raw)), equivalence(std::move(canonical)) {}
+  bool empty() const { return bytes.empty(); }
+};
+using Pair = oceanbase::common::hash::HashMapPair<ObFTWord, int64_t>;
+inline int copy_assign(Pair &dst, const Pair &src) { return dst.assign(src); }
+static_assert(std::is_same<decltype(oceanbase::common::hash::pre_proc<Pair>{}(
+    std::declval<Pair &>())), Pair &>::value, "atomic callback must receive the whole pair");
+
+struct Counters { int64_t hashes = 0; int64_t allocations = 0; int64_t frees = 0; };
+struct Node {
+  static constexpr uint64_t MAGIC = 0x486173684e6f6465;
+  uint64_t magic_ = MAGIC;
+  Pair data;
+  Node *next = nullptr;
+  bool is_fake = false;
+  bool check_magic_code() const { return magic_ == MAGIC; }
+};
+struct Bucket { Node *node = nullptr; };
+template<class T> bool inited(const std::vector<T> &buckets) { return !buckets.empty(); }
+struct Allocator {
+  bool fail_next = false;
+  Counters *counts = nullptr;
+  Node *alloc() {
+    if (fail_next) { fail_next = false; return nullptr; }
+    ++counts->allocations;
+    return new Node;
+  }
+  void free(Node *node) { ++counts->frees; delete node; }
+};
+struct BucketLock { explicit BucketLock(Bucket &) {} int lock() const { return 0; } };
+struct WriteLocker { explicit WriteLocker(int) {} };
+
+// Bucket, allocator, locks and ordinary get/set are single-threaded adapters.
+// The pair, identity preprocessor, atomic/upsert forwarders, bucket traversals,
+// internal_set insertion and all three grouping bodies are production extracts.
+// Allocator, locks, hash/equality and ordinary get/set are explicit adapters.
+class TestHashTable {
+public:
+  using _key_type = ObFTWord;
+  using _value_type = Pair;
+  using hashnode = Node;
+  using hashbucket = Bucket;
+  using bucket_lock_cond = BucketLock;
+  using writelocker = WriteLocker;
+  std::vector<Bucket> buckets_;
+  int64_t bucket_num_;
+  int64_t size_ = 0;
+  Allocator allocator;
+  Allocator *allocer_ = &allocator;
+  oceanbase::common::hash::pre_proc<Pair> preproc_;
+  Counters counts;
+  struct Hasher {
+    Counters *counts;
+    int operator()(const ObFTWord &word, uint64_t &value) const {
+      ++counts->hashes;
+      if (word.bytes == "hash-failure") return HASH_FAILURE;
+      value = 0; // Deliberately force collisions to verify chain position/order.
+      for (unsigned char c : word.equivalence) value = value * 131U + c;
+      return OB_SUCCESS;
+    }
+  } hashfunc_{&counts};
+  struct Equal {
+    bool operator()(const ObFTWord &a, const ObFTWord &b) const { return a.equivalence == b.equivalence; }
+  } equal_;
+  struct GetKey { const ObFTWord &operator()(const Pair &p) const { return p.first; } } getkey_;
+  explicit TestHashTable(int64_t buckets) : buckets_(static_cast<size_t>(buckets)), bucket_num_(buckets) { allocator.counts = &counts; }
+  ~TestHashTable() { for (auto &b : buckets_) while (b.node) { Node *n = b.node; b.node = n->next; delete n; } }
+  @TABLE_ATOMIC_FORWARD@
+  @TABLE_ATOMIC@
+  @TABLE_UPSERT_FORWARD@
+  @TABLE_UPSERT@
+  @INTERNAL_SET@
+  int lookup(const ObFTWord &word, int64_t &frequency) {
+    if (!inited(buckets_) || !allocer_) return OB_NOT_INIT;
+    uint64_t hash = 0;
+    int ret = hashfunc_(word, hash);
+    if (ret != OB_SUCCESS) return ret;
+    for (Node *n = buckets_[hash % static_cast<uint64_t>(bucket_num_)].node; n; n = n->next) {
+      if (equal_(n->data.first, word)) { frequency = n->data.second; return OB_SUCCESS; }
+    }
+    return OB_HASH_NOT_EXIST;
+  }
+  int store(const ObFTWord &word, int64_t frequency, int overwrite) {
+    if (!inited(buckets_) || !allocer_) return OB_NOT_INIT;
+    uint64_t hash = 0;
+    int ret = hashfunc_(word, hash);
+    if (ret != OB_SUCCESS) return ret;
+    Node **place = &buckets_[hash % static_cast<uint64_t>(bucket_num_)].node;
+    while (*place && !equal_((*place)->data.first, word)) place = &(*place)->next;
+    if (*place && !overwrite) return OB_HASH_EXIST;
+    Node *n = allocator.alloc();
+    if (!n) return OB_ALLOCATE_MEMORY_FAILED;
+    if ((ret = n->data.init(word, frequency)) != OB_SUCCESS) { delete n; return ret; }
+    if (*place) {
+      n->next = (*place)->next;
+      allocator.free(*place);
+    } else {
+      // Real hashtable insertion prepends a new node to this bucket.
+      place = &buckets_[hash % static_cast<uint64_t>(bucket_num_)].node;
+      n->next = *place;
+    }
+    *place = n;
+    return OB_SUCCESS;
+  }
+};
+
+class TestMap {
+public:
+  using _key_type = ObFTWord;
+  using _value_type = int64_t;
+  using pair_type = Pair;
+  TestHashTable ht_;
+  explicit TestMap(int64_t buckets = 1) : ht_(buckets) {}
+  int get_refactored(const ObFTWord &word, int64_t &frequency) { return ht_.lookup(word, frequency); }
+  int set_refactored(const ObFTWord &word, int64_t frequency, int overwrite = 0) { return ht_.store(word, frequency, overwrite); }
+  @MAP_ATOMIC@
+  @MAP_UPSERT@
+  using Snapshot = std::vector<std::pair<std::string, int64_t>>;
+  Snapshot snapshot() const {
+    Snapshot s;
+    for (const auto &b : ht_.buckets_) for (Node *n = b.node; n; n = n->next)
+      s.emplace_back(n->data.first.bytes, n->data.second);
+    return s;
+  }
+};
+struct Flag { bool grouping; bool groupby_word() const { return grouping; } };
+
+namespace oceanbase { namespace storage {
+class ObAddWord {
+public:
+  Flag flag_;
+  TestMap &word_map_;
+  explicit ObAddWord(TestMap &map, bool grouping = true) : flag_{grouping}, word_map_(map) {}
+  int groupby_word(const ObFTWord &word, int64_t frequency);
+};
+class BaselineAddWord {
+public:
+  Flag flag_;
+  TestMap &word_map_;
+  explicit BaselineAddWord(TestMap &map, bool grouping = true) : flag_{grouping}, word_map_(map) {}
+  int groupby_word(const ObFTWord &word, int64_t frequency);
+};
+class PreviousAddWord {
+public:
+  Flag flag_;
+  TestMap &word_map_;
+  explicit PreviousAddWord(TestMap &map, bool grouping = true) : flag_{grouping}, word_map_(map) {}
+  int groupby_word(const ObFTWord &word, int64_t frequency);
+};
+@BASELINE_GROUPING@
+@PREVIOUS_GROUPING@
+@CURRENT_GROUPING@
+}}
+
+void require(bool result, const char *message) { if (!result) throw std::runtime_error(message); }
+using oceanbase::storage::ObAddWord;
+using oceanbase::storage::BaselineAddWord;
+using oceanbase::storage::PreviousAddWord;
+
+void test_prefixes() {
+  std::mt19937 random(7331);
+  const std::vector<ObFTWord> words = {
+      {"Database", "database"}, {"database", "database"}, {"DATABASE", "database"},
+      {"résumé", "resume"}, {"resume", "resume"}, {"RESUME", "resume"},
+      {"全文索引", "全文索引"}, {"分词器", "分词器"}, {"tokenizer", "tokenizer"}};
+  for (const int buckets : {1, 7, 53}) {
+    TestMap old_map(buckets), previous_map(buckets), new_map(buckets);
+    BaselineAddWord old_group(old_map);
+    PreviousAddWord previous_group(previous_map);
+    ObAddWord new_group(new_map);
+    std::map<std::string, std::pair<std::string, int64_t>> oracle;
+    for (int i = 0; i < 12000; ++i) {
+      const ObFTWord &word = words[random() % words.size()];
+      int64_t frequency = 1 + random() % 19;
+      auto old_entry = oracle.find(word.equivalence);
+      if (old_entry == oracle.end()) oracle.emplace(word.equivalence, std::make_pair(word.bytes, 1));
+      else { old_entry->second.first = word.bytes; old_entry->second.second += frequency; }
+      require(old_group.groupby_word(word, frequency) == OB_SUCCESS, "baseline failed");
+      require(previous_group.groupby_word(word, frequency) == OB_SUCCESS, "previous submission failed");
+      require(new_group.groupby_word(word, frequency) == OB_SUCCESS, "candidate failed");
+      require(old_map.snapshot() == new_map.snapshot(), "prefix frequency/spelling/bucket order differs");
+      require(previous_map.snapshot() == new_map.snapshot(), "previous prefix frequency/spelling/bucket order differs");
+      for (const auto &b : new_map.ht_.buckets_) for (Node *n = b.node; n; n = n->next)
+        require(oracle.at(n->data.first.equivalence) == std::make_pair(n->data.first.bytes, n->data.second), "independent oracle differs");
+    }
+  }
+}
+
+void test_boundaries_and_failures() {
+  for (bool grouped : {false, true}) {
+    TestMap old_map, previous_map, new_map;
+    BaselineAddWord old_group(old_map, grouped);
+    PreviousAddWord previous_group(previous_map, grouped);
+    ObAddWord new_group(new_map, grouped);
+    for (int64_t frequency : {-5, 0, 1, 27}) {
+      for (const ObFTWord word : {ObFTWord{"", ""}, ObFTWord{"word", "word"}}) {
+        const int baseline_ret = old_group.groupby_word(word, frequency);
+        require(baseline_ret == new_group.groupby_word(word, frequency), "validation/non-grouped result differs");
+        require(previous_group.groupby_word(word, frequency) == baseline_ret, "previous validation result differs");
+        require(old_map.snapshot() == new_map.snapshot(), "validation/non-grouped state differs");
+        require(previous_map.snapshot() == new_map.snapshot(), "previous validation/non-grouped state differs");
+      }
+    }
+    require(old_group.groupby_word({"hash-failure", "error"}, 1) == HASH_FAILURE, "baseline hash error lost");
+    require(previous_group.groupby_word({"hash-failure", "error"}, 1) == HASH_FAILURE, "previous hash error lost");
+    require(new_group.groupby_word({"hash-failure", "error"}, 1) == HASH_FAILURE, "candidate hash error lost");
+    old_map.ht_.allocator.fail_next = previous_map.ht_.allocator.fail_next = new_map.ht_.allocator.fail_next = true;
+    require(old_group.groupby_word({"new-word", "new-word"}, 1) == OB_ALLOCATE_MEMORY_FAILED, "baseline allocation error lost");
+    require(previous_group.groupby_word({"new-word", "new-word"}, 1) == OB_ALLOCATE_MEMORY_FAILED, "previous allocation error lost");
+    require(new_group.groupby_word({"new-word", "new-word"}, 1) == OB_ALLOCATE_MEMORY_FAILED, "candidate allocation error lost");
+    require(old_map.snapshot() == new_map.snapshot(), "failed insertion changed state");
+    require(previous_map.snapshot() == new_map.snapshot(), "previous failed insertion changed state");
+    old_map.ht_.allocer_ = previous_map.ht_.allocer_ = new_map.ht_.allocer_ = nullptr;
+    require(old_group.groupby_word({"word", "word"}, 1) == OB_NOT_INIT, "baseline init error lost");
+    require(previous_group.groupby_word({"word", "word"}, 1) == OB_NOT_INIT, "previous init error lost");
+    require(new_group.groupby_word({"word", "word"}, 1) == OB_NOT_INIT, "candidate init error lost");
+  }
+  TestMap map;
+  ObAddWord grouping(map);
+  require(grouping.groupby_word({"first", "first"}, 99) == OB_SUCCESS, "first insert failed");
+  require(map.snapshot().at(0).second == 1, "first frequency must retain baseline value one");
+  map.ht_.allocator.fail_next = true;
+  require(grouping.groupby_word({"FIRST", "first"}, 4) == OB_SUCCESS, "duplicate update should not allocate");
+  require(map.ht_.allocator.fail_next, "duplicate consumed allocator fault");
+  require(map.snapshot().at(0) == std::make_pair(std::string("FIRST"), int64_t{5}), "last spelling or aggregate differs");
+  TestMap empty_old(0), empty_previous(0), empty_new(0);
+  require(BaselineAddWord(empty_old).groupby_word({"word", "word"}, 1) == OB_NOT_INIT, "baseline empty bucket init error lost");
+  require(PreviousAddWord(empty_previous).groupby_word({"word", "word"}, 1) == OB_NOT_INIT, "previous empty bucket init error lost");
+  require(ObAddWord(empty_new).groupby_word({"word", "word"}, 1) == OB_NOT_INIT, "candidate empty bucket init error lost");
+}
+
+void test_operation_counts() {
+  constexpr int64_t tokens = 10000;
+  for (const int64_t unique : {int64_t{32}, tokens}) {
+    TestMap old_map(53), previous_map(53), new_map(53);
+    BaselineAddWord old_group(old_map);
+    PreviousAddWord previous_group(previous_map);
+    ObAddWord new_group(new_map);
+    for (int64_t i = 0; i < tokens; ++i) {
+      const std::string canonical = "word" + std::to_string(i % unique);
+      const ObFTWord word(canonical, canonical);
+      require(old_group.groupby_word(word, 1) == OB_SUCCESS, "old workload failed");
+      require(previous_group.groupby_word(word, 1) == OB_SUCCESS, "previous workload failed");
+      require(new_group.groupby_word(word, 1) == OB_SUCCESS, "new workload failed");
+    }
+    require(old_map.snapshot() == new_map.snapshot(), "workload output differs");
+    require(previous_map.snapshot() == new_map.snapshot(), "previous workload output differs");
+    const Counters &old_c = old_map.ht_.counts, &previous_c = previous_map.ht_.counts, &new_c = new_map.ht_.counts;
+    require(old_c.hashes == 2 * tokens && previous_c.hashes == tokens + unique && new_c.hashes == tokens, "hash call count regression");
+    require(old_c.allocations == tokens && previous_c.allocations == unique && new_c.allocations == unique, "hash-node allocation count regression");
+    require(old_c.frees == tokens - unique && previous_c.frees == 0 && new_c.frees == 0, "hash-node replacement regression");
+    std::cout << "adapter_operation_counts tokens=" << tokens << " unique=" << unique
+              << " old_hashes=" << old_c.hashes << " previous_hashes=" << previous_c.hashes << " new_hashes=" << new_c.hashes
+              << " old_node_allocations=" << old_c.allocations << " new_node_allocations=" << new_c.allocations << '\n';
+  }
+}
+
+int main() {
+  try {
+    test_prefixes();
+    test_boundaries_and_failures();
+    test_operation_counts();
+    std::cout << "PASS: 36000 three-way prefix comparisons, spelling/frequency/order, faults, source-extracted atomic/upsert/internal_set\n";
+    std::cout << "LIMIT: portable single-threaded adapters; native seekdb build, charset, SQL and official benchmark remain unverified\n";
+    return 0;
+  } catch (const std::exception &error) {
+    std::cerr << "FAIL: " << error.what() << '\n';
+    return 1;
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "platform": "Windows x64 + Ubuntu-24.04 WSL",
+  "compiler": "clang++-18.1.3",
+  "build": "RelWithDebInfo, -O2, Unity",
+  "binary_sha256_v1": "8c365b1af8c51f1a0fef387b4a9e3e1a713e73fb79cbb1aa59c36de23e9a5bbc",
+  "binary_sha256_v2": "15abc530da3e59d85c6f161dda2a16806298aa922369112169e28cc13f30dcdd",
+  "binary_sha256_v4": "70fb6dc512d28c2be817a3811bcc6871e4aaf4e6a4b56ccb8442ec4acc3d2225",
+  "binary_sha256_v5": "3cf4ef79e6808cdfa7145a0f6bfcdce08515b9a8995441ea8dc1d110059feeb2",
+  "final_commit": "79d37ad93a866a75a75efe539c9367c1a98abfc5",
+  "final_binary_sha256": "a7a222f350e888f04d35c3ca00d5bd75eda84ef76318707287c478de2c3045a8",
+  "tool_tests": {
+    "passed": 15,
+    "failed": 0
+  },
+  "parser_reuse_regression": {
+    "tokenize_cases": 65,
+    "repeat_calls": 130,
+    "concurrent_threads": 6,
+    "status": "passed"
+  },
+  "native_extended_regression": {
+    "cases": 327,
+    "status": "complete"
+  },
+  "iteration_2_native_extended_regression": {
+    "cases": 327,
+    "status": "complete"
+  },
+  "iteration_4_native_extended_regression": {
+    "cases": 327,
+    "status": "complete"
+  },
+  "iteration_5_native_extended_regression": {
+    "cases": 327,
+    "status": "complete"
+  },
+  "final_native_extended_regression": {
+    "cases": 327,
+    "status": "complete",
+    "records_sha256": "0201c7ed5602f3be25d24feea928ab6abae750807208114795200c2c3cb92077",
+    "matches_previous_candidate": true
+  },
+  "final_full_benchmarks": [
+    {
+      "git_dirty": 0,
+      "mean_improvement": 0.780126627484441,
+      "public_score": 100.0
+    },
+    {
+      "git_dirty": 0,
+      "mean_improvement": 0.7933805961413156,
+      "public_score": 100.0
+    }
+  ],
+  "benchmark_hits": {
+    "query_cn": 8001,
+    "query_beng": 11000,
+    "query_mixed": 7332,
+    "query_limit": 20
+  }
+}
