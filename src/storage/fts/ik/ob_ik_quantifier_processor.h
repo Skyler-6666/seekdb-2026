@@ -46,7 +46,7 @@ public:
     start_ = -1;
     end_ = -1;
     quan_char_cnt_ = 0;
-    count_hits_.reset();
+    count_hits_.reuse();
   }
 
 private:

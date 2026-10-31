@@ -90,15 +90,15 @@ int ObIKCJKProcessor::do_process(TokenizeContext &ctx,
     }
   } else {
     // stop previous match
-    hits_.reset();
+    hits_.reuse();
   }
 
   if (OB_SUCC(ret)) {
     if (ctx.is_last()) {
-      hits_.reset();
+      hits_.reuse();
     }
   } else {
-    hits_.reset();
+    hits_.reuse();
   }
 
   return ret;

@@ -43,7 +43,7 @@ public:
                  const ObFTCharUtil::CharType type) override;
   void reset() override
   {
-    hits_.reset();
+    hits_.reuse();
     cjk_start_ = -1;
     cjk_end_ = -1;
   }

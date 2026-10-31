@@ -148,19 +148,19 @@ int ObIKQuantifierProcessor::process_CN_count(TokenizeContext &ctx,
           if (OB_FAIL(count_hits_.push_back(hit))) {
           }
         } else if (hit.is_unmatch()) {
-          count_hits_.reset();
+          count_hits_.reuse();
         } else {
           ret = OB_UNEXPECT_INTERNAL_ERROR;
         }
       }
     } else {
-      count_hits_.reset();
+      count_hits_.reuse();
     }
 
     if (OB_FAIL(ret)) {
       // already logged
     } else if (ctx.is_last()) {
-      count_hits_.reset();
+      count_hits_.reuse();
     } else {
     }
   } else {
