@@ -94,10 +94,10 @@ int ObIKQuantifierProcessor::process_CN_count(TokenizeContext &ctx,
     if (ObFTCharUtil::CharType::CHINESE == type) {
       // handle existing
       if (!count_hits_.empty()) {
-        for (ObDATrieHit &hit : count_hits_) {
-          if (OB_FAIL(ret)) {
-            break;
-          } else if (OB_FAIL(quan_dict_.match({char_len, ch}, hit))) {
+        for (int64_t i = 0; OB_SUCC(ret) && i < count_hits_.count();) {
+          ObDATrieHit &hit = count_hits_[i];
+          bool remove_hit = false;
+          if (OB_FAIL(quan_dict_.match({char_len, ch}, hit))) {
           } else if (hit.is_match()) {
             if (OB_FAIL(ctx.add_token(ctx.fulltext(),
                                       hit.start_pos_,
@@ -110,10 +110,18 @@ int ObIKQuantifierProcessor::process_CN_count(TokenizeContext &ctx,
           } else if (hit.is_prefix()) {
             // wait another match
           } else if (hit.is_unmatch()) {
-            count_hits_.erase(hit);
+            remove_hit = true;
           } else {
             ret = OB_UNEXPECT_INTERNAL_ERROR;
             LOG_WARN("Reached an imposible state.");
+          }
+          if (OB_SUCC(ret)) {
+            if (remove_hit) {
+              if (OB_FAIL(count_hits_.remove(i))) {
+              }
+            } else {
+              ++i;
+            }
           }
         }
       } else {
@@ -140,19 +148,19 @@ int ObIKQuantifierProcessor::process_CN_count(TokenizeContext &ctx,
           if (OB_FAIL(count_hits_.push_back(hit))) {
           }
         } else if (hit.is_unmatch()) {
-          count_hits_.clear();
+          count_hits_.reset();
         } else {
           ret = OB_UNEXPECT_INTERNAL_ERROR;
         }
       }
     } else {
-      count_hits_.clear();
+      count_hits_.reset();
     }
 
     if (OB_FAIL(ret)) {
       // already logged
     } else if (ctx.is_last()) {
-      count_hits_.clear();
+      count_hits_.reset();
     } else {
     }
   } else {

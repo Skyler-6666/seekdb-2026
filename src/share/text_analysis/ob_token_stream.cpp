@@ -93,12 +93,11 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
   } else if (iter_end_) {
     ret = OB_ITER_END;
   } else {
-    const char *doc = input_doc_->ptr_;
     const uint32_t doc_len = get_input_buf_len();
     int64_t token_len = 0;
     // to next non-whitespace pos
     while (OB_SUCC(ret) && found_delimiter()) {
-      const int64_t c_len = ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
+      const int64_t c_len = get_char_len();
       trav_pos_ += c_len;
       if (trav_pos_ >= doc_len || 0 == c_len) {// if char is invalid, just skip the rest of document
         iter_end_ = true;
@@ -112,7 +111,7 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
 
     // to next whitespace pos
     while (OB_SUCC(ret) && !found_delimiter()) {
-      const int64_t c_len = ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
+      const int64_t c_len = get_char_len();
       trav_pos_ += c_len;
       token_len += c_len;
       if (trav_pos_ >= doc_len || 0 == c_len) {
@@ -136,10 +135,10 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
 
 bool ObTextWhitespaceTokenizer::found_delimiter()
 {
-  bool found = false;
   const char *curr_char = input_doc_->ptr_ + trav_pos_;
-  found = ob_isspace(cs_, *curr_char) || ob_iscntrl(cs_, *curr_char) || ob_ispunct(cs_, *curr_char);
-  return found;
+  return OB_NOT_NULL(cs_->ctype)
+      && 0 != (((cs_->ctype + 1)[static_cast<unsigned char>(*curr_char)])
+               & (_MY_SPC | _MY_CTR | _MY_PNT));
 }
 
 ObTokenNormalizer::ObTokenNormalizer()
@@ -220,8 +219,18 @@ int ObTokenStopWordNormalizer::filter_special_marks(const ObDatum &check_token, 
 
 ObBasicEnglishNormalizer::ObBasicEnglishNormalizer()
   : ObTokenNormalizer(),
-    norm_allocator_("TxtTokGrpFilter", OB_MALLOC_NORMAL_BLOCK_SIZE)
+    norm_allocator_("TxtTokGrpFilter", OB_MALLOC_NORMAL_BLOCK_SIZE),
+    is_utf8mb4_(false)
 {
+}
+
+int ObBasicEnglishNormalizer::inner_init(const ObCharsetInfo *cs, ObITokenStream &in_stream)
+{
+  UNUSED(in_stream);
+  is_utf8mb4_ = OB_NOT_NULL(cs)
+      && CHARSET_UTF8MB4 == ObCharset::charset_type_by_coll(
+          static_cast<ObCollationType>(cs->number));
+  return OB_SUCCESS;
 }
 
 void ObBasicEnglishNormalizer::reset()
@@ -295,8 +304,7 @@ int ObBasicEnglishNormalizer::get_next(ObDatum &next_token, int64_t &token_freq)
     } else {
       ObString norm_alnum_token(norm_token_len, norm_token_ptr);
       ObString norm_lower_token;
-      bool is_lower_ascii = ObCharset::charset_type_by_coll(
-          static_cast<ObCollationType>(cs_->number)) == CHARSET_UTF8MB4;
+      bool is_lower_ascii = is_utf8mb4_;
       for (uint32_t i = 0; is_lower_ascii && i < norm_token_len; ++i) {
         const unsigned char ch = static_cast<unsigned char>(norm_token_ptr[i]);
         is_lower_ascii = ch < 0x80 && !(ch >= 'A' && ch <= 'Z');

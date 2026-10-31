@@ -145,17 +145,29 @@ int ObStopWordChecker::check_stopword(const ObFTWord &word, bool &is_stopword)
     // Destination comparison is GENERAL_CI even for UTF8MB4_BIN input. For
     // pure ASCII letters its equivalence is exactly ASCII case folding.
   } else {
-    common::ObArenaAllocator allocator(lib::ObMemAttr("ChkStopWord"));
-    common::ObString cmp_str;
-    // do nothing set out with in if type is the same.
-    if (OB_FAIL(common::ObCharset::charset_convert(
-                                       allocator,
-                                       word.get_word().get_string(),
-                                       word.get_collation_type(),
-                                       stopword_type_.get_collation_type(),
-                                       cmp_str))) {
+    const common::ObString &cmp_str = word.get_word().get_string();
+    const ObCharsetType word_charset_type =
+        ObCharset::charset_type_by_coll(word.get_collation_type());
+    ObFTWord converted;
+    if (word_charset_type == stopword_charset_type_) {
+      // Both collations use the same character set. The subsequent map lookup
+      // still compares under stopword_type_'s collation, so transcoding would
+      // only allocate and copy identical bytes.
+      converted = ObFTWord(cmp_str.length(), cmp_str.ptr(), stopword_type_);
     } else {
-      ObFTWord converted(cmp_str.length(), cmp_str.ptr(), stopword_type_);
+      common::ObArenaAllocator allocator(lib::ObMemAttr("ChkStopWord"));
+      common::ObString converted_str;
+      if (OB_FAIL(common::ObCharset::charset_convert(
+                                         allocator,
+                                         cmp_str,
+                                         word.get_collation_type(),
+                                         stopword_type_.get_collation_type(),
+                                         converted_str))) {
+      } else {
+        converted = ObFTWord(converted_str.length(), converted_str.ptr(), stopword_type_);
+      }
+    }
+    if (OB_SUCC(ret)) {
       ret = stopword_set_.exist_refactored(converted);
       if (OB_HASH_NOT_EXIST == ret) {
         is_stopword = false;
@@ -165,7 +177,6 @@ int ObStopWordChecker::check_stopword(const ObFTWord &word, bool &is_stopword)
         ret = OB_SUCCESS;
       } else if (OB_SUCC(ret)) {
         ret = OB_ERR_UNEXPECTED;
-      } else {
       }
     }
   }

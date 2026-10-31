@@ -48,6 +48,9 @@ public:
 
   int current_char(const char *&ch, uint8_t &char_len);
   int current_char_type(ObFTCharUtil::CharType &type);
+  int classify_char_at(int64_t offset,
+                       int64_t &char_len,
+                       ObFTCharUtil::CharType &type) const;
 
   int step_next();
 
@@ -84,6 +87,7 @@ private:
   int64_t cursor_;
   int64_t next_char_len_;
   ObFTCharUtil::CharType next_char_type_;
+  bool is_utf8mb4_;
 
   uint32_t handle_size_;
   bool is_smart_;

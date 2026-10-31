@@ -67,6 +67,8 @@ public:
                                     const uint8_t char_len,
                                     bool &is_connector);
 
+  static void classify_unicode(const ob_wc_t unicode, CharType &type);
+
   // some cjk word should be ignored
   static int is_ignore_single_cjk(ObCollationType coll_type,
                                   const char *input,
@@ -481,6 +483,31 @@ inline int ObFTCharUtil::do_classify(const char *input, const uint8_t char_len, 
     type = CharType::SURROGATE_LOW;
   }
   return ret;
+}
+
+inline void ObFTCharUtil::classify_unicode(const ob_wc_t unicode, CharType &type)
+{
+  type = CharType::USELESS;
+  if (unicode < 0x80) {
+    if ((unicode >= 'A' && unicode <= 'Z') || (unicode >= 'a' && unicode <= 'z')) {
+      type = CharType::ENGLISH_LETTER;
+    } else if (unicode >= '0' && unicode <= '9') {
+      type = CharType::ARABIC_LETTER;
+    }
+  } else if (unicode >= 0xFF00 && unicode <= 0xFFEF) {
+    const ob_wc_t ascii = unicode - 0xFEE0;
+    if ((ascii >= 'A' && ascii <= 'Z') || (ascii >= 'a' && ascii <= 'z')) {
+      type = CharType::ENGLISH_LETTER;
+    } else if (ascii >= '0' && ascii <= '9') {
+      type = CharType::ARABIC_LETTER;
+    } else {
+      type = CharType::OTHER_CJK;
+    }
+  } else if (ObUnicodeBlockUtils::is_chinese(unicode)) {
+    type = CharType::CHINESE;
+  } else if (ObUnicodeBlockUtils::is_other_cjk(unicode)) {
+    type = CharType::OTHER_CJK;
+  }
 }
 
 inline int ObFTCharUtil::classify_first_char(ObCollationType coll_type,

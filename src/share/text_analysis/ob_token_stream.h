@@ -77,7 +77,16 @@ protected:
 private:
   bool found_delimiter();
   const char *get_trav_ptr() { return input_doc_->ptr_ + trav_pos_; }
-  uint32_t get_input_buf_len() { return input_doc_->len_; }
+  uint32_t get_input_buf_len() const { return input_doc_->len_; }
+  uint32_t get_char_len() const
+  {
+    const unsigned char c = static_cast<unsigned char>(input_doc_->ptr_[trav_pos_]);
+    return 1 == cs_->mbminlen && c < 0x80
+        ? 1
+        : ob_mbcharlen_ptr(cs_,
+                            input_doc_->ptr_ + trav_pos_,
+                            input_doc_->ptr_ + input_doc_->len_);
+  }
 private:
   const char *curr_token_ptr_;
   int64_t trav_pos_;
@@ -131,7 +140,9 @@ public:
   virtual void reuse() override;
   virtual int get_next(ObDatum &next_token, int64_t &token_freq) override;
 private:
+  virtual int inner_init(const ObCharsetInfo *cs, ObITokenStream &in_stream) override;
   ObArenaAllocator norm_allocator_;
+  bool is_utf8mb4_;
 };
 
 // group (deduplicate) and count

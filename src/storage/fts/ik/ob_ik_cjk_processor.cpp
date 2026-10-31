@@ -36,12 +36,13 @@ int ObIKCJKProcessor::do_process(TokenizeContext &ctx,
 {
   int ret = OB_SUCCESS;
 
-  if (ObFTCharUtil::CharType::USELESS != type) {
+  const bool is_cjk_char = ObFTCharUtil::CharType::CHINESE == type
+      || ObFTCharUtil::CharType::OTHER_CJK == type;
+  if (is_cjk_char) {
     // handle previous hits_ first and then check from this char
-    for (ObList<ObDATrieHit, ObIAllocator>::iterator iter = hits_.begin();
-         OB_SUCC(ret) && iter != hits_.end();
-         iter++) {
-      ObDATrieHit &hit = *iter;
+    for (int64_t i = 0; OB_SUCC(ret) && i < hits_.count();) {
+      ObDATrieHit &hit = hits_[i];
+      bool remove_hit = false;
       if (OB_FAIL(dict_main_.match_with_hit({char_len, ch}, hit, hit))) {
       } else if (hit.is_match()) {
         if (OB_FAIL(ctx.add_token(ctx.fulltext(),
@@ -55,9 +56,17 @@ int ObIKCJKProcessor::do_process(TokenizeContext &ctx,
       } else if (hit.is_prefix()) {
         // nothing
       } else if (hit.is_unmatch()) {
-        hits_.erase(hit);
+        remove_hit = true;
       } else {
         ret = OB_UNEXPECT_INTERNAL_ERROR;
+      }
+      if (OB_SUCC(ret)) {
+        if (remove_hit) {
+          if (OB_FAIL(hits_.remove(i))) {
+          }
+        } else {
+          ++i;
+        }
       }
     }
     if (OB_SUCC(ret)) {
@@ -81,15 +90,15 @@ int ObIKCJKProcessor::do_process(TokenizeContext &ctx,
     }
   } else {
     // stop previous match
-    hits_.clear();
+    hits_.reset();
   }
 
   if (OB_SUCC(ret)) {
     if (ctx.is_last()) {
-      hits_.clear();
+      hits_.reset();
     }
   } else {
-    hits_.clear();
+    hits_.reset();
   }
 
   return ret;
