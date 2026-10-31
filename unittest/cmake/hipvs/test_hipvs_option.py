@@ -63,6 +63,9 @@ class HipvsOptionTests(unittest.TestCase):
         self.assertIn("hipVS HNSW backend: enabled", result.stdout)
         self.assertIn("CHECK_DEFS=SEEKDB_WITH_HIPVS=1", result.stdout)
         self.assertIn("cuvs::c_api", result.stdout)
+        # The library directory must reach the final link as an rpath: the
+        # server has to start without the caller exporting LD_LIBRARY_PATH.
+        self.assertIn("LINKER:-rpath,", result.stdout)
 
     def assert_disabled(self, result, reason):
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)

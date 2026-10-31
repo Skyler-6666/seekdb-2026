@@ -13,5 +13,7 @@ seekdb_configure_hipvs(check)
 
 get_target_property(_defs check COMPILE_DEFINITIONS)
 get_target_property(_links check LINK_LIBRARIES)
+get_target_property(_options check INTERFACE_LINK_OPTIONS)
 message(STATUS "CHECK_DEFS=${_defs}")
 message(STATUS "CHECK_LINKS=${_links}")
+message(STATUS "CHECK_OPTIONS=${_options}")
