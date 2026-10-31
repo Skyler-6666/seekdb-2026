@@ -59,7 +59,7 @@ private:
 
 private:
   ObArenaAllocator alloc_;
-  common::ObSEArray<ObIKTokenChain *, 16, common::ObIAllocator &> chains_;
+  common::ObSEArray<ObIKTokenChain *, 16> chains_;
 
 private:
   DISALLOW_COPY_AND_ASSIGN(ObIKArbitrator);

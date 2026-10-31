@@ -294,7 +294,7 @@ int ObIKArbitrator::remove_conflict(const ObIKToken &token, ObIKTokenChain *opti
 
 ObIKArbitrator::ObIKArbitrator()
     : alloc_(lib::ObMemAttr("IK Arbitrator")),
-      chains_(OB_MALLOC_NORMAL_BLOCK_SIZE, alloc_)
+      chains_()
 {
 }
 
