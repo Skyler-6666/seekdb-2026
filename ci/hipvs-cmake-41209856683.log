@@ -1,0 +1,19 @@
+test_auto_enables_cuvs_package_with_hnsw_extensions (__main__.HipvsOptionTests) ... ok
+test_auto_finds_headers_only_install_through_hipvs_root (__main__.HipvsOptionTests) ... ok
+test_auto_ignores_plain_cuvs_without_hnsw_extensions (__main__.HipvsOptionTests) ... ok
+test_auto_is_quiet_when_no_install_exists (__main__.HipvsOptionTests) ... ok
+test_explicit_on_without_install_warns_but_still_configures (__main__.HipvsOptionTests) ... FAIL
+test_off_never_looks_for_hipvs (__main__.HipvsOptionTests) ... ok
+
+======================================================================
+FAIL: test_explicit_on_without_install_warns_but_still_configures (__main__.HipvsOptionTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/runner/work/seekdb-2026/seekdb-2026/unittest/cmake/hipvs/test_hipvs_option.py", line 97, in test_explicit_on_without_install_warns_but_still_configures
+    self.assertIn("WARNING", result.stdout + result.stderr)
+AssertionError: 'WARNING' not found in '-- The C compiler identification is GNU 11.4.0\n-- Detecting C compiler ABI info\n-- Detecting C compiler ABI info - done\n-- Check for working C compiler: /usr/bin/cc - skipped\n-- Detecting C compile features\n-- Detecting C compile features - done\n-- CHECK_DEFS=_defs-NOTFOUND\n-- CHECK_LINKS=_links-NOTFOUND\n-- Configuring done (0.1s)\n-- Generating done (0.0s)\n-- Build files have been written to: /tmp/tmpgefazken/build\nCMake Warning at /home/runner/work/seekdb-2026/seekdb-2026/cmake/SeekdbHipvs.cmake:83 (message):\n  SEEKDB_ENABLE_HIPVS=ON but no hipVS install with cuvs/neighbors/hnsw.h;\n  building the VSAG CPU path\nCall Stack (most recent call first):\n  CMakeLists.txt:12 (seekdb_configure_hipvs)\n\n\n'
+
+----------------------------------------------------------------------
+Ran 6 tests in 1.442s
+
+FAILED (failures=1)
