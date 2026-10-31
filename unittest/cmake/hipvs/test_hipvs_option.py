@@ -94,7 +94,7 @@ class HipvsOptionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.configure(Path(tmp), mode="ON")
             self.assert_disabled(result, "SEEKDB_ENABLE_HIPVS=ON but no hipVS install")
-            self.assertIn("WARNING", result.stdout + result.stderr)
+            self.assertIn("CMake Warning", result.stdout + result.stderr)
 
     def test_off_never_looks_for_hipvs(self):
         with tempfile.TemporaryDirectory() as tmp:
