@@ -7,6 +7,9 @@ on:
     branches: [competition/hipvs-final-1031]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   option-check:
     name: hipVS option wiring
@@ -18,4 +21,21 @@ jobs:
         run: cmake --version && python3 --version && uname -m
 
       - name: Configure-time option tests
-        run: python3 unittest/cmake/hipvs/test_hipvs_option.py -v
+        run: |
+          set +e
+          python3 unittest/cmake/hipvs/test_hipvs_option.py -v 2>&1 | tee /tmp/hipvs-cmake.log
+          exit "${PIPESTATUS[0]}"
+
+      # The run log needs an authenticated session, so mirror it to a plain file
+      # on a scratch branch where it stays readable.
+      - name: Publish log
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method PUT "repos/${{ github.repository }}/contents/ci/hipvs-cmake-${{ github.run_id }}.log" \
+            -f message="ci: hipVS cmake option log ${{ github.run_id }}" \
+            -f branch=hipvs-ci-results \
+            -f content="$(base64 -w0 /tmp/hipvs-cmake.log)" > /dev/null \
+            || echo "log mirror unavailable"
