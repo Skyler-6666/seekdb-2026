@@ -1,0 +1,11 @@
+test_auto_enables_cuvs_package_with_hnsw_extensions (__main__.HipvsOptionTests) ... ok
+test_auto_finds_headers_only_install_through_hipvs_root (__main__.HipvsOptionTests) ... ok
+test_auto_ignores_plain_cuvs_without_hnsw_extensions (__main__.HipvsOptionTests) ... ok
+test_auto_is_quiet_when_no_install_exists (__main__.HipvsOptionTests) ... ok
+test_explicit_on_without_install_warns_but_still_configures (__main__.HipvsOptionTests) ... ok
+test_off_never_looks_for_hipvs (__main__.HipvsOptionTests) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 1.302s
+
+OK
