@@ -1,0 +1,36 @@
+name: hipVS bridge
+
+on:
+  push:
+    branches: [competition/hipvs-bounded-graph-20261030]
+  pull_request:
+    branches: [competition/hipvs-bounded-graph-20261030]
+  workflow_dispatch:
+
+jobs:
+  bridge-cpu-shim:
+    name: Bridge CPU shim
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run the bridge buffer test (CUDA include path)
+        run: |
+          set -euo pipefail
+          gcc -std=c11 -Wall -Wextra -Werror \
+            -Iunittest/oblib/vector/hipvs_bridge_mock \
+            unittest/oblib/vector/test_hipvs_bridge_buffers.c \
+            -o /tmp/test_hipvs_bridge_buffers
+          /tmp/test_hipvs_bridge_buffers
+
+      - name: Build and run the bridge buffer test (AMD include path)
+        run: |
+          set -euo pipefail
+          gcc -std=c11 -Wall -Wextra -Werror -D__HIP_PLATFORM_AMD__ \
+            -Iunittest/oblib/vector/hipvs_bridge_mock \
+            unittest/oblib/vector/test_hipvs_bridge_buffers.c \
+            -o /tmp/test_hipvs_bridge_buffers_amd
+          /tmp/test_hipvs_bridge_buffers_amd
+
+      - name: Build-command regression test
+        run: python3 unittest/oblib/vector/test_hipvs_bridge_build.py -v
