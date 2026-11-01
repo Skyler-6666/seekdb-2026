@@ -1,0 +1,144 @@
+name: hipVS full build
+
+on:
+  push:
+    branches: [competition/hipvs-final-1031]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cpu-build:
+    name: full build without hipVS (CPU path)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: insightsengineering/disk-space-reclaimer@v1
+        with:
+          tools-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+          docker-images: true
+
+      - name: Install ubuntu environment
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses5 python3
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache deps
+        id: cache-deps
+        uses: actions/cache@v3
+        env:
+          cache-name: hipvs-deps
+        with:
+          key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('deps/init/oceanbase.el9.x86_64.deps') }}
+          path: deps/3rd
+
+      - name: Configure (build.sh release --init)
+        run: |
+          ./build.sh release --init 2>&1 | tee /tmp/hipvs-configure.log
+          echo "$GITHUB_WORKSPACE/deps/3rd/usr/local/oceanbase/devtools/bin" >> "$GITHUB_PATH"
+
+      - name: Build (make -j4)
+        run: |
+          cd build_release && make -j4 2>&1 | tee /tmp/hipvs-build.log
+          test -x src/observer/seekdb
+          test -x src/observer/observer
+
+      - name: Publish log
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for name in hipvs-configure hipvs-build; do
+            gh api --method PUT "repos/${{ github.repository }}/contents/ci/fullbuild-cpu-${{ github.run_id }}-${name}.log" \
+              -f message="ci: hipVS cpu full build ${name} ${{ github.run_id }}" \
+              -f branch=hipvs-ci-results \
+              -f content="$(base64 -w0 /tmp/${name}.log)" > /dev/null \
+              || echo "log mirror unavailable"
+          done
+
+  gpu-mock-build:
+    name: full build with fake hipVS (GPU path compiles)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: insightsengineering/disk-space-reclaimer@v1
+        with:
+          tools-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+          docker-images: true
+
+      - name: Install ubuntu environment
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y git wget rpm rpm2cpio cpio make build-essential binutils m4 libtool-bin libncurses5 python3
+
+      # A fake hipVS install at the standard location: the AUTO logic must
+      # find it, the API probe must pass, and the whole 951-line backend must
+      # compile and link against it.
+      - name: Install fake hipVS at /opt/hipvs
+        run: |
+          sudo mkdir -p /opt/hipvs/lib
+          sudo cp -r unittest/cmake/hipvs/mock_include /opt/hipvs/include
+          g++ -shared -fPIC -std=c++11 -I /opt/hipvs/include \
+            unittest/cmake/hipvs/mock_cuvs.cc -o /tmp/libcuvs_c.so
+          sudo mv /tmp/libcuvs_c.so /opt/hipvs/lib/
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache deps
+        id: cache-deps
+        uses: actions/cache@v3
+        env:
+          cache-name: hipvs-deps
+        with:
+          key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('deps/init/oceanbase.el9.x86_64.deps') }}
+          path: deps/3rd
+
+      - name: Configure (build.sh release --init)
+        run: |
+          ./build.sh release --init 2>&1 | tee /tmp/hipvs-configure.log
+          echo "$GITHUB_WORKSPACE/deps/3rd/usr/local/oceanbase/devtools/bin" >> "$GITHUB_PATH"
+          grep -n "hipVS HNSW backend" /tmp/hipvs-configure.log | tee /tmp/hipvs-status.log
+
+      - name: Build (make -j4)
+        run: |
+          cd build_release && make -j4 2>&1 | tee /tmp/hipvs-build.log
+          test -x src/observer/seekdb
+          test -x src/observer/observer
+
+      - name: Publish log
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for name in hipvs-configure hipvs-build hipvs-status; do
+            gh api --method PUT "repos/${{ github.repository }}/contents/ci/fullbuild-gpu-${{ github.run_id }}-${name}.log" \
+              -f message="ci: hipVS gpu full build ${name} ${{ github.run_id }}" \
+              -f branch=hipvs-ci-results \
+              -f content="$(base64 -w0 /tmp/${name}.log)" > /dev/null \
+              || echo "log mirror unavailable"
+          done

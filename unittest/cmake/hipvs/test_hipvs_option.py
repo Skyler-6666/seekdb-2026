@@ -17,145 +17,13 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SOURCE_DIR = Path(__file__).resolve().parent
 MOCK_SOURCE = SOURCE_DIR / "mock_cuvs.cc"
+MOCK_INCLUDE = SOURCE_DIR / "mock_include"
 
 PACKAGE_CONFIG = """
 add_library(cuvs::c_api SHARED IMPORTED)
 set_target_properties(cuvs::c_api PROPERTIES
   IMPORTED_LOCATION "${CMAKE_CURRENT_LIST_DIR}/../../libcuvs_c.so"
   INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_LIST_DIR}/../../../include")
-"""
-
-DLPACK_HEADER = """
-#ifndef DLPACK_DLPACK_H_
-#define DLPACK_DLPACK_H_
-#include <stddef.h>
-#include <stdint.h>
-typedef enum { kDLCPU = 1 } DLDeviceType;
-typedef struct {
-  DLDeviceType device_type;
-  int device_id;
-} DLDevice;
-typedef struct {
-  uint8_t code;
-  uint8_t bits;
-  uint16_t lanes;
-} DLDataType;
-typedef struct {
-  void *data;
-  DLDevice device;
-  int32_t ndim;
-  DLDataType dtype;
-  int64_t *shape;
-  int64_t *strides;
-  uint64_t byte_offset;
-} DLTensor;
-typedef struct {
-  DLTensor dl_tensor;
-  void *manager_ctx;
-  void (*deleter)(void *);
-} DLManagedTensor;
-enum { kDLInt = 0U, kDLUInt = 1U, kDLFloat = 2U };
-#endif
-"""
-
-CAGRA_HEADER = """
-#ifndef CUVS_NEIGHBORS_CAGRA_H_
-#define CUVS_NEIGHBORS_CAGRA_H_
-#include <stddef.h>
-#include <dlpack/dlpack.h>
-typedef struct cuvsCagraIndex *cuvsCagraIndex_t;
-typedef struct cuvsCagraIndexParams *cuvsCagraIndexParams_t;
-enum { AUTO_SELECT = 0 };
-struct cuvsCagraIndexParams {
-  cuvsDistanceType metric;
-  size_t graph_degree;
-  size_t intermediate_graph_degree;
-  int build_algo;
-  int nn_descent_niter;
-  void *compression;
-};
-#endif
-"""
-
-HNSW_HEADER = """
-#ifndef CUVS_NEIGHBORS_HNSW_H_
-#define CUVS_NEIGHBORS_HNSW_H_
-#include <stddef.h>
-#include <dlpack/dlpack.h>
-typedef struct cuvsHnswIndex *cuvsHnswIndex_t;
-typedef struct cuvsHnswIndexParams *cuvsHnswIndexParams_t;
-typedef struct cuvsHnswExtendParams *cuvsHnswExtendParams_t;
-typedef struct cuvsHnswSearchParams *cuvsHnswSearchParams_t;
-enum class cuvsHnswHierarchy { CPU = 0, GPU = 1 };
-struct cuvsHnswIndexParams {
-  cuvsHnswHierarchy hierarchy;
-  int ef_construction;
-  int num_threads;
-};
-struct cuvsHnswExtendParams {
-  int num_threads;
-};
-struct cuvsHnswSearchParams {
-  int ef;
-  int num_threads;
-};
-struct cuvsHnswIndex {
-  DLDataType dtype;
-};
-#endif
-"""
-
-# Same header with the search "ef" field missing: the configure-time probe
-# must notice the mismatch and stay on the CPU path.
-HNSW_HEADER_WITHOUT_EF = HNSW_HEADER.replace("  int ef;\n", "")
-
-C_API_HEADER = """
-#ifndef CUVS_CORE_C_API_H_
-#define CUVS_CORE_C_API_H_
-#include <stddef.h>
-#include <stdint.h>
-typedef uintptr_t cuvsResources_t;
-typedef int cuvsError_t;
-enum { CUVS_SUCCESS = 0, CUVS_ERROR = 1 };
-typedef enum { L2Expanded = 0, InnerProduct = 1 } cuvsDistanceType;
-#include "cuvs/neighbors/cagra.h"
-#include "cuvs/neighbors/hnsw.h"
-#ifdef __cplusplus
-extern "C" {
-#endif
-cuvsError_t cuvsResourcesCreate(cuvsResources_t *resources);
-void cuvsResourcesDestroy(cuvsResources_t resources);
-const char *cuvsGetLastErrorText(void);
-cuvsError_t cuvsCagraIndexParamsCreate(cuvsCagraIndexParams_t *params);
-void cuvsCagraIndexParamsDestroy(cuvsCagraIndexParams_t params);
-cuvsError_t cuvsCagraIndexCreate(cuvsCagraIndex_t *index);
-void cuvsCagraIndexDestroy(cuvsCagraIndex_t index);
-cuvsError_t cuvsCagraBuild(cuvsResources_t resources, cuvsCagraIndexParams_t params,
-                           DLManagedTensor *dataset, cuvsCagraIndex_t index);
-cuvsError_t cuvsHnswIndexParamsCreate(cuvsHnswIndexParams_t *params);
-void cuvsHnswIndexParamsDestroy(cuvsHnswIndexParams_t params);
-cuvsError_t cuvsHnswIndexCreate(cuvsHnswIndex_t *index);
-void cuvsHnswIndexDestroy(cuvsHnswIndex_t index);
-cuvsError_t cuvsHnswFromCagra(cuvsResources_t resources, cuvsHnswIndexParams_t params,
-                              cuvsCagraIndex_t cagra, cuvsHnswIndex_t hnsw);
-cuvsError_t cuvsHnswExtendParamsCreate(cuvsHnswExtendParams_t *params);
-void cuvsHnswExtendParamsDestroy(cuvsHnswExtendParams_t params);
-cuvsError_t cuvsHnswExtend(cuvsResources_t resources, cuvsHnswExtendParams_t params,
-                           DLManagedTensor *dataset, cuvsHnswIndex_t index);
-cuvsError_t cuvsHnswSerialize(cuvsResources_t resources, const char *path,
-                              cuvsHnswIndex_t index);
-cuvsError_t cuvsHnswDeserialize(cuvsResources_t resources, cuvsHnswIndexParams_t params,
-                                const char *path, int dim, cuvsDistanceType metric,
-                                cuvsHnswIndex_t index);
-cuvsError_t cuvsHnswSearchParamsCreate(cuvsHnswSearchParams_t *params);
-void cuvsHnswSearchParamsDestroy(cuvsHnswSearchParams_t params);
-cuvsError_t cuvsHnswSearch(cuvsResources_t resources, cuvsHnswSearchParams_t params,
-                           cuvsHnswIndex_t index, DLManagedTensor *query,
-                           DLManagedTensor *neighbors, DLManagedTensor *distances);
-#ifdef __cplusplus
-}
-#endif
-#endif
 """
 
 
@@ -169,15 +37,12 @@ def find_cxx():
 
 def make_install(root, *, package, hnsw_header, broken=False, cxx=None):
     include = root / "include"
-    (include / "dlpack").mkdir(parents=True, exist_ok=True)
-    (include / "dlpack/dlpack.h").write_text(DLPACK_HEADER, encoding="utf-8")
-    (include / "cuvs/core").mkdir(parents=True, exist_ok=True)
-    (include / "cuvs/neighbors").mkdir(parents=True, exist_ok=True)
-    (include / "cuvs/neighbors/cagra.h").write_text(CAGRA_HEADER, encoding="utf-8")
-    (include / "cuvs/core/c_api.h").write_text(C_API_HEADER, encoding="utf-8")
-    if hnsw_header:
-        header = HNSW_HEADER_WITHOUT_EF if broken else HNSW_HEADER
-        (include / "cuvs/neighbors/hnsw.h").write_text(header, encoding="utf-8")
+    shutil.copytree(MOCK_INCLUDE, include)
+    if broken:
+        shutil.copyfile(include / "cuvs/neighbors/hnsw_broken.h",
+                        include / "cuvs/neighbors/hnsw.h")
+    if not hnsw_header:
+        (include / "cuvs/neighbors/hnsw.h").unlink()
     lib_dir = root / "lib"
     lib_dir.mkdir(parents=True, exist_ok=True)
     if hnsw_header and cxx is not None:

@@ -122,10 +122,20 @@ function(seekdb_configure_hipvs target)
         # at load time never starts, so the runtime search path is baked in
         # instead of relying on the caller's LD_LIBRARY_PATH.
         get_filename_component(_cuvs_lib_dir "${_cuvs_lib}" DIRECTORY)
-        target_link_options(${target} INTERFACE "LINKER:-rpath,${_cuvs_lib_dir}")
+        target_link_options(${target} INTERFACE
+          "LINKER:-rpath,${_cuvs_lib_dir}"
+          # The same paths must work at link time, when libcuvs_c.so's own
+          # DT_NEEDED entries (libamdhip64.so and friends) are otherwise not
+          # found outside the default search path. Allow those entries to
+          # stay unresolved in the linked binary: the rpath above resolves
+          # them at load time.
+          "LINKER:-rpath-link,${_cuvs_lib_dir}"
+          "LINKER:--allow-shlib-undefined")
         foreach(_rocm IN ITEMS "$ENV{ROCM_PATH}" /opt/rocm)
           if(EXISTS "${_rocm}/lib/libamdhip64.so")
-            target_link_options(${target} INTERFACE "LINKER:-rpath,${_rocm}/lib")
+            target_link_options(${target} INTERFACE
+              "LINKER:-rpath,${_rocm}/lib"
+              "LINKER:-rpath-link,${_rocm}/lib")
           endif()
         endforeach()
         message(STATUS "hipVS HNSW backend: enabled (${_cuvs_lib})")
