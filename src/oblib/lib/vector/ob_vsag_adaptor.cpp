@@ -241,6 +241,7 @@ public:
         cuvsHnswIndexCreate(&index_) == CUVS_SUCCESS) {
       available_ = true;
     } else {
+      int ret = 0;
       const char *detail = cuvsGetLastErrorText();
       _LOG_WARN("[OBVSAG][HIPVS] failed to create hipVS resources or HNSW index, detail=%s",
                 detail == nullptr ? "" : detail);
@@ -965,6 +966,7 @@ std::shared_ptr<vsag::Index> create_hipvs_hnsw_if_supported(
   auto index = std::make_shared<HipVSHnswIndex>(
       dim, parsed_metric, max_degree, ef_construction, ef_search, allocator);
   if (!index->available()) {
+    int ret = 0;
     _LOG_WARN("[OBVSAG][HIPVS] backend unavailable, falling back to VSAG");
     return nullptr;
   }
