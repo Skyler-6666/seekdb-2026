@@ -242,8 +242,8 @@ public:
       available_ = true;
     } else {
       const char *detail = cuvsGetLastErrorText();
-      LOG_WARN("[OBVSAG][HIPVS] failed to create hipVS resources or HNSW index",
-               KCSTRING(detail == nullptr ? "" : detail));
+      _LOG_WARN("[OBVSAG][HIPVS] failed to create hipVS resources or HNSW index, detail=%s",
+                detail == nullptr ? "" : detail);
       if (index_ != nullptr) {
         cuvsHnswIndexDestroy(index_);
         index_ = nullptr;
@@ -269,7 +269,7 @@ public:
 
   [[nodiscard]] bool available() const { return available_; }
 
-  [[nodiscard]] vsag::IndexType GetIndexType() const override
+  [[nodiscard]] vsag::IndexType GetIndexType() override
   {
     return vsag::IndexType::HGRAPH;
   }
@@ -764,12 +764,13 @@ public:
     return std::make_pair(*bounds.first, *bounds.second);
   }
 
-  [[nodiscard]] uint64_t GetMemoryUsage() const override
+  [[nodiscard]] int64_t GetMemoryUsage() const override
   {
     const uint64_t vector_bytes = vectors_.capacity() * sizeof(float);
     const uint64_t graph_bytes =
         static_cast<uint64_t>(external_ids_.size()) * static_cast<uint64_t>(max_degree_) * 2U * sizeof(uint32_t);
-    return vector_bytes + graph_bytes + external_ids_.capacity() * sizeof(int64_t) + serialized_bytes_;
+    return static_cast<int64_t>(
+        vector_bytes + graph_bytes + external_ids_.capacity() * sizeof(int64_t) + serialized_bytes_);
   }
 
   [[nodiscard]] uint64_t EstimateMemory(uint64_t num_elements) const override
@@ -779,7 +780,7 @@ public:
                            sizeof(int64_t));
   }
 
-  [[nodiscard]] uint64_t EstimateBuildMemory(uint64_t num_elements) const override
+  [[nodiscard]] uint64_t EstimateBuildMemory(uint64_t num_elements) const
   {
     return EstimateMemory(num_elements) * 2U;
   }
@@ -957,14 +958,14 @@ std::shared_ptr<vsag::Index> create_hipvs_hnsw_if_supported(
   if (dim <= 0 || env_disables_hipvs() || extra_info_size != 0 || !hipvs_float_dtype(dtype)) {
     return nullptr;
   }
-  cuvsDistanceType hipvs_metric = L2Expanded;
-  if (!hipvs_metric(metric, hipvs_metric)) {
+  cuvsDistanceType parsed_metric = L2Expanded;
+  if (!hipvs_metric(metric, parsed_metric)) {
     return nullptr;
   }
   auto index = std::make_shared<HipVSHnswIndex>(
-      dim, hipvs_metric, max_degree, ef_construction, ef_search, allocator);
+      dim, parsed_metric, max_degree, ef_construction, ef_search, allocator);
   if (!index->available()) {
-    LOG_WARN("[OBVSAG][HIPVS] backend unavailable, falling back to VSAG");
+    _LOG_WARN("[OBVSAG][HIPVS] backend unavailable, falling back to VSAG");
     return nullptr;
   }
   return index;
