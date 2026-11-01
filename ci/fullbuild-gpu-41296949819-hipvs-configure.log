@@ -1,0 +1,136 @@
+[build.sh] command: ./build.sh release --init
+[dep_create.sh] [NOTICE] 'Ubuntu 22.04.5 LTS (x86_64)' is compatible with CentOS 9, use el9 dependencies list
+[dep_create.sh] oceanbase.el9.x86_64.deps has been not initialized, due to /home/runner/work/seekdb-2026/seekdb-2026/deps/3rd/6cbf427016d9c5328b3f45ad0bb925b5 not exists
+[dep_create.sh] disable share dep cache due to env DEP_CACHE_DIR not set
+[dep_create.sh] check dependencies profile for oceanbase.el9.x86_64.deps... FOUND
+[dep_create.sh] check repository address in profile...
+[dep_create.sh] target: default, repo: http://mirrors.oceanbase.com/oceanbase/development-kit/el/8/x86_64/
+[dep_create.sh] target: community, repo: http://mirrors.oceanbase.com/oceanbase/community/stable/el/8/x86_64/
+[dep_create.sh] target: el9, repo: http://mirrors.oceanbase.com/oceanbase/development-kit/el/9/x86_64/
+[dep_create.sh] start to download dependencies...
+[dep_create.sh] downloading package <devdeps-gtest-1.8.0-242026020914.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-gtest-1.8.0-242026020914.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-libcurl-static-8.12.1-132025040210.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-libcurl-static-8.12.1-132025040210.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-libunwind-static-1.6.2-402025072120.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-libunwind-static-1.6.2-402025072120.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-libaio-0.3.112-12022092915.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-libaio-0.3.112-12022092915.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-relaxed-rapidjson-1.0.0-52023011719.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-relaxed-rapidjson-1.0.0-52023011719.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-openssl-static-1.1.1u-22023100710.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-openssl-static-1.1.1u-22023100710.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-libxml2-2.13.6-22025032016.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-libxml2-2.13.6-22025032016.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-xz-5.2.2-42022090615.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-xz-5.2.2-42022090615.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-zlib-static-1.2.13-82024102414.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-zlib-static-1.2.13-82024102414.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-boost-1.74.0-22022110914.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-boost-1.74.0-22022110914.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-abseil-cpp-20211102.0-82026020911.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-abseil-cpp-20211102.0-82026020911.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-s2geometry-0.10.0-222026021017.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-s2geometry-0.10.0-222026021017.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-icu-69.1-362026020911.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-icu-69.1-362026020911.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-protobuf-c-abiv1-1.4.1-100000202026031815.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-protobuf-c-abiv1-1.4.1-100000202026031815.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-grpc-abiv1-1.46.7-572026031815.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-grpc-abiv1-1.46.7-572026031815.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-roaringbitmap-croaring-3.0.0-42024042816.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-roaringbitmap-croaring-3.0.0-42024042816.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-vsag-abiv1-1.1.0-1752026041310.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-vsag-abiv1-1.1.0-1752026041310.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <devdeps-fast-float-6.1.3-42024112122.el8.x86_64.rpm>
+[dep_create.sh] unpack package <devdeps-fast-float-6.1.3-42024112122.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <obdevtools-binutils-2.30-12022100413.el8.x86_64.rpm>
+[dep_create.sh] unpack package <obdevtools-binutils-2.30-12022100413.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <obdevtools-bison-2.4.1-12022100413.el8.x86_64.rpm>
+[dep_create.sh] unpack package <obdevtools-bison-2.4.1-12022100413.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <obdevtools-ccache-3.7.12-12022100417.el8.x86_64.rpm>
+[dep_create.sh] unpack package <obdevtools-ccache-3.7.12-12022100417.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <obdevtools-cmake-3.30.3-52024111819.el8.x86_64.rpm>
+[dep_create.sh] unpack package <obdevtools-cmake-3.30.3-52024111819.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <obdevtools-flex-2.5.35-12022100417.el8.x86_64.rpm>
+[dep_create.sh] unpack package <obdevtools-flex-2.5.35-12022100417.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <obdevtools-gcc-12.3.0-32024122017.el8.x86_64.rpm>
+[dep_create.sh] unpack package <obdevtools-gcc-12.3.0-32024122017.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <obdevtools-llvm-17.0.6-202026032415.el8.x86_64.rpm>
+[dep_create.sh] unpack package <obdevtools-llvm-17.0.6-202026032415.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <obshell-4.4.1.1-32026031914.el8.x86_64.rpm>
+[dep_create.sh] unpack package <obshell-4.4.1.1-32026031914.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <ob-deploy-4.1.0-2.el8.x86_64.rpm>
+[dep_create.sh] unpack package <ob-deploy-4.1.0-2.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <obclient-2.2.3-1.el8.x86_64.rpm>
+[dep_create.sh] unpack package <obclient-2.2.3-1.el8.x86_64.rpm>... SUCCESS
+[dep_create.sh] downloading package <libobclient-2.2.3-1.el8.x86_64.rpm>
+[dep_create.sh] unpack package <libobclient-2.2.3-1.el8.x86_64.rpm>... SUCCESS
+info: using existing install for 1.98.1-x86_64-unknown-linux-gnu
+info: the active toolchain `1.98.1-x86_64-unknown-linux-gnu` has been installed
+info: it's active because: overridden by '/home/runner/work/seekdb-2026/seekdb-2026/rust/rust-toolchain.toml'
+[build.sh] dependency initialization completed in 2m38s
+[build.sh] configuring CMake release build: /home/runner/work/seekdb-2026/seekdb-2026/build_release
+-- ARCHITECTURE: x86_64
+-- Using C++20 standard
+-- build without pie
+-- ob-compile not found, compile locally.
+-- The CXX compiler identification is Clang 17.0.6
+-- The C compiler identification is Clang 17.0.6
+-- The ASM compiler identification is Clang with GNU-like command-line
+-- Found assembler: /home/runner/work/seekdb-2026/seekdb-2026/deps/3rd/usr/local/oceanbase/devtools/bin/clang-17
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /home/runner/work/seekdb-2026/seekdb-2026/deps/3rd/usr/local/oceanbase/devtools/bin/clang++-17 - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /home/runner/work/seekdb-2026/seekdb-2026/deps/3rd/usr/local/oceanbase/devtools/bin/clang-17 - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Found Python3: /usr/bin/python3.10 (found version "3.10.12") found components: Interpreter
+-- STDC_SHARED_LIB: /home/runner/work/seekdb-2026/seekdb-2026/deps/3rd/usr/local/oceanbase/devtools/lib64/libstdc++.so.6.0.30
+-- [rust] cargo: /home/runner/.cargo/bin/cargo
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- [rust] config target ready -> /home/runner/work/seekdb-2026/seekdb-2026/build_release/rust-target/exports/libconfig.a
+-- [rust] local target ready -> /home/runner/work/seekdb-2026/seekdb-2026/build_release/rust-target/exports/liblocal.a
+-- [rust] sql_nio target ready -> /home/runner/work/seekdb-2026/seekdb-2026/build_release/rust-target/exports/libsql_nio.a
+-- Performing Test COMPILER_SUPPORTS_VLA_CXX_EXTENSION
+-- Performing Test COMPILER_SUPPORTS_VLA_CXX_EXTENSION - Failed
+-- Performing Test COMPILER_SUPPORTS_ENUM_CONSTEXPR_WARNING
+-- Performing Test COMPILER_SUPPORTS_ENUM_CONSTEXPR_WARNING - Success
+-- oblib_add_library compress
+-- oblib_add_library zstd_1_3_8
+-- oblib_add_library restore
+-- ob_lib_add_target oblib_lib
+-- ob_lib_add_target oblib_lib_simd
+-- ob_lib_add_target oblib_lib_bitmap
+-- ob_add_new_object_target ob_malloc_object
+-- hipVS HNSW backend: enabled (/opt/hipvs/lib/libcuvs_c.so)
+-- ob_lib_add_target oblib_common
+-- ob_lib_add_target oblib_rpc
+-- oblib_add_library oblib_grpc
+-- oblib_extra_objects /home/runner/work/seekdb-2026/seekdb-2026/build_release/src/oblib/lib/compress/zstd_1_3_8/zstd_1_3_8_objs.o
+-- ob_add_new_object_target ob_share
+-- ob_add_new_object_target ob_share_extra
+-- observer_add_target ob_data_plane
+-- observer_add_target ob_query
+-- ob_add_new_object_target ob_sql
+-- ob_add_new_object_target ob_sql_extra
+-- observer_add_target ob_sql_simd
+-- observer_add_target ob_pl
+-- observer_add_target syspack_source
+-- observer_add_target ob_standby_runtime
+-- observer_add_target ob_standby
+-- observer_add_target ob_rootserver
+-- observer_add_target ob_logservice
+-- observer_add_target ob_storage_tablet_autoincrement_state
+-- ob_add_new_object_target ob_storage
+-- observer_add_target ob_storage_simd
+-- observer_add_target ob_server
+-- Configuring done (3.2s)
+-- Generating done (0.5s)
+-- Build files have been written to: /home/runner/work/seekdb-2026/seekdb-2026/build_release
