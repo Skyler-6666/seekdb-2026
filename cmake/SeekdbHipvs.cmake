@@ -66,26 +66,71 @@ function(seekdb_configure_hipvs target)
     elseif(NOT _cuvs_lib OR NOT EXISTS "${_cuvs_lib}")
       set(_skip_reason "cuVS library not found next to the hipVS headers")
     else()
-      if(NOT TARGET cuvs::c_api)
-        add_library(cuvs::c_api UNKNOWN IMPORTED)
-        set_target_properties(cuvs::c_api PROPERTIES
-          IMPORTED_LOCATION "${_cuvs_lib}"
-          INTERFACE_INCLUDE_DIRECTORIES "${_cuvs_inc}")
-      endif()
-      target_compile_definitions(${target} PRIVATE SEEKDB_WITH_HIPVS=1)
-      target_link_libraries(${target} PRIVATE cuvs::c_api)
-      # A server that cannot find libcuvs_c.so (or the HIP runtime it links)
-      # at load time never starts, so the runtime search path is baked in
-      # instead of relying on the caller's LD_LIBRARY_PATH.
+      # Before enabling, verify on this machine that the installed headers and
+      # library really provide the API the backend source uses. hipVS builds
+      # have drifted between releases, and a mismatch here must mean "build
+      # the CPU path", never "fail the whole build".
+      include(CheckCXXSourceCompiles)
+      file(TO_CMAKE_PATH "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/hipvs_api_probe.cc" _hipvs_probe_src)
+      set(_hipvs_required_includes "${CMAKE_REQUIRED_INCLUDES}")
+      set(_hipvs_required_libraries "${CMAKE_REQUIRED_LIBRARIES}")
+      set(_hipvs_required_flags "${CMAKE_REQUIRED_FLAGS}")
+      set(_hipvs_required_quiet "${CMAKE_REQUIRED_QUIET}")
+      set(CMAKE_REQUIRED_INCLUDES "${_cuvs_inc}")
+      set(CMAKE_REQUIRED_LIBRARIES "${_cuvs_lib}")
+      set(CMAKE_REQUIRED_QUIET TRUE)
+      # Help the linker resolve libcuvs_c.so's own dependencies even when they
+      # sit outside the default search path.
       get_filename_component(_cuvs_lib_dir "${_cuvs_lib}" DIRECTORY)
-      target_link_options(${target} INTERFACE "LINKER:-rpath,${_cuvs_lib_dir}")
-      foreach(_rocm IN ITEMS "$ENV{ROCM_PATH}" /opt/rocm)
-        if(EXISTS "${_rocm}/lib/libamdhip64.so")
-          target_link_options(${target} INTERFACE "LINKER:-rpath,${_rocm}/lib")
+      set(_hipvs_rpath_link "-Wl,-rpath-link,${_cuvs_lib_dir}")
+      foreach(_rocm_lib_dir IN ITEMS "$ENV{ROCM_PATH}/lib" "/opt/rocm/lib")
+        if(EXISTS "${_rocm_lib_dir}/libamdhip64.so")
+          string(APPEND _hipvs_rpath_link " -Wl,-rpath-link,${_rocm_lib_dir}")
         endif()
       endforeach()
-      message(STATUS "hipVS HNSW backend: enabled (${_cuvs_lib})")
-      return()
+      set(_hipvs_probe_ok FALSE)
+      foreach(_hipvs_flags IN ITEMS
+              ""
+              "-D__HIP_PLATFORM_AMD__"
+              "-Wl,--allow-shlib-undefined"
+              "-D__HIP_PLATFORM_AMD__ -Wl,--allow-shlib-undefined")
+        set(CMAKE_REQUIRED_FLAGS "${_hipvs_flags} ${_hipvs_rpath_link}")
+        unset(SEEKDB_HIPVS_API_PROBE_RESULT CACHE)
+        check_cxx_source_compiles("#include \"${_hipvs_probe_src}\"" SEEKDB_HIPVS_API_PROBE_RESULT)
+        if(SEEKDB_HIPVS_API_PROBE_RESULT)
+          set(_hipvs_probe_ok TRUE)
+          break()
+        endif()
+      endforeach()
+      set(CMAKE_REQUIRED_INCLUDES "${_hipvs_required_includes}")
+      set(CMAKE_REQUIRED_LIBRARIES "${_hipvs_required_libraries}")
+      set(CMAKE_REQUIRED_FLAGS "${_hipvs_required_flags}")
+      set(CMAKE_REQUIRED_QUIET "${_hipvs_required_quiet}")
+
+      if(NOT _hipvs_probe_ok)
+        set(_skip_reason "installed hipVS does not provide the API this source uses")
+      else()
+        if(NOT TARGET cuvs::c_api)
+          add_library(cuvs::c_api UNKNOWN IMPORTED)
+          set_target_properties(cuvs::c_api PROPERTIES
+            IMPORTED_LOCATION "${_cuvs_lib}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_cuvs_inc}")
+        endif()
+        target_compile_definitions(${target} PRIVATE SEEKDB_WITH_HIPVS=1)
+        target_link_libraries(${target} PRIVATE cuvs::c_api)
+        # A server that cannot find libcuvs_c.so (or the HIP runtime it links)
+        # at load time never starts, so the runtime search path is baked in
+        # instead of relying on the caller's LD_LIBRARY_PATH.
+        get_filename_component(_cuvs_lib_dir "${_cuvs_lib}" DIRECTORY)
+        target_link_options(${target} INTERFACE "LINKER:-rpath,${_cuvs_lib_dir}")
+        foreach(_rocm IN ITEMS "$ENV{ROCM_PATH}" /opt/rocm)
+          if(EXISTS "${_rocm}/lib/libamdhip64.so")
+            target_link_options(${target} INTERFACE "LINKER:-rpath,${_rocm}/lib")
+          endif()
+        endforeach()
+        message(STATUS "hipVS HNSW backend: enabled (${_cuvs_lib})")
+        return()
+      endif()
     endif()
   endif()
 

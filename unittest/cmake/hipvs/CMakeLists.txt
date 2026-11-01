@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(seekdb_hipvs_option_check C)
+project(seekdb_hipvs_option_check C CXX)
 
 # Exercises cmake/SeekdbHipvs.cmake without building seekdb: the function under
 # test only decides whether to add SEEKDB_WITH_HIPVS and cuvs::c_api to a target.

@@ -65,9 +65,14 @@ usual `/opt/hipvs` locations, so a plain `./build.sh release --init --make` on
 an AMD host builds the accelerated binary. Installations without
 `cuvs/neighbors/hnsw.h` (a plain cuVS) are ignored, and an explicit
 `-DSEEKDB_ENABLE_HIPVS=ON` that cannot find hipVS only warns: the build falls
-back to the VSAG CPU path instead of failing. The cuVS library directory (and
-`/opt/rocm/lib` when present) is recorded as an rpath, so the server loads the
-GPU runtime without a caller-exported `LD_LIBRARY_PATH`.
+back to the VSAG CPU path instead of failing. Before a candidate install is
+accepted, the configure step compiles and links
+`cmake/hipvs_api_probe.cc` against its headers and library: if the install's
+API surface does not match what the backend source uses, the GPU backend is
+skipped and the build proceeds on the CPU path rather than failing later.
+The cuVS library directory (and `/opt/rocm/lib` when present) is recorded as
+an rpath, so the server loads the GPU runtime without a caller-exported
+`LD_LIBRARY_PATH`.
 
 ```bash
 export CMAKE_PREFIX_PATH="/path/to/hipVS/cpp/install:${CMAKE_PREFIX_PATH}"
