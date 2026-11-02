@@ -1,0 +1,71 @@
+[build.sh] command: ./build.sh release --init
+[dep_create.sh] [NOTICE] 'Ubuntu 22.04.5 LTS (x86_64)' is compatible with CentOS 9, use el9 dependencies list
+[dep_create.sh] oceanbase.el9.x86_64.deps has been initialized due to /home/runner/work/seekdb-2026/seekdb-2026/deps/3rd/6cbf427016d9c5328b3f45ad0bb925b5, /home/runner/work/seekdb-2026/seekdb-2026/deps/3rd/DONE exists
+info: using existing install for 1.98.1-x86_64-unknown-linux-gnu
+info: the active toolchain `1.98.1-x86_64-unknown-linux-gnu` has been installed
+info: it's active because: overridden by '/home/runner/work/seekdb-2026/seekdb-2026/rust/rust-toolchain.toml'
+[build.sh] dependency initialization completed in 0m0s
+[build.sh] configuring CMake release build: /home/runner/work/seekdb-2026/seekdb-2026/build_release
+-- ARCHITECTURE: x86_64
+-- Using C++20 standard
+-- build without pie
+-- ob-compile not found, compile locally.
+-- The CXX compiler identification is Clang 17.0.6
+-- The C compiler identification is Clang 17.0.6
+-- The ASM compiler identification is Clang with GNU-like command-line
+-- Found assembler: /home/runner/work/seekdb-2026/seekdb-2026/deps/3rd/usr/local/oceanbase/devtools/bin/clang-17
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /home/runner/work/seekdb-2026/seekdb-2026/deps/3rd/usr/local/oceanbase/devtools/bin/clang++-17 - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /home/runner/work/seekdb-2026/seekdb-2026/deps/3rd/usr/local/oceanbase/devtools/bin/clang-17 - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Found Python3: /usr/bin/python3.10 (found version "3.10.12") found components: Interpreter
+-- STDC_SHARED_LIB: /home/runner/work/seekdb-2026/seekdb-2026/deps/3rd/usr/local/oceanbase/devtools/lib64/libstdc++.so.6.0.30
+-- [rust] cargo: /home/runner/.cargo/bin/cargo
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- [rust] config target ready -> /home/runner/work/seekdb-2026/seekdb-2026/build_release/rust-target/exports/libconfig.a
+-- [rust] local target ready -> /home/runner/work/seekdb-2026/seekdb-2026/build_release/rust-target/exports/liblocal.a
+-- [rust] sql_nio target ready -> /home/runner/work/seekdb-2026/seekdb-2026/build_release/rust-target/exports/libsql_nio.a
+-- Performing Test COMPILER_SUPPORTS_VLA_CXX_EXTENSION
+-- Performing Test COMPILER_SUPPORTS_VLA_CXX_EXTENSION - Failed
+-- Performing Test COMPILER_SUPPORTS_ENUM_CONSTEXPR_WARNING
+-- Performing Test COMPILER_SUPPORTS_ENUM_CONSTEXPR_WARNING - Success
+-- oblib_add_library compress
+-- oblib_add_library zstd_1_3_8
+-- oblib_add_library restore
+-- ob_lib_add_target oblib_lib
+-- ob_lib_add_target oblib_lib_simd
+-- ob_lib_add_target oblib_lib_bitmap
+-- ob_add_new_object_target ob_malloc_object
+-- hipVS HNSW backend: enabled (/opt/hipvs/lib/libcuvs_c.so)
+-- ob_lib_add_target oblib_common
+-- ob_lib_add_target oblib_rpc
+-- oblib_add_library oblib_grpc
+-- oblib_extra_objects /home/runner/work/seekdb-2026/seekdb-2026/build_release/src/oblib/lib/compress/zstd_1_3_8/zstd_1_3_8_objs.o
+-- ob_add_new_object_target ob_share
+-- ob_add_new_object_target ob_share_extra
+-- observer_add_target ob_data_plane
+-- observer_add_target ob_query
+-- ob_add_new_object_target ob_sql
+-- ob_add_new_object_target ob_sql_extra
+-- observer_add_target ob_sql_simd
+-- observer_add_target ob_pl
+-- observer_add_target syspack_source
+-- observer_add_target ob_standby_runtime
+-- observer_add_target ob_standby
+-- observer_add_target ob_rootserver
+-- observer_add_target ob_logservice
+-- observer_add_target ob_storage_tablet_autoincrement_state
+-- ob_add_new_object_target ob_storage
+-- observer_add_target ob_storage_simd
+-- observer_add_target ob_server
+-- Configuring done (2.8s)
+-- Generating done (0.2s)
+-- Build files have been written to: /home/runner/work/seekdb-2026/seekdb-2026/build_release
