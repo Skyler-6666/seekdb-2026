@@ -15,6 +15,13 @@ Status: **Phase 1 implemented and review-gated** on AMD `gfx1100` with ROCm
 validation assets. Historical feasibility experiments remain available in Git
 history rather than in the product-facing tree.
 
+A fresh end-to-end notebook run on AMD Radeon Cloud is recorded in
+[RUN_VERIFICATION_20261105.md](RUN_VERIFICATION_20261105.md). It confirms the
+shipped GPU binary and bridge execute the 10K-vector demo successfully and
+produce an **8.68x** batch-search peak at 4,000 probes with Recall@10 improving
+from **0.640** to **0.876**. This is execution evidence, not an official score
+or a claim about the full dataset build gate.
+
 ## Scope
 
 The backend adds optional hipVS/cuVS acceleration behind seekdb's existing
@@ -103,6 +110,23 @@ CALL dbms_vector.batch_knn(
 ```
 
 See [`examples/batch_knn.sql`](examples/batch_knn.sql) for the table contract.
+
+## Validated executable notebook
+
+The checked-in notebook source and the fresh executed evidence are under
+[`notebooks`](notebooks/):
+
+- `seekdb_hipvs_batch_demo.ipynb` contains the clean source flow.
+- `seekdb_hipvs_batch_demo_executed.ipynb` contains the successful 2026-11-05
+  run on AMD `gfx1100` with ROCm 7.2.4.
+- `lib/seekdb_demo.py` provides deterministic setup, timing and recall helpers.
+- `evidence/summary.csv` and `evidence/seekdb_hipvs_speedup.png` preserve the
+  raw batch measurements and chart.
+
+The notebook covers hardware/backend detection, observer bootstrap and telemetry,
+10K-vector index construction, CPU/GPU single-query comparison, `batch_knn`
+scaling, and Recall@10 validation. The GPU build-ready probe observed about
+20 seconds in this run; it is not a paired build-speed benchmark.
 
 ## Validation
 

@@ -46,3 +46,18 @@ Request the task's actual checked-out commit, failing phase (checkout / bridge
 build / seekdb build / startup / GPU test), exit code, and last error-log lines
 from the organizer if the UI cannot show them. Do not infer a stage from the
 generic status text or assume resubmitting the same commit fixes it.
+
+## 2026-11-05 notebook follow-up
+
+A fresh end-to-end notebook run on the AMD Radeon Cloud interactive image now
+completes successfully with the shipped `seekdb-v1.4.0.0` binary, the cuVS
+bridge and ROCm 7.2.4. All 10 code cells execute without errors, both 10K-vector
+indexes become queryable, and the batch path reaches 8.68x at 4,000 probes with
+Recall@10 0.876 versus 0.640 for VSAG.
+
+This resolves the earlier notebook-level `Path` failure and provides current
+runtime evidence for the executable demo. It does not prove that the exact
+source commit in this branch has passed the organizer's full-source build and
+official dataset gates. See
+[`RUN_VERIFICATION_20261105.md`](RUN_VERIFICATION_20261105.md) for the complete
+record and remaining validation boundary.
