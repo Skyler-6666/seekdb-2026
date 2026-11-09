@@ -163,7 +163,7 @@ class MySQLPipeServer:
             self.io.write_packet(_error(1047, "unsupported command"), sequence=1)
 
     def _handshake(self) -> None:
-        salt = b"MiniVectorSalt12345678"
+        salt = b"MiniVectorSalt123456"
         capabilities = SERVER_CAPABILITIES
         payload = b"\x0a" + b"5.7.0-MiniVectorDB\x00"
         payload += struct.pack("<I", 1)

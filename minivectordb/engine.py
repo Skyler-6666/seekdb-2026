@@ -431,6 +431,8 @@ class Engine:
             else table.columns
         )
         count = 0
+        new_rows: list[dict[str, Any]] = []
+        seen = set(table.rows)
         for row_expr in statement["rows"]:
             if len(row_expr) != len(columns):
                 raise SQLError(1136, "column count does not match value count")
@@ -441,9 +443,12 @@ class Engine:
                 if column.name not in row:
                     raise SQLError(1364, f"field {column.name} has no default")
             pk = int(row[table.primary.name])
-            if pk in table.rows:
+            if pk in seen:
                 raise SQLError(1062, f"duplicate primary key {pk}")
-            table.rows[pk] = row
+            seen.add(pk)
+            new_rows.append(row)
+        for row in new_rows:
+            table.rows[int(row[table.primary.name])] = row
             count += 1
         table.touch()
         return Result(affected=count)
