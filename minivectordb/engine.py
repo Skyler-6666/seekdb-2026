@@ -510,13 +510,17 @@ class Engine:
                 raise SQLError(1235, "primary key updates are not supported")
             assignments.append((column, expr))
         targets = self._filter(table, statement.get("where"))
+        updates: list[tuple[int, dict[str, Any]]] = []
         for pk in targets:
-            row = table.rows[pk]
+            row = dict(table.rows[pk])
             for column, expr in assignments:
-                row[column.name] = _normalize_value(table, column, eval_expr(expr, row, table))
-        if targets:
+                row[column.name] = _normalize_value(table, column, eval_expr(expr, table.rows[pk], table))
+            updates.append((pk, row))
+        for pk, row in updates:
+            table.rows[pk] = row
+        if updates:
             table.touch()
-        return Result(affected=len(targets))
+        return Result(affected=len(updates))
 
     def _execute_delete(self, statement: dict[str, Any]) -> Result:
         table = self._table(statement["table"])
