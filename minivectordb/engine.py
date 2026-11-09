@@ -299,24 +299,49 @@ class Engine:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.path = self.data_dir / "minivectordb.json"
+        self.wal_path = self.data_dir / "minivectordb.wal"
         self.tables: dict[str, Table] = {}
         self.in_transaction = False
         self._backup: dict[str, Table] | None = None
+        self._last_inserts: tuple[str, list[dict[str, Any]]] | None = None
         self._load()
 
     # -- persistence ---------------------------------------------------
     def _load(self) -> None:
-        if not self.path.exists():
-            return
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            self.tables = {
-                name: Table.from_json(value) for name, value in data.get("tables", {}).items()
-            }
-        except Exception as exc:
-            raise RuntimeError(f"cannot recover data file: {exc}") from exc
+        if self.path.exists():
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                self.tables = {
+                    name: Table.from_json(value) for name, value in data.get("tables", {}).items()
+                }
+            except Exception as exc:
+                raise RuntimeError(f"cannot recover data file: {exc}") from exc
+        if self.wal_path.exists():
+            # A batch insert is one complete line.  A torn final line is ignored.
+            for line in self.wal_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    record = json.loads(line)
+                except Exception:
+                    continue
+                table = self.tables.get(record.get("table"))
+                if table is None:
+                    continue
+                for row in record.get("rows", []):
+                    try:
+                        normalized = _normalize_loaded_row(table, row)
+                        pk = int(normalized[table.primary.name])
+                    except Exception:
+                        continue
+                    if pk not in table.rows:
+                        table.rows[pk] = normalized
+            # Fold the WAL into a fresh snapshot after recovery.
+            self._snapshot()
+            try:
+                self.wal_path.unlink()
+            except FileNotFoundError:
+                pass
 
-    def _save(self) -> None:
+    def _snapshot(self) -> None:
         payload = {"format": 1, "tables": {name: table.to_json() for name, table in self.tables.items()}}
         fd, tmp_path = tempfile.mkstemp(prefix=".minivectordb-", dir=self.data_dir)
         try:
@@ -339,6 +364,21 @@ class Engine:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
 
+    def _save(self) -> None:
+        self._snapshot()
+        try:
+            self.wal_path.unlink()
+        except FileNotFoundError:
+            pass
+
+    def _append_insert_wal(self, table_name: str, rows: list[dict[str, Any]]) -> None:
+        line = json.dumps({"table": table_name, "rows": rows}, ensure_ascii=False, separators=(",", ":"))
+        with self.wal_path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
     # -- transaction ---------------------------------------------------
     def _begin(self) -> None:
         if self.in_transaction:
@@ -353,6 +393,7 @@ class Engine:
         self._save()
         self.in_transaction = False
         self._backup = None
+        self._last_inserts = None
 
     def _rollback(self) -> None:
         if not self.in_transaction:
@@ -360,15 +401,21 @@ class Engine:
         self.tables = self._backup or {}
         self.in_transaction = False
         self._backup = None
+        self._last_inserts = None
 
     def _finish_write(self) -> None:
         if not self.in_transaction:
-            self._save()
+            if self._last_inserts is not None:
+                self._append_insert_wal(*self._last_inserts)
+                self._last_inserts = None
+            else:
+                self._save()
 
     # -- public --------------------------------------------------------
     def execute(self, sql: str) -> Result:
         statement = parse_sql(sql)
         kind = statement["type"]
+        self._last_inserts = None
         if kind == "begin":
             self._begin()
             return Result()
@@ -451,6 +498,7 @@ class Engine:
             table.rows[int(row[table.primary.name])] = row
             count += 1
         table.touch()
+        self._last_inserts = (table.name, new_rows)
         return Result(affected=count)
 
     def _execute_update(self, statement: dict[str, Any]) -> Result:
