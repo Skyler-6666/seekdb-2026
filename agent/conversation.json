@@ -1,0 +1,96 @@
+{
+  "schema": "minivectordb-agent-evidence-v1",
+  "synthetic": false,
+  "task": "OceanBase 2026 add-on round: MiniVectorDB",
+  "user_prompts": [
+    {
+      "id": "u1",
+      "content": "完成本次oceanbase数据库大赛的加赛的题目，并且根据所给出的评分标准进行优化",
+      "source": "direct user message in this workspace"
+    },
+    {
+      "id": "u2",
+      "content": "结合我两次发的所有图片，这两次发的所有图片即为全部的题目和评分和提交标准",
+      "source": "direct user message after the round-2 screenshots"
+    },
+    {
+      "id": "u3",
+      "content": "已授权",
+      "source": "user completed the GitHub device authorization so the branch could be pushed"
+    }
+  ],
+  "conversations": [
+    {
+      "id": "c1",
+      "student": "The user supplied two batches of round-2 screenshots: the MiniVectorDB task, SQL subset, grading formula, stdin/stdout execution rules, Dockerfile requirements and conversation.json requirements.",
+      "agent": "I inspected the upstream oceanbase/seekdb branch 2026-competition-round2. It contains only empty placeholder files (Dockerfile and conversation.json, both 0 bytes), so there is no starter implementation or test package in that branch.",
+      "evidence": "GitHub branch c842a368 has 9 root entries; Dockerfile and conversation.json blobs are e69de29b (empty)."
+    },
+    {
+      "id": "c2",
+      "student": "The user clarified that the two image batches are the complete specification, so implementation must proceed from those constraints without an additional package.",
+      "agent": "I derived the SQL subset from the screenshots: BIGINT primary key, VARCHAR(n), VECTOR(n); INSERT/UPDATE/DELETE; SELECT with comparisons and AND; L2_DISTANCE; filtered exact TopK; BEGIN/COMMIT/ROLLBACK; persistence and crash recovery; CREATE VECTOR INDEX syntax is accepted.",
+      "evidence": "Screenshots show the CREATE TABLE/INSERT/SELECT/BEGIN/ROLLBACK examples and the 2.1 module table."
+    },
+    {
+      "id": "c3",
+      "student": "The user accepted the plan to implement the database and authorized a GitHub write session for Skyler-6666/seekdb-2026.",
+      "agent": "I implemented a from-scratch Python engine: tokenizer/parser, row store, atomic snapshot persistence, transaction undo snapshot, exact NumPy L2 scans with filtered indices, and a minimal MySQL 4.1 pipe server.",
+      "evidence": "Files: minivectordb/sql.py, minivectordb/engine.py, minivectordb/mysql_wire.py, minivectordb/main.py."
+    },
+    {
+      "id": "c4",
+      "student": "The user asked for optimization against the published scoring rules.",
+      "agent": "The engine keeps a per-table float32 matrix cache and computes all filtered L2 distances in one vectorized pass; persistence uses one fsync snapshot per committed transaction/batch. I documented the tradeoff: exact scans are used because ANN parameters are only defined by the evaluation package.",
+      "evidence": "engine.Table.vector_matrix and Engine._save; README sections Persistence and SQL subset."
+    }
+  ],
+  "experiments": [
+    {
+      "id": "e1",
+      "purpose": "Verify SQL subset, filtered top-k, transaction rollback and persistence.",
+      "command": "python test_engine.py (temporary local smoke test)",
+      "input": "CREATE TABLE t (id BIGINT PRIMARY KEY, c VARCHAR(10), v VECTOR(3)); INSERT ...; SELECT ... L2_DISTANCE ... WHERE c='a' ORDER BY d LIMIT 2; BEGIN; UPDATE ...; DELETE ...; ROLLBACK;",
+      "output": "top [[1, 'a', 0.0], [3, 'a', 1.4142135381698608]]; after rollback [[1], [3]]; reload [[1, 'z'], [3, 'a']]",
+      "result": "pass",
+      "interpretation": "The parser handled quoted vectors, alias ordering, filtered top-k, rollback and reload. Distances use float32 stored values as required."
+    },
+    {
+      "id": "e2",
+      "purpose": "Verify the MySQL wire protocol over stdin/stdout, including handshake, auth response, OK packets and result sets.",
+      "command": "python test_wire.py (temporary packet-level client)",
+      "output": "handshake seq=0 len=88; auth OK; CREATE/INSERT OK; SELECT returned 3 columns and row for id=1; stderr: minivectordb: ready",
+      "result": "pass",
+      "interpretation": "A client can initialize the process through a pipe, authenticate with mysql_native_password, and read a text result set with EOF packets."
+    },
+    {
+      "id": "e3",
+      "purpose": "Check the Docker build contract.",
+      "command": "Dockerfile inspection; Docker is not installed on this Windows host",
+      "output": "FROM python:3.11-slim; numpy installed at build; source copied; ENTRYPOINT python3 -m minivectordb.main --data-dir /data",
+      "result": "not executed locally",
+      "interpretation": "The image uses source from the same commit and does not copy a prebuilt binary. A Linux build is still required before final submission."
+    }
+  ],
+  "student_evidence": [
+    "User supplied the round-2 task/screenshots and explicitly limited the specification to those images (u2).",
+    "User reported the prior seekdb FTS submission failures and asked to start the add-on round from scratch.",
+    "User completed GitHub device authorization so the branch could be pushed (u3)."
+  ],
+  "result_evidence": [
+    "SQL smoke test: filtered L2 result [[1, 'a', 0.0], [3, 'a', 1.4142135381698608]]; rollback preserved [[1], [3]]; reload preserved [[1, 'z'], [3, 'a']].",
+    "Pipe protocol test: handshake seq 0, auth OK packet, CREATE/INSERT OK, SELECT result set with 3 columns."
+  ],
+  "retrospective": [
+    "The task is a database from scratch, not a seekdb FTS change; separating storage, parser, execution and protocol kept the implementation testable.",
+    "A transaction is an in-memory deep copy and commit is one atomic snapshot. This is simple and crash-safe for the single-client scope, but bulk commits rewrite the whole data file.",
+    "The exact vector scan is intentionally correct for filtered TopK; an ANN index is accepted syntactically but not required by the visible SQL subset. If the hidden package requires ANN recall/latency, this is the next optimization target.",
+    "The official stdin/stdout case driver was not present in the branch or the screenshots. I implemented MySQL 4.1 wire protocol because the specification calls it a MySQL test driver; this is the main integration risk."
+  ],
+  "limitations": [
+    "No official SQL case package or driver was available in the workspace; protocol/error codes were inferred from the screenshots.",
+    "Docker build and platform cases were not run locally on Windows.",
+    "ANN/IVF is not implemented; only exact TopK is guaranteed.",
+    "Only one explicit transaction is supported, matching the stated single-client scope."
+  ]
+}
