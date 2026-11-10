@@ -41,6 +41,8 @@ def _load_fastscan():
 
 
 _FASTSCAN = _load_fastscan()
+if os.environ.get('MVD_REQUIRE_FASTSCAN') == '1' and _FASTSCAN is None:
+    raise RuntimeError('compiled fastscan library was not loaded')
 MAX_VECTOR_DIM = 16000
 
 

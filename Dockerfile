@@ -15,7 +15,8 @@ FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    VECTORDB_DATA_DIR=/data
+    VECTORDB_DATA_DIR=/data \
+    MVD_REQUIRE_FASTSCAN=1
 
 WORKDIR /app
 
@@ -31,3 +32,4 @@ VOLUME ["/data"]
 
 ENTRYPOINT ["python3", "-m", "minivectordb.main"]
 CMD ["--data-dir", "/data"]
+
