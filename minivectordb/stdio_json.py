@@ -84,6 +84,7 @@ class JSONLServer:
             if op == "shutdown":
                 self.engine.rollback_if_active()
                 self.emit({"id": ident, "ok": True})
+                self.engine.close()
                 return 0
             if op != "execute":
                 self.emit(
@@ -124,4 +125,5 @@ class JSONLServer:
                     }
                 )
         self.engine.rollback_if_active()
+        self.engine.close()
         return 0
