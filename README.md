@@ -144,3 +144,17 @@ Local verification on the 10K x 128 shape, 1,000 TopK=10 queries (half filtered)
 
 All 20 official public cases were rerun after this optimization and passed
 20/20. This is a local benchmark, not an official ranking result.
+
+
+## Linux Docker CI result
+
+GitHub Actions run `42797438284` built the Docker image on Ubuntu, ran the
+official `protocol_check` handshake, and ran all 20 official public cases
+against the optimized engine. The workflow completed successfully. The tested
+engine commit is `77f9effb540d54956c196831b218e9a0cc6787e8` on the
+`ci-round2` branch and has the same `minivectordb/engine.py` content as this
+submission branch.
+
+This confirms the Linux x86_64 / Docker execution path and the public MySQL
+gate. The nine non-public formal cases and official performance ranking remain
+outside local validation.
