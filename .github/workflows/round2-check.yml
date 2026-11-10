@@ -20,10 +20,10 @@ jobs:
           git clone --depth 1 --filter=blob:none --sparse \
             --branch 2026-competition-round2 \
             https://github.com/oceanbase/seekdb.git upstream
-          git -C upstream sparse-checkout set mysqltest protocol_check STDIO_PROTOCOL.md
+          git -C upstream sparse-checkout set mysqltest protocol_check
           cp -r upstream/mysqltest .
           cp -r upstream/protocol_check .
-          cp upstream/STDIO_PROTOCOL.md .
+          git -C upstream show HEAD:STDIO_PROTOCOL.md > STDIO_PROTOCOL.md
       - name: Build image
         run: docker build -t minivectordb:ci .
       - name: Official handshake
