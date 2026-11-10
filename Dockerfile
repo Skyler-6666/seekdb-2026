@@ -6,7 +6,7 @@ RUN apt-get update \
 
 WORKDIR /build
 COPY minivectordb/fastscan.cpp /build/fastscan.cpp
-RUN g++ -std=c++17 -O3 -march=native -fPIC -shared \
+RUN g++ -std=c++17 -O3 -march=native -fopenmp -fPIC -shared \
     -static-libgcc -static-libstdc++ \
     -o /build/libfastscan.so /build/fastscan.cpp
 
@@ -20,6 +20,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # NumPy remains the portable fallback; compiled fastscan is the primary path.
 RUN pip install --no-cache-dir numpy==1.26.4
 
@@ -32,4 +36,3 @@ VOLUME ["/data"]
 
 ENTRYPOINT ["python3", "-m", "minivectordb.main"]
 CMD ["--data-dir", "/data"]
-

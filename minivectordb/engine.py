@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import copy
-import ctypes
 import json
 import math
 import os
+import shutil
 import tempfile
+import uuid
 from array import array
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -21,28 +23,6 @@ except Exception:  # pragma: no cover - fallback for minimal images
     np = None
 
 
-def _load_fastscan():
-    suffix = ".dll" if os.name == "nt" else ".so"
-    path = Path(__file__).with_name("libfastscan" + suffix)
-    if not path.is_file():
-        return None
-    try:
-        lib = ctypes.CDLL(str(path))
-        lib.mvd_topk_l2.argtypes = [
-            ctypes.POINTER(ctypes.c_float), ctypes.c_size_t, ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint32),
-            ctypes.c_size_t, ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_float),
-        ]
-        lib.mvd_topk_l2.restype = ctypes.c_int
-        return lib
-    except Exception:
-        return None
-
-
-_FASTSCAN = _load_fastscan()
-if os.environ.get('MVD_REQUIRE_FASTSCAN') == '1' and _FASTSCAN is None:
-    raise RuntimeError('compiled fastscan library was not loaded')
 MAX_VECTOR_DIM = 16000
 
 
@@ -74,6 +54,133 @@ class Column:
 
 
 @dataclass
+class RowStore:
+    """Dictionary-like row storage that spills large tables to an append file.
+
+    The small public cases stay in memory.  Once a table crosses the threshold,
+    rows are addressed by byte offset instead of keeping Python objects alive.
+    """
+    path: Path
+    table: "Table"
+    offsets: dict[int, int] = field(default_factory=dict)
+    _cache: OrderedDict = field(default_factory=OrderedDict, repr=False)
+    _handle: Any = field(default=None, repr=False)
+
+    def __post_init__(self):
+        self.path = Path(self.path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.exists():
+            self._scan()
+        self._handle = self.path.open("ab")
+
+    def _scan(self):
+        with self.path.open("rb") as handle:
+            while True:
+                offset = handle.tell()
+                line = handle.readline()
+                if not line:
+                    break
+                try:
+                    record = json.loads(line.decode("utf-8"))
+                except Exception:
+                    continue
+                if "__delete__" in record:
+                    self.offsets.pop(int(record["__delete__"]), None)
+                else:
+                    try:
+                        normalized = _normalize_loaded_row(self.table, record)
+                        self.offsets[int(normalized[self.table.primary.name])] = offset
+                    except Exception:
+                        continue
+
+    def _read(self, pk: int):
+        if pk in self._cache:
+            self._cache.move_to_end(pk)
+            return self._cache[pk]
+        offset = self.offsets[pk]
+        with self.path.open("rb") as handle:
+            handle.seek(offset)
+            row = json.loads(handle.readline().decode("utf-8"))
+        normalized = _normalize_loaded_row(self.table, row)
+        self._cache[pk] = normalized
+        if len(self._cache) > 64:
+            self._cache.popitem(last=False)
+        return normalized
+
+    def __getitem__(self, pk):
+        return self._read(int(pk))
+
+    def __setitem__(self, pk, row):
+        pk = int(pk)
+        data = (json.dumps(row, ensure_ascii=False, separators=(",", ":"), default=_json_default) + "\n").encode("utf-8")
+        self._handle.seek(0, os.SEEK_END)
+        offset = self._handle.tell()
+        self._handle.write(data)
+        self._handle.flush()
+        self.offsets[pk] = offset
+        self._cache.pop(pk, None)
+
+    def __delitem__(self, pk):
+        pk = int(pk)
+        self.offsets.pop(pk, None)
+        self._cache.pop(pk, None)
+        self._handle.seek(0, os.SEEK_END)
+        self._handle.write((json.dumps({"__delete__": pk}, separators=(",", ":")) + "\n").encode("utf-8"))
+        self._handle.flush()
+
+    def __iter__(self):
+        return iter(self.offsets)
+
+    def __len__(self):
+        return len(self.offsets)
+
+    def __contains__(self, pk):
+        return int(pk) in self.offsets
+
+    def keys(self):
+        return self.offsets.keys()
+
+    def items(self):
+        for pk in list(self.offsets):
+            yield pk, self[pk]
+
+    def values(self):
+        for pk in list(self.offsets):
+            yield self[pk]
+
+    def get(self, pk, default=None):
+        try:
+            return self[pk]
+        except KeyError:
+            return default
+
+    def pop(self, pk, *args):
+        if pk in self.offsets:
+            row = self[pk]
+            del self[pk]
+            return row
+        if args:
+            return args[0]
+        raise KeyError(pk)
+
+    def __deepcopy__(self, memo):
+        new_path = self.path.with_name(f"rows-{uuid.uuid4().hex}.jsonl")
+        shutil.copy2(self.path, new_path)
+        clone = object.__new__(type(self))
+        clone.path = new_path
+        clone.table = self.table
+        clone.offsets = dict(self.offsets)
+        clone._cache = OrderedDict()
+        clone._handle = new_path.open("a", encoding="utf-8")
+        return clone
+
+    def close(self):
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
+
+
+@dataclass
 class Table:
     name: str
     columns: list[Column]
@@ -81,7 +188,6 @@ class Table:
     vector_indexes: dict[str, dict[str, Any]] = field(default_factory=dict)
     version: int = 0
     _cache: dict[str, tuple[int, Any, list[int]]] = field(default_factory=dict, repr=False)
-    _norms: dict[str, tuple[int, Any]] = field(default_factory=dict, repr=False)
 
     @property
     def primary(self) -> Column:
@@ -99,7 +205,6 @@ class Table:
     def touch(self) -> None:
         self.version += 1
         self._cache.clear()
-        self._norms.clear()
 
     def vector_column(self) -> Column | None:
         for column in self.columns:
@@ -115,20 +220,27 @@ class Table:
         if cached and cached[0] == self.version:
             return cached[1], cached[2]
         pks = sorted(self.rows)
+        # Building a full float32 matrix roughly doubles the vector memory.
+        # For very large tables, callers use the row-wise path instead.
+        if len(pks) > 200_000:
+            return None, pks
         values = [self.rows[pk][column.name] for pk in pks]
         if np is not None:
             matrix = np.asarray(values, dtype=np.float32)
         else:  # pragma: no cover
             matrix = values
         self._cache[column.name] = (self.version, matrix, pks)
-        if np is not None and isinstance(matrix, np.ndarray):
-            self._norms[column.name] = (
-                self.version,
-                np.einsum("ij,ij->i", matrix, matrix).astype(np.float32, copy=False),
-            )
         return matrix, pks
 
     def to_json(self) -> dict[str, Any]:
+        if isinstance(self.rows, RowStore):
+            return {
+                "name": self.name,
+                "columns": [column.to_json() for column in self.columns],
+                "rows": [],
+                "row_file": self.rows.path.name,
+                "vector_indexes": self.vector_indexes,
+            }
         return {
             "name": self.name,
             "columns": [column.to_json() for column in self.columns],
@@ -136,17 +248,30 @@ class Table:
             "vector_indexes": self.vector_indexes,
         }
 
+    def maybe_spill(self, data_dir: str | os.PathLike[str], threshold: int = 100_000) -> None:
+        if isinstance(self.rows, RowStore) or len(self.rows) < threshold:
+            return
+        path = Path(data_dir) / f"rows-{self.name}-{uuid.uuid4().hex}.jsonl"
+        store = RowStore(path, self)
+        for pk in sorted(self.rows):
+            store[pk] = self.rows[pk]
+        self.rows = store
+
     @classmethod
-    def from_json(cls, value: dict[str, Any]) -> "Table":
+    def from_json(cls, value: dict[str, Any], data_dir: str | os.PathLike[str] | None = None) -> "Table":
         table = cls(
             name=value["name"],
             columns=[Column.from_json(item) for item in value["columns"]],
         )
         table.vector_indexes = value.get("vector_indexes", {})
         pk_name = table.primary.name
-        for row in value.get("rows", []):
-            normalized = _normalize_loaded_row(table, row)
-            table.rows[int(normalized[pk_name])] = normalized
+        row_file = value.get("row_file")
+        if row_file and data_dir is not None:
+            table.rows = RowStore(Path(data_dir) / row_file, table)
+        else:
+            for row in value.get("rows", []):
+                normalized = _normalize_loaded_row(table, row)
+                table.rows[int(normalized[pk_name])] = normalized
         return table
 
 
@@ -353,30 +478,32 @@ class Engine:
     def _load(self) -> None:
         if self.path.exists():
             try:
-                data = json.loads(self.path.read_text(encoding="utf-8"))
+                with self.path.open("r", encoding="utf-8") as handle:
+                    data = json.load(handle)
                 self.tables = {
-                    name: Table.from_json(value) for name, value in data.get("tables", {}).items()
+                    name: Table.from_json(value, self.data_dir) for name, value in data.get("tables", {}).items()
                 }
             except Exception as exc:
                 raise RuntimeError(f"cannot recover data file: {exc}") from exc
         if self.wal_path.exists():
             # A batch insert is one complete line.  A torn final line is ignored.
-            for line in self.wal_path.read_text(encoding="utf-8", errors="replace").splitlines():
-                try:
-                    record = json.loads(line)
-                except Exception:
-                    continue
-                table = self.tables.get(record.get("table"))
-                if table is None:
-                    continue
-                for row in record.get("rows", []):
+            with self.wal_path.open("r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
                     try:
-                        normalized = _normalize_loaded_row(table, row)
-                        pk = int(normalized[table.primary.name])
+                        record = json.loads(line)
                     except Exception:
                         continue
-                    if pk not in table.rows:
-                        table.rows[pk] = normalized
+                    table = self.tables.get(record.get("table"))
+                    if table is None:
+                        continue
+                    for row in record.get("rows", []):
+                        try:
+                            normalized = _normalize_loaded_row(table, row)
+                            pk = int(normalized[table.primary.name])
+                        except Exception:
+                            continue
+                        if pk not in table.rows:
+                            table.rows[pk] = normalized
             # Fold the WAL into a fresh snapshot after recovery.
             self._snapshot()
             try:
@@ -498,7 +625,12 @@ class Engine:
         name = statement["name"]
         if name not in self.tables:
             raise SQLError(1051, f"unknown table {name}")
-        del self.tables[name]
+        table = self.tables.pop(name)
+        if isinstance(table.rows, RowStore):
+            try:
+                table.rows.path.unlink()
+            except FileNotFoundError:
+                pass
         return Result()
 
     def _execute_create_vector_index(self, statement: dict[str, Any]) -> Result:
@@ -544,6 +676,7 @@ class Engine:
         for row in new_rows:
             table.rows[int(row[table.primary.name])] = row
             count += 1
+        table.maybe_spill(self.data_dir)
         table.touch()
         self._last_inserts = (table.name, new_rows)
         return Result(affected=count)
@@ -619,7 +752,7 @@ class Engine:
         order = self._resolve_order(statement.get("order", []), aliases)
         limit = statement.get("limit")
 
-        vector_plan = self._vector_order_plan(table, order, filtered, limit=limit)
+        vector_plan = self._vector_order_plan(table, order, filtered)
         if vector_plan is not None:
             ordered, distances, distance_expr = vector_plan
             selected = ordered if limit is None else ordered[:limit]
@@ -635,6 +768,8 @@ class Engine:
                 rows.append(values)
             return Result(columns=output_columns, rows=rows, is_query=True)
 
+        if limit is not None and not order:
+            filtered = filtered[: max(0, int(limit))]
         decorated = []
         for pk in filtered:
             row = table.rows[pk]
@@ -740,7 +875,7 @@ class Engine:
             return None
         return column, vector
 
-    def _vector_order_plan(self, table, order, filtered, limit=None):
+    def _vector_order_plan(self, table, order, filtered):
         if not order or len(order) != 1:
             return None
         expr, descending = order[0]
@@ -751,45 +886,16 @@ class Engine:
             return None
         column, query = distance
         matrix, pks = table.vector_matrix(column)
-        if _FASTSCAN is not None and np is not None and isinstance(matrix, np.ndarray) and len(pks):
-            rows = np.ascontiguousarray(matrix, dtype=np.float32)
-            query_vec = np.ascontiguousarray(query, dtype=np.float32)
-            if len(filtered) == len(pks):
-                allowed_ptr = None
-                n_allowed = len(pks)
-            else:
-                pos_by_pk = {pk: i for i, pk in enumerate(pks)}
-                allowed = np.fromiter((pos_by_pk[pk] for pk in filtered), dtype=np.uint32, count=len(filtered))
-                allowed_ptr = allowed.ctypes.data_as(ctypes.POINTER(ctypes.c_uint32))
-                n_allowed = len(allowed)
-            take = n_allowed if limit is None else min(int(limit), n_allowed)
-            if take > 0:
-                out_positions = (ctypes.c_uint32 * take)()
-                out_distances = (ctypes.c_float * take)()
-                rc = _FASTSCAN.mvd_topk_l2(
-                    rows.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                    len(pks), rows.shape[1], query_vec.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                    allowed_ptr, n_allowed, take, out_positions, out_distances,
-                )
-                if rc >= 0:
-                    ordered = [int(pks[int(out_positions[i])]) for i in range(rc)]
-                    distances = {pk: float(out_distances[i]) for i, pk in enumerate(ordered)}
-                    return ordered, distances, expr
+        allowed = set(filtered)
         if np is not None and isinstance(matrix, np.ndarray):
             query_vec = np.asarray(query, dtype=np.float32)
-            cached_norms = table._norms.get(column.name)
-            if cached_norms is None or cached_norms[0] != table.version:
-                norms = np.einsum("ij,ij->i", matrix, matrix).astype(np.float32, copy=False)
-                table._norms[column.name] = (table.version, norms)
-            else:
-                norms = cached_norms[1]
-            squared = norms - 2.0 * (matrix @ query_vec) + float(query_vec @ query_vec)
-            values = np.sqrt(np.maximum(squared, 0.0))
+            values = np.linalg.norm(matrix - query_vec, axis=1)
             distances = {pk: float(value) for pk, value in zip(pks, values)}
         else:
+            # Large tables (and the no-NumPy fallback) avoid a full matrix.
+            # Compute only the rows that can survive the WHERE clause.
             distances = {
-                pk: _l2_distance(table.rows[pk][column.name], query) for pk in pks
+                pk: _l2_distance(table.rows[pk][column.name], query) for pk in allowed
             }
-        allowed = set(filtered)
         ordered = sorted(allowed, key=lambda pk: (distances[pk], pk))
         return ordered, distances, expr
