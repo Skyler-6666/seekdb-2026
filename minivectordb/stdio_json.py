@@ -10,7 +10,7 @@ import json
 import sys
 from typing import Any
 
-from .engine import Engine, Result
+from .engine import Engine, Result, _json_default
 from .sql import SQLError
 
 _ERROR_CODES = {
@@ -49,7 +49,7 @@ def _result_message(ident: Any, result: Result, sql: str) -> dict[str, Any]:
 
 
 def emit(message: dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n")
+    sys.stdout.write(json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":"), default=_json_default) + "\n")
     sys.stdout.flush()
 
 
@@ -61,7 +61,7 @@ class JSONLServer:
 
     def emit(self, message: dict[str, Any]) -> None:
         self.stdout.write(
-            json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n"
+            json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":"), default=_json_default) + "\n"
         )
         self.stdout.flush()
 

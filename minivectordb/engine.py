@@ -7,6 +7,7 @@ import json
 import math
 import os
 import tempfile
+from array import array
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,18 @@ except Exception:  # pragma: no cover - fallback for minimal images
 
 
 MAX_VECTOR_DIM = 16000
+
+
+def _json_default(value):
+    if isinstance(value, array):
+        return value.tolist()
+    if isinstance(value, tuple):
+        return list(value)
+    if np is not None and isinstance(value, np.ndarray):
+        return value.tolist()
+    if np is not None and isinstance(value, np.floating):
+        return float(value)
+    raise TypeError(f"not JSON serializable: {type(value)!r}")
 
 
 @dataclass
@@ -126,7 +139,7 @@ def _normalize_loaded_row(table: Table, row: dict[str, Any]) -> dict[str, Any]:
         elif column.type == "VARCHAR":
             result[column.name] = str(value)
         elif column.type == "VECTOR":
-            result[column.name] = [_as_float32(item) for item in value]
+            result[column.name] = array("f", (_as_float32(item) for item in value))
         else:
             result[column.name] = value
     return result
@@ -165,11 +178,11 @@ def _normalize_value(table: Table, column: Column, value: Any) -> Any:
             raise SQLError(1406, f"value too long for {column.name}")
         return text
     if column.type == "VECTOR":
-        if not isinstance(value, (list, tuple)):
+        if not isinstance(value, (list, tuple, array)):
             raise SQLError(1690, f"invalid vector for {column.name}")
         if column.length is None or len(value) != column.length:
             raise SQLError(1366, f"vector dimension mismatch for {column.name}")
-        return [_as_float32(item) for item in value]
+        return array("f", (_as_float32(item) for item in value))
     return value
 
 
@@ -190,7 +203,7 @@ def _compare(left: Any, right: Any, op: str) -> bool:
 
 
 def _vector(value: Any) -> list[float]:
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, (list, tuple, array)):
         return [float(item) for item in value]
     raise SQLError(1366, "expected vector")
 
@@ -346,7 +359,7 @@ class Engine:
         fd, tmp_path = tempfile.mkstemp(prefix=".minivectordb-", dir=self.data_dir)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+                json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"), default=_json_default)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(tmp_path, self.path)
@@ -372,7 +385,7 @@ class Engine:
             pass
 
     def _append_insert_wal(self, table_name: str, rows: list[dict[str, Any]]) -> None:
-        line = json.dumps({"table": table_name, "rows": rows}, ensure_ascii=False, separators=(",", ":"))
+        line = json.dumps({"table": table_name, "rows": rows}, ensure_ascii=False, separators=(",", ":"), default=_json_default)
         with self.wal_path.open("a", encoding="utf-8") as handle:
             handle.write(line)
             handle.write("\n")
