@@ -48,6 +48,11 @@ def _load_fastscan():
             ctypes.c_size_t,
         ]
         lib.mvd_parse_floats.restype = ctypes.c_int
+        lib.mvd_has_bad_row_separator.argtypes = [
+            ctypes.c_char_p,
+            ctypes.c_size_t,
+        ]
+        lib.mvd_has_bad_row_separator.restype = ctypes.c_int
         return lib
     except Exception:
         return None
@@ -88,12 +93,10 @@ _PK_EQUAL_RE = re.compile(
 
 
 def _has_suspicious_row_separator(text: str) -> bool:
-    for match in _ROW_SEPARATOR_RE.finditer(text):
-        start = match.start()
-        if start == 0 or text[start - 1] != "'":
-            return True
-    return False
-
+    if _FASTSCAN is not None:
+        raw = text.encode("utf-8")
+        return _FASTSCAN.mvd_has_bad_row_separator(raw, len(raw)) != 0
+    return text.count("),(") != text.count("'),(")
 
 def _parse_float_body_fast(body: str, expected: int):
     if _FASTSCAN is not None and np is not None and expected > 0:
@@ -534,18 +537,21 @@ class Engine:
 
     def _load(self) -> None:
         binary_loaded = False
+        binary_error = None
         if self.bin_path.exists():
             try:
-                raw = self.bin_path.read_bytes()
-                if not raw.startswith(_SNAPSHOT_MAGIC):
-                    raise RuntimeError("unknown binary snapshot format")
-                data = pickle.loads(raw[len(_SNAPSHOT_MAGIC):])
+                with self.bin_path.open("rb") as handle:
+                    if handle.read(len(_SNAPSHOT_MAGIC)) != _SNAPSHOT_MAGIC:
+                        raise RuntimeError("unknown binary snapshot format")
+                    data = pickle.load(handle)
                 self.tables = {
                     name: Table.from_binary(value)
                     for name, value in data.get("tables", {}).items()
                 }
+                del data
                 binary_loaded = True
-            except Exception:
+            except Exception as exc:
+                binary_error = exc
                 self.tables = {}
         if not binary_loaded and self.path.exists():
             try:
@@ -553,44 +559,44 @@ class Engine:
                 self.tables = {
                     name: Table.from_json(value) for name, value in data.get("tables", {}).items()
                 }
+                del data
             except Exception as exc:
                 raise RuntimeError(f"cannot recover data file: {exc}") from exc
+        elif not binary_loaded and binary_error is not None:
+            raise RuntimeError(f"cannot recover data file: {binary_error}") from binary_error
+
         if self.wal_path.exists():
-            raw = self.wal_path.read_bytes()
-            records: list[dict[str, Any]] = []
-            if raw.startswith(_WAL_MAGIC):
-                offset = len(_WAL_MAGIC)
-                while offset + _WAL_LENGTH.size <= len(raw):
-                    payload_length = _WAL_LENGTH.unpack_from(raw, offset)[0]
-                    offset += _WAL_LENGTH.size
-                    end = offset + payload_length
-                    crc_end = end + _WAL_CRC.size
-                    if crc_end > len(raw):
-                        break
-                    payload = raw[offset:end]
-                    expected_crc = _WAL_CRC.unpack_from(raw, end)[0]
-                    if zlib.crc32(payload) & 0xFFFFFFFF != expected_crc:
-                        break
-                    try:
-                        records.append(pickle.loads(payload))
-                    except Exception:
-                        break
-                    offset = crc_end
-            else:
-                # Compatibility with the earlier text WAL format.
-                for line in raw.decode("utf-8", errors="replace").splitlines():
-                    try:
-                        records.append(json.loads(line))
-                    except Exception:
-                        continue
-            for record in records:
-                self._apply_wal_record(record)
-            # Fold the WAL into a fresh snapshot after recovery.
-            self._snapshot()
-            try:
-                self.wal_path.unlink()
-            except FileNotFoundError:
-                pass
+            with self.wal_path.open("rb") as handle:
+                magic = handle.read(len(_WAL_MAGIC))
+                if magic == _WAL_MAGIC:
+                    while True:
+                        header = handle.read(_WAL_LENGTH.size)
+                        if not header:
+                            break
+                        if len(header) != _WAL_LENGTH.size:
+                            break
+                        payload_length = _WAL_LENGTH.unpack(header)[0]
+                        payload = handle.read(payload_length)
+                        if len(payload) != payload_length:
+                            break
+                        crc_bytes = handle.read(_WAL_CRC.size)
+                        if len(crc_bytes) != _WAL_CRC.size:
+                            break
+                        expected_crc = _WAL_CRC.unpack(crc_bytes)[0]
+                        if zlib.crc32(payload) & 0xFFFFFFFF != expected_crc:
+                            break
+                        try:
+                            record = pickle.loads(payload)
+                        except Exception:
+                            break
+                        self._apply_wal_record(record)
+                else:
+                    handle.seek(0)
+                    for line in handle.read().decode("utf-8", errors="replace").splitlines():
+                        try:
+                            self._apply_wal_record(json.loads(line))
+                        except Exception:
+                            continue
 
     def _snapshot(self) -> None:
         self._close_wal_handle()
@@ -633,6 +639,15 @@ class Engine:
         try:
             self.wal_path.unlink()
         except FileNotFoundError:
+            pass
+
+    def close(self) -> None:
+        self._close_wal_handle()
+
+    def __del__(self):
+        try:
+            self._close_wal_handle()
+        except Exception:
             pass
 
     def _close_wal_handle(self) -> None:
@@ -825,8 +840,10 @@ class Engine:
             or body[0] != "("
             or body[-1] != ")"
             or '"' in body
+            or "\\" in body
             or "--" in body
             or "/*" in body
+            or _has_suspicious_row_separator(body)
         ):
             return None
         inner = body[1:-1]
@@ -1156,6 +1173,9 @@ class Engine:
             row: dict[str, Any] = {}
             values = [eval_expr(expr, row, None) for expr, alias in projections]
             return Result(columns=self._projection_columns(projections), rows=[values], is_query=True)
+        for expr, _ in projections:
+            self._validate_expr(table, expr)
+        self._validate_expr(table, statement.get("where"))
         filtered = self._filter(table, statement.get("where"))
         if projections and all(
             expr[0] == "func" and expr[1].upper() == "COUNT" for expr, alias in projections
@@ -1183,6 +1203,8 @@ class Engine:
                 aliases[alias.lower()] = expr
         output_columns = self._projection_columns(projections)
         order = self._resolve_order(statement.get("order", []), aliases)
+        for order_expr, _ in order:
+            self._validate_expr(table, order_expr, aliases)
         limit = statement.get("limit")
 
         vector_plan = self._vector_order_plan(
@@ -1259,6 +1281,31 @@ class Engine:
             else:
                 resolved.append((expr, descending))
         return resolved
+
+    def _validate_expr(self, table: Table, expr: Any, aliases: dict[str, Any] | None = None) -> None:
+        if not isinstance(expr, tuple) or not expr:
+            return
+        kind = expr[0]
+        if kind == "column":
+            if aliases and expr[1].lower() in aliases:
+                return
+            table.column(expr[1])
+            return
+        if kind in {"and", "or"}:
+            self._validate_expr(table, expr[1], aliases)
+            self._validate_expr(table, expr[2], aliases)
+            return
+        if kind == "compare":
+            self._validate_expr(table, expr[2], aliases)
+            self._validate_expr(table, expr[3], aliases)
+            return
+        if kind == "arith":
+            self._validate_expr(table, expr[2], aliases)
+            self._validate_expr(table, expr[3], aliases)
+            return
+        if kind == "func":
+            for arg in expr[2]:
+                self._validate_expr(table, arg, aliases)
 
     def _table(self, name: str) -> Table:
         if name not in self.tables:
