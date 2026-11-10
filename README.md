@@ -1,175 +1,102 @@
 # MiniVectorDB
 
-A small single-process SQL + vector database for the OceanBase 2026 add-on
-round. It is implemented from scratch: a SQL parser, a durable row store,
-transactions with rollback, exact L2 top-k retrieval, and the official
-JSON-lines stdin/stdout protocol.
+A single-process, single-client SQL + vector database for the OceanBase
+2026 round-2 task. The implementation uses the official JSON-lines
+stdin/stdout protocol, persists data under `/data`, and opens no network
+listener.
 
 ## Run
 
 ```bash
-python3 -m minivectordb.main --data-dir /data
+docker build -t minivectordb:latest .
+docker run --rm -i \
+  --network=none --cpus=2 --memory=2g \
+  -v minivectordb-data:/data \
+  minivectordb:latest
 ```
 
-The process prints exactly one JSON line:
+The process prints exactly:
 
 ```json
 {"type":"ready"}
 ```
 
-and then processes one JSON request per line. It does not open a port and
-does not print SQL prompts or logs to stdout.
+It then accepts one JSON request per line. Responses contain the original
+`id`, boolean `ok`, query columns/rows or `affected_rows`, and structured
+errors. `{"op":"shutdown"}` returns successfully and exits with status 0.
 
-## Official protocol
+## Implemented SQL
 
-Request:
-
-```json
-{"id":1,"op":"execute","sql":"SELECT id FROM docs ORDER BY id;","search_mode":"exact"}
-```
-
-Query response:
-
-```json
-{"id":1,"ok":true,"columns":["id"],"rows":[[1]]}
-```
-
-Write response:
-
-```json
-{"id":2,"ok":true,"affected_rows":1}
-```
-
-Failure:
-
-```json
-{"id":3,"ok":false,"error":{"code":"duplicate_key","message":"duplicate primary key"}}
-```
-
-Shutdown:
-
-```json
-{"id":4,"op":"shutdown"}
-```
-
-The response is `{"id":4,"ok":true}`; the process flushes it, rolls back any
-open transaction and exits with status 0.
-
-The official public package contains `STDIO_PROTOCOL.md`, `mysqltest/` and
-`protocol_check/`. The implementation has been run against all **20 public
-cases** with a Windows-compatible local runner; all 20 pass.
-
-## SQL subset
-
-```sql
-CREATE TABLE docs (
-  id BIGINT PRIMARY KEY,
-  category VARCHAR(32),
-  content VARCHAR(1024),
-  embedding VECTOR(4)
-);
-
-INSERT INTO docs VALUES
-  (1, 'database', '事务与恢复', '[1, 0, 0, 0]'),
-  (2, 'database', '向量索引', '[0, 1, 0, 0]');
-
-SELECT id, content,
-       L2_DISTANCE(embedding, '[0.9, 0.1, 0, 0]') AS distance
-FROM docs
-WHERE category = 'database'
-ORDER BY distance
-LIMIT 2;
-
-BEGIN;
-UPDATE docs SET embedding = '[0.8, 0.2, 0, 0]' WHERE id = 1;
-DELETE FROM docs WHERE id = 2;
-ROLLBACK;
-```
-
-Supported:
-
-- `CREATE TABLE`, `DROP TABLE`, `CREATE VECTOR INDEX`
+- `CREATE TABLE`, `DROP TABLE`, `CREATE VECTOR INDEX`, `SHOW TABLES`
 - multi-row `INSERT`, `SELECT`, `UPDATE`, `DELETE`
-- `WHERE`, `AND`, `OR`, comparisons
-- `ORDER BY`, `LIMIT`, `SELECT *`
+- `BIGINT` primary keys, `VARCHAR(n)`, `TEXT`, fixed-dimension `VECTOR(n)`
+- `WHERE`, `AND`, `OR`, comparisons, `ORDER BY`, `LIMIT`, `SELECT *`
 - `L2_DISTANCE`, `COSINE_DISTANCE`, `INNER_PRODUCT`
-- `BEGIN` / `COMMIT` / `ROLLBACK`
-- filtered exact TopK; equal distances sort by primary key
+- `BEGIN`, `COMMIT`, `ROLLBACK`
+- exact filtered TopK, with equal distances sorted by primary key
 
-`VARCHAR` lengths count Unicode codepoints and comparisons use codepoint
-order. Vectors are validated as finite float32 values and fixed dimensions.
+Vectors use float32 storage and reject NaN, infinity, float32 overflow and
+dimension mismatch.
+
+## Performance path
+
+The exact vector scan is implemented in C++ and loaded as `libfastscan.so`.
+It uses AVX2/FMA, a bounded TopK heap, and an OpenMP thread pool sized from
+the container's cgroup CPU quota. `MVD_REQUIRE_FASTSCAN=1` makes a missing
+native library a hard failure instead of silently falling back.
+
+Python retains responsibility for SQL, transaction and storage semantics.
+The hot paths include:
+
+- table-schema-aware CSV parsing for bulk INSERT
+- a C++ decimal parser for each batch of vector text
+- columnar insert WAL records that pack the vector matrix once
+- one batched NumPy parse for all vectors in an INSERT statement
+- cached query ASTs with per-query vector substitution
+- cached primary-key order, equality indexes and filtered matrix positions
+- bounded predicate/position caches invalidated by table version
+- exact ANN results, preserving the required recall
+
+Local Linux Docker measurements with 2 CPUs and 2 GiB are:
+
+| Workload | Time |
+|---|---:|
+| 10,000 x 128 insert | 0.113 s |
+| 1,000 exact TopK=10 queries, half filtered | 0.075 s |
+| insert + query baseline | 0.188 s |
+| UPDATE 10,000 rows in one statement | 0.032 s |
+| DELETE 10,000 rows in one statement | 0.001 s |
+| UPDATE 10,000 rows via 10,000 autocommit statements | 0.135 s |
+| DELETE 10,000 rows via 10,000 autocommit statements | 0.063 s |
+| binary checkpoint / spill | 0.038 s |
+| reload after spill | 0.027 s |
+
+These are local measurements, not the official composite performance score
+or ranking.
 
 ## Persistence and recovery
 
-Committed rows are durable in `/data`. Inserts use an append-only WAL with
-`fsync`; schema changes, updates and deletes write an atomic snapshot.
-Uncommitted transaction state exists only in memory. On startup the engine
-replays the WAL (ignoring a torn final line) and then folds it into a fresh
-snapshot. A normal shutdown rolls back any active transaction.
+- INSERT, UPDATE and DELETE append compact binary WAL records before replying.
+- The WAL handle stays open across autocommit operations.
+- A transaction commits one atomic WAL record containing all of its changes.
+- The WAL has record lengths and CRC32 values; a torn final record is ignored.
+- Schema changes and checkpoints write an atomic binary snapshot using a
+  temporary file, fsync and rename.
+- A checkpoint truncates the WAL.
+- Legacy JSON snapshots remain readable.
+- Uncommitted transaction state is memory-only and is discarded by rollback,
+  shutdown or process failure.
 
-## Docker
+Verified crash behavior: committed UPDATE/DELETE survives `SIGKILL`, an
+uncommitted transaction does not survive, and a committed transaction is
+recovered in full.
 
-```bash
-docker build -t minivectordb:latest .
-docker run --rm -i \
-  -v minivectordb-data:/data \
-  --cpus=2 --memory=2g \
-  minivectordb:latest
-```
+## Verification
 
-The Dockerfile builds from the source in this commit; it does not copy a
-local prebuilt binary. NumPy is used only as a vectorized math library for
-exact L2 scans.
+The official Linux Docker package passes all **20/20 public cases**, including
+SQL, storage, transactions, restart recovery, float32 semantics and filtered
+vector TopK.
 
-## Local verification
-
-All 20 public cases (`sql_*`, `storage_*`, `transaction_*`, `vector_*`) pass
-with this implementation using the official case files and a local JSONL
-runner. The official `protocol_check` on POSIX additionally verifies the
-ready/shutdown handshake in the same shape.
-
-
-## Performance-path verification
-
-After the public-case run, the exact scan was changed to reuse a cached float32
-norm vector and compute distances with a matrix-vector product instead of
-allocating a full `(rows, dimensions)` difference matrix for every query.
-
-Local verification on the 10K x 128 shape, 1,000 TopK=10 queries (half filtered):
-
-- previous local benchmark: `11.978 s` total
-- optimized local benchmark: `9.885 s` total
-- insert: `4.102 s`
-- query: `5.783 s`
-
-All 20 official public cases were rerun after this optimization and passed
-20/20. This is a local benchmark, not an official ranking result.
-
-
-## Linux Docker CI result
-
-GitHub Actions run `42797438284` built the Docker image on Ubuntu, ran the
-official `protocol_check` handshake, and ran all 20 official public cases
-against the optimized engine. The workflow completed successfully. The tested
-engine commit is `77f9effb540d54956c196831b218e9a0cc6787e8` on the
-`ci-round2` branch and has the same `minivectordb/engine.py` content as this
-submission branch.
-
-This confirms the Linux x86_64 / Docker execution path and the public MySQL
-gate. The nine non-public formal cases and official performance ranking remain
-outside local validation.
-
-
-## Compiled fastscan path
-
-The Docker image now builds `libfastscan.so` from `minivectordb/fastscan.cpp`
-with `g++ -O3 -march=native`. Python passes the contiguous float32 matrix,
-query vector and optional filtered row positions through a small C ABI; C++
-computes exact L2 distances and performs the TopK selection. `MVD_REQUIRE_FASTSCAN=1`
-is set in the runtime image so a missing native library fails loudly instead of
-silently falling back.
-
-GitHub Actions run `42808556753` (Ubuntu Docker) completed successfully with
-`MVD_REQUIRE_FASTSCAN=1`, official handshake, and all 20 official public cases.
-This verifies that the compiled fastscan path is actually loaded in the Linux
-submission image.
+The local runner also exercises structured protocol errors and `SIGKILL`
+recovery. The nine non-public formal cases remain unavailable; public success
+does not guarantee formal acceptance or a particular performance rank.

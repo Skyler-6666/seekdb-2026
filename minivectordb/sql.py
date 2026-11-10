@@ -6,9 +6,16 @@ returns plain tuples/dicts so the storage layer stays independent from it.
 
 from __future__ import annotations
 
+import math
 import re
+from array import array
 from dataclasses import dataclass
 from typing import Any
+
+try:
+    import numpy as np
+except Exception:  # pragma: no cover
+    np = None
 
 
 class SQLError(Exception):
@@ -60,6 +67,8 @@ def _unquote(token: Token) -> str:
     value = token.value
     quote = value[0]
     body = value[1:-1]
+    if "\\" not in body and quote * 2 not in body:
+        return body
     out: list[str] = []
     i = 0
     while i < len(body):
@@ -78,21 +87,27 @@ def _unquote(token: Token) -> str:
     return "".join(out)
 
 
-def _parse_vector_text(text: str) -> list[float]:
+def _parse_vector_text(text: str) -> array:
     stripped = text.strip()
     if not (stripped.startswith("[") and stripped.endswith("]")):
         raise SQLError(1690, "invalid vector literal")
     body = stripped[1:-1].strip()
     if not body:
-        return []
-    values: list[float] = []
-    for part in body.split(","):
-        part = part.strip()
-        try:
-            number = float(part)
-        except ValueError as exc:
-            raise SQLError(1690, "invalid vector element") from exc
-        values.append(number)
+        return array("f")
+    expected = body.count(",") + 1
+    if np is not None:
+        parsed = np.fromstring(body, dtype=np.float32, sep=",")
+        if parsed.size != expected or not np.isfinite(parsed).all():
+            raise SQLError(1690, "invalid vector element")
+        values = array("f")
+        values.frombytes(parsed.tobytes())
+        return values
+    try:
+        values = array("f", (float(part) for part in body.split(",")))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise SQLError(1690, "invalid vector element") from exc
+    if any(not math.isfinite(value) for value in values):
+        raise SQLError(1690, "vector element must be finite")
     return values
 
 
@@ -318,6 +333,61 @@ class Parser:
         raise SQLError(1235, "unsupported SHOW")
 
     # -- DML -----------------------------------------------------------
+    def _parse_insert_value_fast(self):
+        token = self.peek()
+        if token.kind == "number":
+            self.next()
+            if "." in token.value or "e" in token.value.lower():
+                return ("literal", float(token.value))
+            return ("literal", int(token.value))
+        if token.kind == "string":
+            self.next()
+            value = _unquote(token)
+            stripped = value.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                return ("vector", _parse_vector_text(value))
+            return ("literal", value)
+        if token.kind == "identifier" and token.value.upper() == "NULL":
+            self.next()
+            return ("literal", None)
+        if self.accept("["):
+            values: list[Any] = []
+            if not self.at("]"):
+                while True:
+                    item = self.next()
+                    if item.kind == "number":
+                        values.append(float(item.value))
+                    else:
+                        return None
+                    if not self.accept(","):
+                        break
+            if not self.accept("]"):
+                return None
+            return ("vector", values)
+        return None
+
+    def _parse_insert_rows_fast(self):
+        rows: list[list[Any]] = []
+        while True:
+            if not self.accept("("):
+                return None
+            values: list[Any] = []
+            while True:
+                value = self._parse_insert_value_fast()
+                if value is None:
+                    return None
+                values.append(value)
+                if not self.accept(","):
+                    break
+            if not self.accept(")"):
+                return None
+            rows.append(values)
+            if not self.accept(","):
+                break
+        if self.peek().kind != "eof" and not self.at(";"):
+            return None
+        return rows
+
     def parse_insert(self) -> dict[str, Any]:
         self.expect_keyword("INSERT")
         self.expect_keyword("INTO")
@@ -331,7 +401,13 @@ class Parser:
                     break
             self.expect(")")
         self.expect_keyword("VALUES")
-        rows: list[list[Any]] = []
+        fast_start = self.index
+        rows = self._parse_insert_rows_fast()
+        if rows is not None:
+            self.end()
+            return {"type": "insert", "table": table, "columns": columns, "rows": rows}
+        self.index = fast_start
+        rows = []
         while True:
             self.expect("(")
             values: list[Any] = []
