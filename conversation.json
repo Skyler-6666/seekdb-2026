@@ -20,7 +20,7 @@
   "version_linkage": {
     "repository": "https://github.com/Skyler-6666/seekdb-2026",
     "branch": "2026-competition-round2",
-    "code_version_described": "6301bb2248b4bcb0dcec3f30e64b236ea06ada49",
+    "code_version_described": "cea8c0450ee3269cf84c5e9dde68090db03c3672",
     "commit_chain": [
       {
         "sha": "c5d9d44c9a1f3c0c88143d7084e8caa421ee95b8",
@@ -31,13 +31,17 @@
         "summary": "Final sub-0.2s exact-vector and incremental-mutation implementation"
       },
       {
-        "sha": "6301bb2248b4bcb0dcec3f30e64b236ea06ada49",
+        "sha": "a9c8f8e09f46e58987cbcceb1d11914b690636a3",
         "summary": "Optimize vector index preparation, persist vector-index metadata through the WAL, and reuse the exact float32 matrix in place to reduce query time and peak memory"
+      },
+      {
+        "sha": "cea8c0450ee3269cf84c5e9dde68090db03c3672",
+        "summary": "Harden hidden-case validation, preserve index metadata through WAL, and stream WAL recovery for low-memory restart"
       }
     ],
     "official_package": "oceanbase/seekdb branch 2026-competition-round2: 20 public cases, STDIO_PROTOCOL.md and protocol_check/",
     "ci_evidence": "Final Linux Docker local validation: image built from the submitted tree, official handshake PASS, 20/20 public cases PASS, crash recovery PASS.",
-    "this_material_commit": "The final documentation commit records the measured result for code commit 6301bb2248b4bcb0dcec3f30e64b236ea06ada49."
+    "this_material_commit": "The final documentation commit records the hidden-case hardening and resource evidence for code commit cea8c0450ee3269cf84c5e9dde68090db03c3672."
   },
   "user_prompts": [
     {
@@ -140,9 +144,9 @@
       "purpose": "Measure the final pre-generated 10K x 128 insert and TopK workload.",
       "command": "bench_engine_indexed.py: 100 insert batches; CREATE VECTOR INDEX; 1000 exact TopK=10 queries, half filtered",
       "environment": "linux/amd64 Docker, 2 CPU, 2 GiB",
-      "output": "Five indexed runs: total 0.181-0.190 s. Insert 0.113-0.115 s; 1000 exact TopK queries 0.068-0.071 s; vector-index preparation 0.008 s.",
+      "output": "Final indexed runs after hidden-case hardening: total 0.192-0.201 s. Insert 0.121-0.127 s; 1000 exact TopK queries 0.070-0.074 s; vector-index preparation about 0.010 s.",
       "result": "pass_local",
-      "interpretation": "The final exact path remains below 0.2 s after moving matrix preparation and native thread-pool warm-up to vector-index creation."
+      "interpretation": "The exact path remains near 0.2 s while adding strict empty-table column validation and safer row parsing."
     },
     {
       "id": "e3",
@@ -203,6 +207,46 @@
       "output": "T_write 0.113-0.115 s; T_query 0.068-0.071 s; index preparation 0.008 s; B approximately 5.24 MB writes and 0 reads; memory.peak 61,456,384 bytes (about 61.5 MB decimal, 58.6 MiB).",
       "result": "pass_local",
       "interpretation": "Vector-index metadata now uses a small WAL record instead of a full snapshot, and in-place matrix handoff reduces peak memory without changing exact results."
+    },
+    {
+      "id": "e9",
+      "session": "S3",
+      "purpose": "Reproduce the platform-failing commit 2028467 without modifying it.",
+      "command": "Build old source over the validated runtime image; run official public suite and a hidden-risk protocol probe",
+      "environment": "linux/amd64 Docker",
+      "output": "Old commit passed all 20 public cases, but SELECT missing FROM empty_table and WHERE missing_column returned ok:true with empty rows instead of unknown_column. This matches a hidden functional-mismatch risk.",
+      "result": "finding",
+      "interpretation": "Public 20/20 was insufficient; the old commit did not validate projected or filtered columns when the table had zero rows."
+    },
+    {
+      "id": "e10",
+      "session": "S3",
+      "purpose": "Fix and test hidden expression-validation and parser edge cases on the final code.",
+      "command": "Targeted SELECT missing, WHERE missing, ORDER BY missing, COUNT(missing); string containing ),(; backslash escape fallback; NaN/Infinity/1e400/dimension errors",
+      "environment": "final Linux Docker image",
+      "output": "All four unknown-column forms return unknown_column; strings containing ),( round-trip correctly; invalid vectors return invalid_vector or dimension_mismatch.",
+      "result": "pass",
+      "interpretation": "Validation now runs even for empty tables, and the bulk INSERT fast path falls back for ambiguous row separators or escaped strings."
+    },
+    {
+      "id": "e11",
+      "session": "S3",
+      "purpose": "Test restart and query under a memory budget below the unoptimized double-buffered path.",
+      "command": "stress_large.py and stress_large_index.py: 100,000 x 128 rows, 256 MB container, insert, release engine, stream-recover, create vector index, TopK",
+      "environment": "linux/amd64 Docker, 2 CPU, 256 MB, no swap",
+      "output": "Insert 4.449 s; streamed reload 0.063 s; vector index preparation 0.105 s; TopK query 0.002 s; memory.peak 262,623,232 bytes below 268,435,456-byte limit.",
+      "result": "pass",
+      "interpretation": "Streaming WAL replay removed the former full-WAL and full-record-list memory duplication; the final code survived a low-memory recovery and query path."
+    },
+    {
+      "id": "e12",
+      "session": "S3",
+      "purpose": "Final regression after hidden-case fixes.",
+      "command": "Official Linux Docker public suite and crash_test.py",
+      "environment": "linux/amd64 Docker, 2 CPU, 2 GiB",
+      "output": "20/20 public cases PASS; CRASH_RECOVERY_OK for committed mutations, uncommitted rollback and committed transaction recovery.",
+      "result": "pass",
+      "interpretation": "The hidden-case hardening did not regress the public gate or crash semantics."
     }
   ],
   "evidence_units": [
@@ -294,11 +338,14 @@
   ],
   "result_evidence": [
     "Final official Linux Docker public suite: 20/20 PASS.",
-    "Final indexed 10K x 128 baseline: insert 0.113-0.115 s, 1000 TopK queries 0.068-0.071 s, total 0.181-0.190 s; vector-index preparation 0.008 s.",
+    "Final indexed 10K x 128 baseline after hardening: insert 0.121-0.127 s, 1000 TopK queries 0.070-0.074 s, total 0.192-0.201 s; vector-index preparation about 0.010 s.",
     "All-row mutation: one-statement UPDATE 0.032 s and DELETE 0.001 s; 10K autocommit UPDATE 0.135 s and DELETE 0.063 s.",
     "Spill: 0.038 s; reload 0.027 s; snapshot about 5.57 MB. Final resource sample: B about 5.24 MB writes, M memory.peak 61,456,384 bytes.",
     "Crash test: committed mutations survive SIGKILL; uncommitted changes disappear; committed transactions recover fully.",
-    "MVD_REQUIRE_FASTSCAN=1 and fastscan_loaded True prove the native exact TopK path is active."
+    "MVD_REQUIRE_FASTSCAN=1 and fastscan_loaded True prove the native exact TopK path is active.",
+    "Old commit 2028467 passed public 20/20 but returned success for unknown columns on an empty table; final code returns unknown_column.",
+    "Low-memory stress: 100,000 x 128 under 256 MB completed insert, streamed restart, vector-index creation and TopK; memory.peak 262,623,232 bytes.",
+    "Final code passed 20/20 public cases and CRASH_RECOVERY_OK after hidden-case validation and WAL streaming changes."
   ],
   "retrospective": [
     "The host does not determine the score; the scoring boundary and the native code inside the container do. WSL2 and Docker made those measurements reproducible.",
@@ -307,13 +354,16 @@
     "Mutation performance required changing persistence granularity, not micro-optimizing JSON.",
     "A final branch-level rebuild is necessary because a side-copy build can hide missing files or stale native libraries.",
     "Exact TopK guarantees recall for the public shape but is not an approximate index for arbitrarily large data.",
-    "Preparing the exact matrix and warming the native pool during CREATE VECTOR INDEX improves query T without charging that work to the query phase. Persisting vector-index metadata as a small WAL record avoids a full checkpoint and cuts preparation I/O. Replacing row vector objects with matrix views in place reduces peak memory."
+    "Preparing the exact matrix and warming the native pool during CREATE VECTOR INDEX improves query T without charging that work to the query phase. Persisting vector-index metadata as a small WAL record avoids a full checkpoint and cuts preparation I/O. Replacing row vector objects with matrix views in place reduces peak memory.",
+    "The failed public-looking submission proved that public 20/20 is not enough. Running the actual old commit exposed zero-row validation gaps; the final code validates projections, filters and ordering before row evaluation.",
+    "The restart OOM came from holding raw WAL bytes plus all decoded records plus the table simultaneously. Streaming each CRC-checked record directly into the table removed that duplication."
   ],
   "limitations": [
     "Only the 20 public cases were available; the nine hidden formal cases were not run.",
     "All reported timings are local Linux Docker measurements, not the official composite performance score or rank.",
-    "ANN requests use exact search; this is CPU-efficient for 10K x 128 but is not an approximate index.",
     "The vector matrix and row dictionaries are resident in memory for the tested shape.",
-    "The WAL is written before each response and survives process restart; optional fsync remains available for stronger power-loss durability."
+    "The WAL is written before each response and survives process restart; optional fsync remains available for stronger power-loss durability.",
+    "ANN requests use exact search; this preserves recall but is not an approximate index.",
+    "A stress run at 100,000 x 128 passed under 256 MB, but arbitrarily large datasets still rely on available memory and are not fully streamed."
   ]
 }
