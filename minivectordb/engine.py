@@ -58,6 +58,7 @@ class Table:
     vector_indexes: dict[str, dict[str, Any]] = field(default_factory=dict)
     version: int = 0
     _cache: dict[str, tuple[int, Any, list[int]]] = field(default_factory=dict, repr=False)
+    _norms: dict[str, tuple[int, Any]] = field(default_factory=dict, repr=False)
 
     @property
     def primary(self) -> Column:
@@ -75,6 +76,7 @@ class Table:
     def touch(self) -> None:
         self.version += 1
         self._cache.clear()
+        self._norms.clear()
 
     def vector_column(self) -> Column | None:
         for column in self.columns:
@@ -96,6 +98,11 @@ class Table:
         else:  # pragma: no cover
             matrix = values
         self._cache[column.name] = (self.version, matrix, pks)
+        if np is not None and isinstance(matrix, np.ndarray):
+            self._norms[column.name] = (
+                self.version,
+                np.einsum("ij,ij->i", matrix, matrix).astype(np.float32, copy=False),
+            )
         return matrix, pks
 
     def to_json(self) -> dict[str, Any]:
@@ -723,7 +730,14 @@ class Engine:
         matrix, pks = table.vector_matrix(column)
         if np is not None and isinstance(matrix, np.ndarray):
             query_vec = np.asarray(query, dtype=np.float32)
-            values = np.linalg.norm(matrix - query_vec, axis=1)
+            cached_norms = table._norms.get(column.name)
+            if cached_norms is None or cached_norms[0] != table.version:
+                norms = np.einsum("ij,ij->i", matrix, matrix).astype(np.float32, copy=False)
+                table._norms[column.name] = (table.version, norms)
+            else:
+                norms = cached_norms[1]
+            squared = norms - 2.0 * (matrix @ query_vec) + float(query_vec @ query_vec)
+            values = np.sqrt(np.maximum(squared, 0.0))
             distances = {pk: float(value) for pk, value in zip(pks, values)}
         else:
             distances = {
