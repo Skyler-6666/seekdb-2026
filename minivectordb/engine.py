@@ -577,6 +577,12 @@ class Engine:
         if self.in_transaction:
             self._rollback()
 
+    def close(self) -> None:
+        self.rollback_if_active()
+        for table in self.tables.values():
+            if isinstance(table.rows, RowStore):
+                table.rows.close()
+
     def _finish_write(self) -> None:
         if not self.in_transaction:
             if self._last_inserts is not None:
