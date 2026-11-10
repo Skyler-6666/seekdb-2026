@@ -21,7 +21,7 @@ _ERROR_CODES = {
     1064: "syntax_error",
     1146: "unknown_table",
     1235: "unsupported_sql",
-    1264: "invalid_vector",
+    1264: "value_out_of_range",
     1366: "dimension_mismatch",
     1406: "value_too_long",
     1690: "invalid_vector",

@@ -74,11 +74,11 @@
     },
     {
       "id": "e5",
-      "purpose": "Check Docker build and official formal hidden case behavior.",
-      "command": "Docker is not installed on the Windows host; the 9 hidden cases are not published",
-      "output": "Dockerfile was inspected but not built; hidden cases remain unknown",
-      "result": "not executed",
-      "interpretation": "The 20 public cases pass, but the 9 official hidden cases and Docker resource limits still require the platform run."
+      "purpose": "Build the actual Docker image and run the official protocol checker and all public cases through Docker.",
+      "command": "GitHub Actions run 42778867412: docker build -t minivectordb:ci .; protocol_check/run.py --image minivectordb:ci ...",
+      "output": "handshake: PASS; all 20 public cases PASS (sql_crud ... transaction_shutdown_rollback); Docker image built from source under --read-only, --network=none, 2 CPU, 2 GiB, 128 PID.",
+      "result": "pass",
+      "interpretation": "The Dockerfile starts the JSONL program correctly and the official protocol checker passes against the real image."
     }
   ],
   "student_evidence": [
@@ -101,7 +101,6 @@
   "limitations": [
     "Only the 20 public cases were available; the 9 formal hidden cases are not published and were not run.",
     "ANN is served by exact search; small ANN cases return exact results, but large ANN latency/recall ranking is not measured.",
-    "Docker was not built locally because Docker is unavailable on this Windows host.",
     "Data larger than memory is not fully disk-streamed; the visible and benchmark shapes fit in memory."
   ]
 }

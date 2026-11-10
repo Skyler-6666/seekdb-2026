@@ -485,9 +485,12 @@ class Parser:
             if not self.at("]"):
                 while True:
                     item = self.next()
-                    if item.kind != "number":
-                        raise SQLError(1366, "invalid vector element")
-                    values.append(float(item.value))
+                    if item.kind == "number":
+                        values.append(float(item.value))
+                    elif item.kind == "identifier" and item.value.lower() in {"nan", "inf", "infinity"}:
+                        values.append(float("nan") if item.value.lower() == "nan" else float("inf"))
+                    else:
+                        raise SQLError(1690, "invalid vector element")
                     if not self.accept(","):
                         break
             self.expect("]")
