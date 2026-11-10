@@ -79,6 +79,14 @@
       "output": "handshake: PASS; all 20 public cases PASS (sql_crud ... transaction_shutdown_rollback); Docker image built from source under --read-only, --network=none, 2 CPU, 2 GiB, 128 PID.",
       "result": "pass",
       "interpretation": "The Dockerfile starts the JSONL program correctly and the official protocol checker passes against the real image."
+    },
+    {
+      "id": "e6",
+      "purpose": "Optimize repeated exact vector scans while retaining official public-case correctness.",
+      "command": "local 10K x 128 benchmark and official public runner after patching norm caching",
+      "output": "official public cases: 20/20 PASS; 10K benchmark total 9.885 s (insert 4.102 s, query 5.783 s), down from prior local 11.978 s.",
+      "result": "pass_locally",
+      "interpretation": "The cached norm + matrix-vector distance path removes a large per-query temporary allocation and improves the measured query path without changing public-case results."
     }
   ],
   "student_evidence": [
@@ -90,7 +98,8 @@
     "Official public suite output: 20/20 PASS, RESULT PASS.",
     "Invalid vector responses: {'ok': False, 'error': {'code': 'invalid_vector', ...}} for NaN/Infinity/overflow; dimension_mismatch for wrong dimension.",
     "Crash recovery: committed rows survived SIGKILL; an uncommitted DELETE did not survive SIGKILL.",
-    "Performance shape: 10,000 rows loaded in 3.0 s; 20 filtered TopK queries in 0.337 s; reload COUNT(*) = 10000."
+    "Performance shape: 10,000 rows loaded in 3.0 s; 20 filtered TopK queries in 0.337 s; reload COUNT(*) = 10000.",
+    "Post-optimization official public suite: 20/20 PASS. Local 10K x 128 benchmark: 9.885 s total (insert 4.102 s, query 5.783 s), compared with 11.978 s before the norm-cache change."
   ],
   "retrospective": [
     "The first protocol guess (MySQL wire) was wrong. Reading the official STDIO_PROTOCOL.md changed the design to JSON Lines with a ready object and per-request ids.",

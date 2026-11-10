@@ -127,3 +127,20 @@ All 20 public cases (`sql_*`, `storage_*`, `transaction_*`, `vector_*`) pass
 with this implementation using the official case files and a local JSONL
 runner. The official `protocol_check` on POSIX additionally verifies the
 ready/shutdown handshake in the same shape.
+
+
+## Performance-path verification
+
+After the public-case run, the exact scan was changed to reuse a cached float32
+norm vector and compute distances with a matrix-vector product instead of
+allocating a full `(rows, dimensions)` difference matrix for every query.
+
+Local verification on the 10K x 128 shape, 1,000 TopK=10 queries (half filtered):
+
+- previous local benchmark: `11.978 s` total
+- optimized local benchmark: `9.885 s` total
+- insert: `4.102 s`
+- query: `5.783 s`
+
+All 20 official public cases were rerun after this optimization and passed
+20/20. This is a local benchmark, not an official ranking result.
