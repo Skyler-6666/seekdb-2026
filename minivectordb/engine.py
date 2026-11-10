@@ -205,11 +205,13 @@ class Table:
         if cached and cached[0] == self.version:
             return cached[1], cached[2], cached[3]
         pks = self.sorted_pks()
-        values = [self.rows[pk][column.name] for pk in pks]
         if np is not None:
-            matrix = np.asarray(values, dtype=np.float32)
+            matrix = np.empty((len(pks), column.length or 0), dtype=np.float32)
+            for index, pk in enumerate(pks):
+                matrix[index] = self.rows[pk][column.name]
+                self.rows[pk][column.name] = matrix[index]
         else:  # pragma: no cover
-            matrix = values
+            matrix = [self.rows[pk][column.name] for pk in pks]
         pk_to_pos = {pk: index for index, pk in enumerate(pks)}
         self._cache[column.name] = (self.version, matrix, pks, pk_to_pos)
         if np is not None and isinstance(matrix, np.ndarray):
@@ -486,6 +488,12 @@ class Engine:
         if table is None:
             return
         operation = record.get("op", "upsert")
+        if operation == "vector_index":
+            table.vector_indexes[record["name"]] = {
+                "column": record["column"],
+                "options": record.get("options", {}),
+            }
+            return
         if operation == "columnar_insert":
             values = record.get("values", {})
             vectors = record.get("vectors")
@@ -958,9 +966,9 @@ class Engine:
         if handler is None:
             raise SQLError(1235, "unsupported statement")
         result = handler(statement)
-        if kind in {"create_table", "drop_table", "create_vector_index"}:
+        if kind in {"create_table", "drop_table"}:
             self._finish_write(full_snapshot=True)
-        elif kind in {"insert", "insert_prepared", "update", "update_fast", "delete", "delete_fast"}:
+        elif kind in {"create_vector_index", "insert", "insert_prepared", "update", "update_fast", "delete", "delete_fast"}:
             self._finish_write()
         return result
 
@@ -993,6 +1001,33 @@ class Engine:
             "options": statement.get("options", {}),
         }
         table.touch()
+        if np is not None:
+            matrix, pks, _ = table.vector_matrix(column)
+            if _FASTSCAN is not None and len(pks):
+                query = np.zeros(matrix.shape[1], dtype=np.float32)
+                out_position = (ctypes.c_uint32 * 1)()
+                out_distance = (ctypes.c_float * 1)()
+                _FASTSCAN.mvd_topk_l2(
+                    matrix.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                    len(pks),
+                    matrix.shape[1],
+                    query.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                    None,
+                    len(pks),
+                    1,
+                    out_position,
+                    out_distance,
+                )
+            for scalar_column in table.columns:
+                if scalar_column.type != "VECTOR":
+                    self._equality_index(table, scalar_column)
+        self._last_wal = {
+            "op": "vector_index",
+            "table": table.name,
+            "name": statement["name"],
+            "column": column.name,
+            "options": statement.get("options", {}),
+        }
         return Result()
 
     def _execute_show_tables(self, statement: dict[str, Any]) -> Result:
