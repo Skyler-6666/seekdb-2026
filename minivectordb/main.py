@@ -7,16 +7,17 @@ import os
 import sys
 
 from .engine import Engine
-from .mysql_wire import MySQLPipeServer, run_text_protocol
+from .stdio_json import JSONLServer
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="MiniVectorDB")
-    parser.add_argument("--data-dir", default=os.environ.get("MINIVECTORDB_DATA_DIR", "/data"))
+    parser.add_argument("--data-dir", default=os.environ.get("VECTORDB_DATA_DIR", "/data"))
     parser.add_argument(
         "--protocol",
-        choices=("mysql", "text"),
-        default=os.environ.get("MINIVECTORDB_PROTOCOL", "mysql"),
+        choices=("jsonl",),
+        default=os.environ.get("MINIVECTORDB_PROTOCOL", "jsonl"),
+        help="official stdin/stdout protocol",
     )
     args = parser.parse_args(argv)
     try:
@@ -26,11 +27,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     sys.stderr.write("minivectordb: ready\n")
     sys.stderr.flush()
-    if args.protocol == "text":
-        run_text_protocol(engine)
-    else:
-        MySQLPipeServer(engine).serve()
-    return 0
+    return JSONLServer(engine).serve()
 
 
 if __name__ == "__main__":

@@ -6,107 +6,102 @@
     {
       "id": "u1",
       "content": "完成本次oceanbase数据库大赛的加赛的题目，并且根据所给出的评分标准进行优化",
-      "source": "direct user message in this workspace"
+      "source": "direct user message"
     },
     {
       "id": "u2",
-      "content": "结合我两次发的所有图片，这两次发的所有图片即为全部的题目和评分和提交标准",
-      "source": "direct user message after the round-2 screenshots"
+      "content": "我给你发的所有的图片就是所有的题目，这个题目里面有测试和用例吗",
+      "source": "direct user message; student required an explicit check for tests"
     },
     {
       "id": "u3",
-      "content": "已授权",
-      "source": "user completed the GitHub device authorization so the branch could be pushed"
+      "content": "现在你去官方仓库里和官方的网页看看官方测试和用例是否完善，给你控制电脑的权限",
+      "source": "direct user message; student asked for repository and web inspection"
     }
   ],
   "conversations": [
     {
       "id": "c1",
-      "student": "The user supplied two batches of round-2 screenshots: the MiniVectorDB task, SQL subset, grading formula, stdin/stdout execution rules, Dockerfile requirements and conversation.json requirements.",
-      "agent": "I inspected the upstream oceanbase/seekdb branch 2026-competition-round2. It contains only empty placeholder files (Dockerfile and conversation.json, both 0 bytes), so there is no starter implementation or test package in that branch.",
-      "evidence": "GitHub branch c842a368 has 9 root entries; Dockerfile and conversation.json blobs are e69de29b (empty)."
+      "student": "The student supplied all round-2 screenshots and asked whether they contained the official tests and cases.",
+      "agent": "I initially answered no: the screenshots contain the task scope, scoring, Dockerfile example and conversation.json rules, but they defer the SQL/error/protocol details to the public package. I then inspected the official repository at the student's request.",
+      "evidence": "Screenshots 2.1/2.2/3.1 state that complete syntax, error codes, protocol and cases are released with the package."
     },
     {
       "id": "c2",
-      "student": "The user clarified that the two image batches are the complete specification, so implementation must proceed from those constraints without an additional package.",
-      "agent": "I derived the SQL subset from the screenshots: BIGINT primary key, VARCHAR(n), VECTOR(n); INSERT/UPDATE/DELETE; SELECT with comparisons and AND; L2_DISTANCE; filtered exact TopK; BEGIN/COMMIT/ROLLBACK; persistence and crash recovery; CREATE VECTOR INDEX syntax is accepted.",
-      "evidence": "Screenshots show the CREATE TABLE/INSERT/SELECT/BEGIN/ROLLBACK examples and the 2.1 module table."
+      "student": "The student asked me to inspect the official repository and official web page and granted computer control.",
+      "agent": "I found that the official oceanbase/seekdb branch has a mysqltest directory. The earlier placeholder branch was stale; the current branch contains mysqltest/cases, mysqltest/manifest.json, STDIO_PROTOCOL.md, protocol_check and 20 public cases.",
+      "evidence": "Official branch 2026-competition-round2: mysqltest/manifest.json lists 20 public cases; STDIO_PROTOCOL.md defines JSON Lines; README says 20 public cases and 29 formal cases."
     },
     {
       "id": "c3",
-      "student": "The user accepted the plan to implement the database and authorized a GitHub write session for Skyler-6666/seekdb-2026.",
-      "agent": "I implemented a from-scratch Python engine: tokenizer/parser, row store, atomic snapshot persistence, transaction undo snapshot, exact NumPy L2 scans with filtered indices, and a minimal MySQL 4.1 pipe server.",
-      "evidence": "Files: minivectordb/sql.py, minivectordb/engine.py, minivectordb/mysql_wire.py, minivectordb/main.py."
-    },
-    {
-      "id": "c4",
-      "student": "The user asked for optimization against the published scoring rules.",
-      "agent": "The engine keeps a per-table float32 matrix cache and computes all filtered L2 distances in one vectorized pass; persistence uses one fsync snapshot per committed transaction/batch. I documented the tradeoff: exact scans are used because ANN parameters are only defined by the evaluation package.",
-      "evidence": "engine.Table.vector_matrix and Engine._save; README sections Persistence and SQL subset."
+      "student": "The student's main requirement was to complete the add-on task according to the scoring rules.",
+      "agent": "I changed the implementation from the initially guessed MySQL wire protocol to the official JSONL protocol: ready object, execute requests with id/sql/search_mode, query rows/columns, affected_rows, structured errors and shutdown. I ran all 20 official public cases locally and all passed.",
+      "evidence": "Run output: sql_crud PASS, sql_comparisons PASS, sql_ordering PASS, sql_empty PASS, sql_primary_key PASS, sql_unicode PASS, sql_bigint PASS, sql_unsupported PASS, storage_restart PASS, vector_euclidean PASS, transaction_commit PASS, transaction_rollback PASS, storage_mutations PASS, storage_multiple_tables PASS, vector_ties_and_filter PASS, vector_float32 PASS, vector_index_maintenance PASS, transaction_failed_insert PASS, transaction_autocommit_atomic PASS, transaction_shutdown_rollback PASS; RESULT PASS."
     }
   ],
   "experiments": [
     {
       "id": "e1",
-      "purpose": "Verify SQL subset, filtered top-k, transaction rollback and persistence.",
-      "command": "python test_engine.py (temporary local smoke test)",
-      "input": "CREATE TABLE t (id BIGINT PRIMARY KEY, c VARCHAR(10), v VECTOR(3)); INSERT ...; SELECT ... L2_DISTANCE ... WHERE c='a' ORDER BY d LIMIT 2; BEGIN; UPDATE ...; DELETE ...; ROLLBACK;",
-      "output": "top [[1, 'a', 0.0], [3, 'a', 1.4142135381698608]]; after rollback [[1], [3]]; reload [[1, 'z'], [3, 'a']]",
+      "purpose": "Run all 20 official public cases from the official mysqltest package.",
+      "command": "python3 round2-official/test_local.py <minivectordb path>",
+      "output": "20/20 PASS including SQL, storage, transaction, crash/restart and vector cases; RESULT PASS.",
       "result": "pass",
-      "interpretation": "The parser handled quoted vectors, alias ordering, filtered top-k, rollback and reload. Distances use float32 stored values as required."
+      "interpretation": "The current implementation satisfies every public functional assertion, including BIGINT precision, Unicode, float32 storage, filtered TopK, ties by primary key, transaction rollback and restart recovery."
     },
     {
       "id": "e2",
-      "purpose": "Verify the MySQL wire protocol over stdin/stdout, including handshake, auth response, OK packets and result sets.",
-      "command": "python test_wire.py (temporary packet-level client)",
-      "output": "handshake seq=0 len=88; auth OK; CREATE/INSERT OK; SELECT returned 3 columns and row for id=1; stderr: minivectordb: ready",
+      "purpose": "Exercise hidden-risk paths not present in the public set: NaN, Infinity, float32 overflow, dimension mismatch, malformed vector, crash after commit and crash inside an uncommitted transaction.",
+      "command": "temporary JSONL client against minivectordb.main",
+      "output": "NaN/Infinity/overflow => invalid_vector; [1,2,3] on VECTOR(2) => dimension_mismatch; malformed vector => invalid_vector; after SIGKILL of a committed insert, restart returned the committed rows; after SIGKILL inside BEGIN/DELETE, restart returned the original rows.",
       "result": "pass",
-      "interpretation": "A client can initialize the process through a pipe, authenticate with mysql_native_password, and read a text result set with EOF packets."
+      "interpretation": "Invalid vector errors are structured and the WAL/snapshot recovery preserves committed data while discarding uncommitted changes."
     },
     {
       "id": "e3",
-      "purpose": "Check the Docker build contract.",
-      "command": "Dockerfile inspection; Docker is not installed on this Windows host",
-      "output": "FROM python:3.11-slim; numpy installed at build; source copied; ENTRYPOINT python3 -m minivectordb.main --data-dir /data",
-      "result": "not executed locally",
-      "interpretation": "The image uses source from the same commit and does not copy a prebuilt binary. A Linux build is still required before final submission."
+      "purpose": "Measure the 10,000-row/128-dimension benchmark shape and restart recovery.",
+      "command": "python3 perf.py (100 batches of 100 vectors; 20 filtered L2 TopK queries; fresh Engine reload)",
+      "output": "load 3.0 s; 20 filtered TopK queries 0.337 s; reload COUNT(*) = 10000.",
+      "result": "pass",
+      "interpretation": "Append-only insert WAL avoids rewriting a full JSON snapshot per batch. Exact query scans use a cached float32 matrix."
     },
     {
       "id": "e4",
-      "purpose": "Integration test with a real MySQL client (PyMySQL) through a local TCP-to-pipe bridge; the bridge exists only in the test harness, not in the submitted program.",
-      "command": "python dbg.py with pymysql.connect(host=127.0.0.1, ...)",
-      "output": "CONNECTED; CREATE OK; INSERT OK; SELECT rows ((1,'a',0.0),(2,'b',1.414213538)); COUNT (2,); transaction rollback preserved (1,'a') and (2,'b'); commit changed id=1 to 'q'",
+      "purpose": "Run the official JSONL protocol at the wire level.",
+      "command": "local runner and protocol checks",
+      "output": "startup line is exactly {\"type\":\"ready\"}; execute responses preserve numeric ids and emit columns/rows or affected_rows; shutdown emits {\"id\":N,\"ok\":true} and exits 0; stdout contains only JSONL.",
       "result": "pass",
-      "interpretation": "A real MySQL client successfully completes handshake, DDL, multi-row insert, filtered L2 ordering, COUNT, BEGIN/COMMIT/ROLLBACK and vector index creation."
+      "interpretation": "The process follows the official JSON Lines framing instead of the superseded MySQL/text/READY variants."
     },
     {
       "id": "e5",
-      "purpose": "Measure the append-only WAL path for the 10,000-row / 128-dimension benchmark shape.",
-      "command": "python perf.py (100 batches of 100 vectors, then 20 filtered TopK queries and a fresh Engine reload)",
-      "output": "load 3.0 s; 20 filtered TopK queries 0.337 s; reload COUNT(*) = 10000",
-      "result": "pass",
-      "interpretation": "The WAL avoids rewriting the full snapshot on every insert batch. The reload proves committed batches survive a fresh process."
+      "purpose": "Check Docker build and official formal hidden case behavior.",
+      "command": "Docker is not installed on the Windows host; the 9 hidden cases are not published",
+      "output": "Dockerfile was inspected but not built; hidden cases remain unknown",
+      "result": "not executed",
+      "interpretation": "The 20 public cases pass, but the 9 official hidden cases and Docker resource limits still require the platform run."
     }
   ],
   "student_evidence": [
-    "User supplied the round-2 task/screenshots and explicitly limited the specification to those images (u2).",
-    "User reported the prior seekdb FTS submission failures and asked to start the add-on round from scratch.",
-    "User completed GitHub device authorization so the branch could be pushed (u3)."
+    "The student supplied the complete task screenshots, selected MiniVectorDB as the add-on task, and repeatedly required verification rather than unsupported claims.",
+    "The student granted computer control and explicitly asked for an official repository/web check, which led to discovery of the official mysqltest package.",
+    "The student required that only real tests and evidence be claimed; the earlier guessed MySQL protocol was replaced after official STDIO_PROTOCOL.md was found."
   ],
   "result_evidence": [
-    "SQL smoke test: filtered L2 result [[1, 'a', 0.0], [3, 'a', 1.4142135381698608]]; rollback preserved [[1], [3]]; reload preserved [[1, 'z'], [3, 'a']].",
-    "Pipe protocol test: handshake seq 0, auth OK packet, CREATE/INSERT OK, SELECT result set with 3 columns."
+    "Official public suite output: 20/20 PASS, RESULT PASS.",
+    "Invalid vector responses: {'ok': False, 'error': {'code': 'invalid_vector', ...}} for NaN/Infinity/overflow; dimension_mismatch for wrong dimension.",
+    "Crash recovery: committed rows survived SIGKILL; an uncommitted DELETE did not survive SIGKILL.",
+    "Performance shape: 10,000 rows loaded in 3.0 s; 20 filtered TopK queries in 0.337 s; reload COUNT(*) = 10000."
   ],
   "retrospective": [
-    "The task is a database from scratch, not a seekdb FTS change; separating storage, parser, execution and protocol kept the implementation testable.",
-    "A transaction is an in-memory deep copy and commit is one atomic snapshot. This is simple and crash-safe for the single-client scope, but bulk commits rewrite the whole data file.",
-    "The exact vector scan is intentionally correct for filtered TopK; an ANN index is accepted syntactically but not required by the visible SQL subset. If the hidden package requires ANN recall/latency, this is the next optimization target.",
-    "The official stdin/stdout case driver was not present in the branch or the screenshots. I implemented MySQL 4.1 wire protocol because the specification calls it a MySQL test driver; this is the main integration risk."
+    "The first protocol guess (MySQL wire) was wrong. Reading the official STDIO_PROTOCOL.md changed the design to JSON Lines with a ready object and per-request ids.",
+    "The public package is genuinely useful: it exposed the exact response schema, row/column comparison, 1e-5 float tolerance, restart directives and vector tie rules.",
+    "The engine keeps exact TopK semantics; for the visible tests this is sufficient and guarantees recall for ANN-mode requests, at the cost of performance ranking.",
+    "WAL is used only for insert batches; schema changes, updates and deletes write a full atomic snapshot. This keeps the benchmark load fast while preserving crash safety."
   ],
   "limitations": [
-    "No official SQL case package or driver was available in the workspace; protocol/error codes were inferred from the screenshots.",
-    "Docker build and platform cases were not run locally on Windows.",
-    "ANN/IVF is not implemented; only exact TopK is guaranteed.",
-    "Only one explicit transaction is supported, matching the stated single-client scope."
+    "Only the 20 public cases were available; the 9 formal hidden cases are not published and were not run.",
+    "ANN is served by exact search; small ANN cases return exact results, but large ANN latency/recall ranking is not measured.",
+    "Docker was not built locally because Docker is unavailable on this Windows host.",
+    "Data larger than memory is not fully disk-streamed; the visible and benchmark shapes fit in memory."
   ]
 }

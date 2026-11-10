@@ -136,13 +136,13 @@ def _as_float32(value: Any) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
-        raise SQLError(1366, "invalid vector element") from exc
+        raise SQLError(1690, "invalid vector element") from exc
     if not math.isfinite(number):
-        raise SQLError(1366, "vector element must be finite")
+        raise SQLError(1690, "vector element must be finite")
     if np is not None:
         converted = np.float32(number)
         if not np.isfinite(converted):
-            raise SQLError(1264, "vector element out of float32 range")
+            raise SQLError(1690, "vector element out of float32 range")
         return float(converted)
     return number
 
@@ -166,7 +166,7 @@ def _normalize_value(table: Table, column: Column, value: Any) -> Any:
         return text
     if column.type == "VECTOR":
         if not isinstance(value, (list, tuple)):
-            raise SQLError(1366, f"invalid vector for {column.name}")
+            raise SQLError(1690, f"invalid vector for {column.name}")
         if column.length is None or len(value) != column.length:
             raise SQLError(1366, f"vector dimension mismatch for {column.name}")
         return [_as_float32(item) for item in value]
@@ -402,6 +402,10 @@ class Engine:
         self.in_transaction = False
         self._backup = None
         self._last_inserts = None
+
+    def rollback_if_active(self) -> None:
+        if self.in_transaction:
+            self._rollback()
 
     def _finish_write(self) -> None:
         if not self.in_transaction:

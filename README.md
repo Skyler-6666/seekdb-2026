@@ -1,28 +1,63 @@
 # MiniVectorDB
 
-A small, single-process SQL + vector database for the OceanBase 2026 add-on
-round.  It is implemented from scratch: a SQL parser, a row store with
-atomic snapshot persistence, transactions with rollback, exact L2 top-k
-retrieval, and a MySQL 4.1 protocol server over stdin/stdout.
-
-## Build
-
-```bash
-docker build -t minivectordb:latest .
-```
+A small single-process SQL + vector database for the OceanBase 2026 add-on
+round. It is implemented from scratch: a SQL parser, a durable row store,
+transactions with rollback, exact L2 top-k retrieval, and the official
+JSON-lines stdin/stdout protocol.
 
 ## Run
 
 ```bash
-docker run --rm -i \
-  -v minivectordb-data:/data \
-  --cpus=2 --memory=2g \
-  minivectordb:latest
+python3 -m minivectordb.main --data-dir /data
 ```
 
-The process speaks the MySQL wire protocol on stdin/stdout.  It does not open
-a TCP port.  The data directory defaults to `/data` and can be changed with
-`--data-dir`.
+The process prints exactly one JSON line:
+
+```json
+{"type":"ready"}
+```
+
+and then processes one JSON request per line. It does not open a port and
+does not print SQL prompts or logs to stdout.
+
+## Official protocol
+
+Request:
+
+```json
+{"id":1,"op":"execute","sql":"SELECT id FROM docs ORDER BY id;","search_mode":"exact"}
+```
+
+Query response:
+
+```json
+{"id":1,"ok":true,"columns":["id"],"rows":[[1]]}
+```
+
+Write response:
+
+```json
+{"id":2,"ok":true,"affected_rows":1}
+```
+
+Failure:
+
+```json
+{"id":3,"ok":false,"error":{"code":"duplicate_key","message":"duplicate primary key"}}
+```
+
+Shutdown:
+
+```json
+{"id":4,"op":"shutdown"}
+```
+
+The response is `{"id":4,"ok":true}`; the process flushes it, rolls back any
+open transaction and exits with status 0.
+
+The official public package contains `STDIO_PROTOCOL.md`, `mysqltest/` and
+`protocol_check/`. The implementation has been run against all **20 public
+cases** with a Windows-compatible local runner; all 20 pass.
 
 ## SQL subset
 
@@ -51,23 +86,44 @@ DELETE FROM docs WHERE id = 2;
 ROLLBACK;
 ```
 
-Supported: `CREATE TABLE`, `DROP TABLE`, `CREATE VECTOR INDEX`, multi-row
-`INSERT`, `SELECT` with `WHERE`/`AND`/`OR`, comparisons, `ORDER BY`, `LIMIT`,
-`UPDATE`, `DELETE`, `BEGIN`/`COMMIT`/`ROLLBACK`, and `SHOW TABLES`.
-`L2_DISTANCE`, `COSINE_DISTANCE`, and `INNER_PRODUCT` are available.
+Supported:
 
-## Persistence
+- `CREATE TABLE`, `DROP TABLE`, `CREATE VECTOR INDEX`
+- multi-row `INSERT`, `SELECT`, `UPDATE`, `DELETE`
+- `WHERE`, `AND`, `OR`, comparisons
+- `ORDER BY`, `LIMIT`, `SELECT *`
+- `L2_DISTANCE`, `COSINE_DISTANCE`, `INNER_PRODUCT`
+- `BEGIN` / `COMMIT` / `ROLLBACK`
+- filtered exact TopK; equal distances sort by primary key
 
-Every committed mutation writes a complete snapshot to
-`<data-dir>/minivectordb.json` using a temporary file, `fsync`, and atomic
-`rename`.  A restart reloads the last committed snapshot.  Uncommitted
-transaction state exists only in memory and is discarded after a crash.
+`VARCHAR` lengths count Unicode codepoints and comparisons use codepoint
+order. Vectors are validated as finite float32 values and fixed dimensions.
 
-## Local smoke test
+## Persistence and recovery
+
+Committed rows are durable in `/data`. Inserts use an append-only WAL with
+`fsync`; schema changes, updates and deletes write an atomic snapshot.
+Uncommitted transaction state exists only in memory. On startup the engine
+replays the WAL (ignoring a torn final line) and then folds it into a fresh
+snapshot. A normal shutdown rolls back any active transaction.
+
+## Docker
 
 ```bash
-python3 -m minivectordb.main --data-dir /tmp/mvdb --protocol text
+docker build -t minivectordb:latest .
+docker run --rm -i \
+  -v minivectordb-data:/data \
+  --cpus=2 --memory=2g \
+  minivectordb:latest
 ```
 
-Then type SQL terminated by `;`.  `MINIVECTORDB_PROTOCOL=mysql` (the default)
-selects the MySQL wire protocol used by the evaluator.
+The Dockerfile builds from the source in this commit; it does not copy a
+local prebuilt binary. NumPy is used only as a vectorized math library for
+exact L2 scans.
+
+## Local verification
+
+All 20 public cases (`sql_*`, `storage_*`, `transaction_*`, `vector_*`) pass
+with this implementation using the official case files and a local JSONL
+runner. The official `protocol_check` on POSIX additionally verifies the
+ready/shutdown handshake in the same shape.

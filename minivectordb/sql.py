@@ -81,7 +81,7 @@ def _unquote(token: Token) -> str:
 def _parse_vector_text(text: str) -> list[float]:
     stripped = text.strip()
     if not (stripped.startswith("[") and stripped.endswith("]")):
-        raise SQLError(1366, "invalid vector literal")
+        raise SQLError(1690, "invalid vector literal")
     body = stripped[1:-1].strip()
     if not body:
         return []
@@ -91,7 +91,7 @@ def _parse_vector_text(text: str) -> list[float]:
         try:
             number = float(part)
         except ValueError as exc:
-            raise SQLError(1366, "invalid vector element") from exc
+            raise SQLError(1690, "invalid vector element") from exc
         values.append(number)
     return values
 
