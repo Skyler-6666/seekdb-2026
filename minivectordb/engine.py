@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import ctypes
 import json
 import math
 import os
@@ -20,6 +21,26 @@ except Exception:  # pragma: no cover - fallback for minimal images
     np = None
 
 
+def _load_fastscan():
+    suffix = ".dll" if os.name == "nt" else ".so"
+    path = Path(__file__).with_name("libfastscan" + suffix)
+    if not path.is_file():
+        return None
+    try:
+        lib = ctypes.CDLL(str(path))
+        lib.mvd_topk_l2.argtypes = [
+            ctypes.POINTER(ctypes.c_float), ctypes.c_size_t, ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint32),
+            ctypes.c_size_t, ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_float),
+        ]
+        lib.mvd_topk_l2.restype = ctypes.c_int
+        return lib
+    except Exception:
+        return None
+
+
+_FASTSCAN = _load_fastscan()
 MAX_VECTOR_DIM = 16000
 
 
@@ -596,7 +617,7 @@ class Engine:
         order = self._resolve_order(statement.get("order", []), aliases)
         limit = statement.get("limit")
 
-        vector_plan = self._vector_order_plan(table, order, filtered)
+        vector_plan = self._vector_order_plan(table, order, filtered, limit=limit)
         if vector_plan is not None:
             ordered, distances, distance_expr = vector_plan
             selected = ordered if limit is None else ordered[:limit]
@@ -717,7 +738,7 @@ class Engine:
             return None
         return column, vector
 
-    def _vector_order_plan(self, table, order, filtered):
+    def _vector_order_plan(self, table, order, filtered, limit=None):
         if not order or len(order) != 1:
             return None
         expr, descending = order[0]
@@ -728,6 +749,30 @@ class Engine:
             return None
         column, query = distance
         matrix, pks = table.vector_matrix(column)
+        if _FASTSCAN is not None and np is not None and isinstance(matrix, np.ndarray) and len(pks):
+            rows = np.ascontiguousarray(matrix, dtype=np.float32)
+            query_vec = np.ascontiguousarray(query, dtype=np.float32)
+            if len(filtered) == len(pks):
+                allowed_ptr = None
+                n_allowed = len(pks)
+            else:
+                pos_by_pk = {pk: i for i, pk in enumerate(pks)}
+                allowed = np.fromiter((pos_by_pk[pk] for pk in filtered), dtype=np.uint32, count=len(filtered))
+                allowed_ptr = allowed.ctypes.data_as(ctypes.POINTER(ctypes.c_uint32))
+                n_allowed = len(allowed)
+            take = n_allowed if limit is None else min(int(limit), n_allowed)
+            if take > 0:
+                out_positions = (ctypes.c_uint32 * take)()
+                out_distances = (ctypes.c_float * take)()
+                rc = _FASTSCAN.mvd_topk_l2(
+                    rows.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                    len(pks), rows.shape[1], query_vec.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                    allowed_ptr, n_allowed, take, out_positions, out_distances,
+                )
+                if rc >= 0:
+                    ordered = [int(pks[int(out_positions[i])]) for i in range(rc)]
+                    distances = {pk: float(out_distances[i]) for i, pk in enumerate(ordered)}
+                    return ordered, distances, expr
         if np is not None and isinstance(matrix, np.ndarray):
             query_vec = np.asarray(query, dtype=np.float32)
             cached_norms = table._norms.get(column.name)
