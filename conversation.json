@@ -95,6 +95,14 @@
       "output": "workflow conclusion success; official handshake passed; all 20 official public cases passed in the Ubuntu Docker job.",
       "result": "pass",
       "interpretation": "The same engine content used by the submission passes the official JSONL protocol and public MySQL gate under Linux Docker, not only on the Windows development host."
+    },
+    {
+      "id": "e8",
+      "purpose": "Verify the compiled C++ fastscan path in the real Linux Docker image.",
+      "command": "GitHub Actions run 42808556753: docker build, official handshake, all public cases, with MVD_REQUIRE_FASTSCAN=1",
+      "output": "workflow conclusion success; the image fails if libfastscan.so is not loadable; official handshake and 20/20 public cases passed.",
+      "result": "pass",
+      "interpretation": "The native fastscan library was actually loaded and executed by the Linux image; this is not merely the NumPy fallback path."
     }
   ],
   "student_evidence": [
@@ -108,7 +116,8 @@
     "Crash recovery: committed rows survived SIGKILL; an uncommitted DELETE did not survive SIGKILL.",
     "Performance shape: 10,000 rows loaded in 3.0 s; 20 filtered TopK queries in 0.337 s; reload COUNT(*) = 10000.",
     "Post-optimization official public suite: 20/20 PASS. Local 10K x 128 benchmark: 9.885 s total (insert 4.102 s, query 5.783 s), compared with 11.978 s before the norm-cache change.",
-    "Linux Docker CI run 42797438284 succeeded for the optimized engine: docker build, official handshake, and all 20 official public cases passed."
+    "Linux Docker CI run 42797438284 succeeded for the optimized engine: docker build, official handshake, and all 20 official public cases passed.",
+    "Linux Docker CI run 42808556753 required MVD_REQUIRE_FASTSCAN=1, loaded libfastscan.so, and passed the official handshake plus all 20 public cases."
   ],
   "retrospective": [
     "The first protocol guess (MySQL wire) was wrong. Reading the official STDIO_PROTOCOL.md changed the design to JSON Lines with a ready object and per-request ids.",

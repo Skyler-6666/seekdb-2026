@@ -158,3 +158,18 @@ submission branch.
 This confirms the Linux x86_64 / Docker execution path and the public MySQL
 gate. The nine non-public formal cases and official performance ranking remain
 outside local validation.
+
+
+## Compiled fastscan path
+
+The Docker image now builds `libfastscan.so` from `minivectordb/fastscan.cpp`
+with `g++ -O3 -march=native`. Python passes the contiguous float32 matrix,
+query vector and optional filtered row positions through a small C ABI; C++
+computes exact L2 distances and performs the TopK selection. `MVD_REQUIRE_FASTSCAN=1`
+is set in the runtime image so a missing native library fails loudly instead of
+silently falling back.
+
+GitHub Actions run `42808556753` (Ubuntu Docker) completed successfully with
+`MVD_REQUIRE_FASTSCAN=1`, official handshake, and all 20 official public cases.
+This verifies that the compiled fastscan path is actually loaded in the Linux
+submission image.
