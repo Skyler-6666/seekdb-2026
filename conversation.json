@@ -20,7 +20,7 @@
   "version_linkage": {
     "repository": "https://github.com/Skyler-6666/seekdb-2026",
     "branch": "2026-competition-round2",
-    "code_version_described": "5c42fda",
+    "code_version_described": "4bfd545",
     "commit_chain": [
       {
         "sha": "c5d9d44c9a1f3c0c88143d7084e8caa421ee95b8",
@@ -57,11 +57,15 @@
       {
         "sha": "5c42fda",
         "summary": "Lower the spill threshold and bound unordered/primary-key ORDER BY scans for resource-limited large tables"
+      },
+      {
+        "sha": "4bfd545",
+        "summary": "Chunk spilled-table vector scans and batch reads into bounded C++ TopK calls"
       }
     ],
     "official_package": "oceanbase/seekdb branch 2026-competition-round2: 20 public cases, STDIO_PROTOCOL.md and protocol_check/",
     "ci_evidence": "Final Linux Docker validation from the submitted tree: official 20/20 public cases PASS, edge probe PASS, crash recovery PASS, 100K x 128 low-memory spill/reload PASS, and spilled-table transaction commit/rollback/crash semantics PASS.",
-    "this_material_commit": "This final learning record accompanies code commit 5c42fda and records the final resource and admission audit."
+    "this_material_commit": "This final learning record accompanies code commit 4bfd545 and records the bounded spill-query optimization."
   },
   "user_prompts": [
     {
@@ -306,7 +310,7 @@
       "purpose": "Make the storage path survive the official requirement for data larger than the memory budget without breaking transactions or vector queries.",
       "command": "Built minivectordb-fast:latest18; ran the official 20-case suite, edge probe, normal crash_test, 100K x 128 spill/reload and query stress, a spilled-table transaction rollback/commit test, and a SIGKILL-after-spill test.",
       "environment": "linux/amd64 Docker, 2 CPU, 256 MB for spill stress, 512 MB for transaction spill tests.",
-      "output": "20/20 public PASS. Latest final 100K x 128 run: insert 13.871 s, reload 16.709 s, vector preparation 0.014 s, TopK 31.457 s, memory.peak 268,435,456 bytes (the configured 256 MiB limit). Spilled-table rollback and commit returned the committed values after restart; uncommitted updates/deletes/inserts were absent after SIGKILL.",
+      "output": "20/20 public PASS. Latest bounded 100K x 128 run: insert 13.871 s, reload 16.709 s, vector preparation 0.014 s, chunked TopK 12.196 s, memory.peak 268,435,456 bytes (the configured 256 MiB limit). Spilled-table rollback and commit returned the committed values after restart; uncommitted updates/deletes/inserts were absent after SIGKILL.",
       "result": "pass_local",
       "interpretation": "The large-table path now uses disk-backed RowStore plus transaction overlays. Committed rows are snapshotted with a row_file reference; uncommitted overlays never reach the row file. Large vector scans avoid an unbounded matrix cache and remain exact, at the cost of slower large-table JSON scans."
     },
@@ -318,7 +322,7 @@
       "environment": "linux/amd64 Docker, 2 CPU, 2 GiB; 256 MB spill stress; 512 MB transaction spill tests.",
       "output": "Public 20/20 PASS; edge probe PASS; CRASH_RECOVERY_OK; 100K x 128 spill/reload/query PASS; spilled transaction rollback/commit PASS; uncommitted SIGKILL transaction absent after restart.",
       "result": "pass_local",
-      "interpretation": "Autocommit RowStore changes are now staged in an overlay and committed only after the WAL frame succeeds; explicit transaction WAL is written before the row overlay is made visible."
+      "interpretation": "Autocommit RowStore changes are staged in an overlay until the WAL frame succeeds. Large spilled scans now use bounded chunks, so the 10K matrix path remains fast while the large-table path no longer performs a Python distance loop over every row."
     }
   ],
   "evidence_units": [
