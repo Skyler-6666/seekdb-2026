@@ -48,6 +48,10 @@ def _result_message(ident: Any, result: Result, sql: str) -> dict[str, Any]:
     return {"id": ident, "ok": True}
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant: {value}")
+
+
 def emit(message: dict[str, Any]) -> None:
     sys.stdout.write(json.dumps(message, ensure_ascii=False, allow_nan=False, separators=(",", ":"), default=_json_default) + "\n")
     sys.stdout.flush()
@@ -72,7 +76,7 @@ class JSONLServer:
             if not line:
                 continue
             try:
-                request = json.loads(line)
+                request = json.loads(line, parse_constant=_reject_json_constant)
             except Exception as exc:
                 self.emit({"id": None, "ok": False, "error": {"code": "invalid_json", "message": str(exc)}})
                 continue

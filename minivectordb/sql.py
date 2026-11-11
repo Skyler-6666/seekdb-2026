@@ -216,13 +216,16 @@ class Parser:
     def parse_create(self) -> dict[str, Any]:
         self.expect_keyword("CREATE")
         if self.accept_keyword("TABLE"):
+            if_not_exists = False
             if self.accept_keyword("IF"):
                 self.expect_keyword("NOT")
                 self.expect_keyword("EXISTS")
+                if_not_exists = True
             name = self.identifier()
             self.expect("(")
             columns: list[dict[str, Any]] = []
             primary: str | None = None
+            primary_clause_count = 0
             while True:
                 if self.at_keyword("PRIMARY"):
                     self.next()
@@ -230,6 +233,7 @@ class Parser:
                     self.expect("(")
                     primary = self.identifier()
                     self.expect(")")
+                    primary_clause_count += 1
                 else:
                     col_name = self.identifier()
                     type_token = self.peek()
@@ -274,17 +278,34 @@ class Parser:
                 break
             if primary is None:
                 raise SQLError(1075, "table must have exactly one primary key")
-            pk_count = sum(1 for c in columns if c["name"] == primary)
+            normalized_names = [column["name"].lower() for column in columns]
+            if len(set(normalized_names)) != len(normalized_names):
+                raise SQLError(1060, "duplicate column name")
+            declared_primary = [c for c in columns if c.get("primary")]
+            primary_count = len(declared_primary) + primary_clause_count
+            if primary_count > 1:
+                raise SQLError(1068, "multiple primary keys defined")
+            if primary_count == 0:
+                raise SQLError(1075, "table must have exactly one primary key")
+            pk_count = sum(
+                1 for c in columns if c["name"].lower() == primary.lower()
+            )
             if pk_count != 1:
                 raise SQLError(1075, "invalid primary key")
             for c in columns:
-                c["primary"] = c["name"] == primary
+                c["primary"] = c["name"].lower() == primary.lower()
                 if c["primary"] and c["type"] not in {"BIGINT", "INT", "INTEGER"}:
                     raise SQLError(1075, "primary key must be BIGINT")
             if sum(1 for c in columns if c["type"] == "VECTOR") > 1:
                 raise SQLError(1235, "at most one VECTOR column per table")
             self.end()
-            return {"type": "create_table", "name": name, "columns": columns, "primary": primary}
+            return {
+                "type": "create_table",
+                "name": name,
+                "columns": columns,
+                "primary": primary,
+                "if_not_exists": if_not_exists,
+            }
         if self.accept_keyword("VECTOR"):
             self.expect_keyword("INDEX")
             index_name = self.identifier()
@@ -319,11 +340,13 @@ class Parser:
     def parse_drop(self) -> dict[str, Any]:
         self.expect_keyword("DROP")
         self.expect_keyword("TABLE")
+        if_exists = False
         if self.accept_keyword("IF"):
             self.expect_keyword("EXISTS")
+            if_exists = True
         name = self.identifier()
         self.end()
-        return {"type": "drop_table", "name": name}
+        return {"type": "drop_table", "name": name, "if_exists": if_exists}
 
     def parse_show(self) -> dict[str, Any]:
         self.expect_keyword("SHOW")
@@ -548,7 +571,10 @@ class Parser:
             self.next()
             text = token.value
             if "." in text or "e" in text.lower():
-                return ("literal", float(text))
+                value = float(text)
+                if not math.isfinite(value):
+                    raise SQLError(1690, "non-finite numeric literal")
+                return ("literal", value)
             return ("literal", int(text))
         if token.kind == "string":
             self.next()
@@ -562,10 +588,13 @@ class Parser:
                 while True:
                     item = self.next()
                     if item.kind == "number":
-                        values.append(float(item.value))
-                    elif item.kind == "identifier" and item.value.lower() in {"nan", "inf", "infinity"}:
-                        values.append(float("nan") if item.value.lower() == "nan" else float("inf"))
+                        value = float(item.value)
+                        if not math.isfinite(value):
+                            raise SQLError(1690, "non-finite vector element")
+                        values.append(value)
                     else:
+                        # Bare NaN/Inf tokens are deliberately rejected rather
+                        # than being allowed to reach a native distance kernel.
                         raise SQLError(1690, "invalid vector element")
                     if not self.accept(","):
                         break

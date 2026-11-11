@@ -62,16 +62,16 @@ Local Linux Docker measurements with 2 CPUs and 2 GiB are:
 
 | Workload | Time |
 |---|---:|
-| 10,000 x 128 insert | 0.113 s |
-| 1,000 exact TopK=10 queries, half filtered | 0.071 s |
-| insert + query baseline | 0.194 s (observed 0.192-0.201 s) |
+| 10,000 x 128 insert | 0.140-0.142 s |
+| 1,000 exact TopK=10 queries, half filtered | 0.075-0.081 s |
+| insert + query baseline | 0.217-0.221 s |
 | UPDATE 10,000 rows in one statement | 0.032 s |
 | DELETE 10,000 rows in one statement | 0.001 s |
 | UPDATE 10,000 rows via 10,000 autocommit statements | 0.135 s |
 | DELETE 10,000 rows via 10,000 autocommit statements | 0.063 s |
-| vector index preparation / matrix build | 0.010 s |
+| vector index preparation / matrix build | about 0.011 s |
 | binary checkpoint / spill | 0.038 s |
-| peak container memory | about 61.5 MB |
+| peak container memory | about 62.5 MB |
 | insert WAL writes | 5.24 MB |
 | reload after spill | 0.027 s |
 
@@ -80,6 +80,12 @@ or ranking.
 
 ## Persistence and recovery
 
+- Small tables stay in memory; tables crossing 50,000 rows spill to a
+  disk-backed JSONL `RowStore` with a bounded in-process row cache.
+- Spilled tables use transaction overlays, so uncommitted row mutations never
+  enter the durable row file and cannot leak into recovery.
+- Snapshots persist a row-file reference and a bounded vector matrix policy;
+  large vector scans remain exact without allocating a second full matrix.
 - INSERT, UPDATE and DELETE append compact binary WAL records before replying.
 - The WAL handle stays open across autocommit operations.
 - A transaction commits one atomic WAL record containing all of its changes.
@@ -102,5 +108,11 @@ SQL, storage, transactions, restart recovery, float32 semantics and filtered
 vector TopK.
 
 The local runner also exercises structured protocol errors and `SIGKILL`
-recovery. The nine non-public formal cases remain unavailable; public success
-does not guarantee formal acceptance or a particular performance rank.
+recovery. Additional hidden-risk probes cover NULL rejection, zero-row column
+and function validation, multi-row vector dimensions, quote-aware row parsing,
+float32 query normalization, COUNT column naming and case-insensitive table
+lookup. A 100K x 128 run under a 256 MiB container verifies spill, restart,
+spilled-table transaction commit/rollback and SIGKILL recovery; its exact
+row-wise TopK path is intentionally slower than the 10K matrix path. The nine
+non-public formal cases remain unavailable; public success does not guarantee
+formal acceptance or a particular performance rank.
