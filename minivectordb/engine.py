@@ -1641,7 +1641,12 @@ class Engine:
             return Result(columns=output_columns, rows=rows, is_query=True)
 
         decorated = []
-        for pk in filtered:
+        candidate_pks = (
+            filtered
+            if order or limit is None
+            else filtered[:max(0, int(limit))]
+        )
+        for pk in candidate_pks:
             row = table.rows[pk]
             decorated.append((pk, row))
         if order:
