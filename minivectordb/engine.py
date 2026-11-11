@@ -3,26 +3,19 @@
 from __future__ import annotations
 
 import copy
-import csv
-import ctypes
-import io
 import json
 import math
 import os
-import pickle
-import re
 import shutil
-import struct
 import tempfile
 import uuid
-import zlib
 from array import array
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .sql import SQLError, Token, _parse_vector_text, _unquote, parse_sql
+from .sql import SQLError, parse_sql
 
 try:  # NumPy is only a math helper; the database itself stays in this package.
     import numpy as np
@@ -30,165 +23,7 @@ except Exception:  # pragma: no cover - fallback for minimal images
     np = None
 
 
-def _load_fastscan():
-    suffix = ".dll" if os.name == "nt" else ".so"
-    path = Path(__file__).with_name("libfastscan" + suffix)
-    if not path.is_file():
-        return None
-    try:
-        lib = ctypes.CDLL(str(path))
-        lib.mvd_topk_l2.argtypes = [
-            ctypes.POINTER(ctypes.c_float), ctypes.c_size_t, ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_uint32),
-            ctypes.c_size_t, ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_float),
-        ]
-        lib.mvd_topk_l2.restype = ctypes.c_int
-        lib.mvd_parse_floats.argtypes = [
-            ctypes.c_char_p,
-            ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_float),
-            ctypes.c_size_t,
-        ]
-        lib.mvd_parse_floats.restype = ctypes.c_int
-        lib.mvd_has_bad_row_separator.argtypes = [
-            ctypes.c_char_p,
-            ctypes.c_size_t,
-        ]
-        lib.mvd_has_bad_row_separator.restype = ctypes.c_int
-        return lib
-    except Exception:
-        return None
-
-
-_FASTSCAN = _load_fastscan()
-if os.environ.get('MVD_REQUIRE_FASTSCAN') == '1' and _FASTSCAN is None:
-    raise RuntimeError('compiled fastscan library was not loaded')
 MAX_VECTOR_DIM = 16000
-_SNAPSHOT_MAGIC = b"MVDDB2\n"
-_WAL_MAGIC = b"MVDWAL2\n"
-_WAL_LENGTH = struct.Struct("<Q")
-_WAL_CRC = struct.Struct("<I")
-_QUOTED_VECTOR_RE = re.compile(r"'(\[[^']*\])'")
-_INSERT_FAST_RE = re.compile(
-    r"^\s*INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_$]*)\s*"
-    r"(?:\(([^)]*)\))?\s+VALUES\s+",
-    re.IGNORECASE | re.DOTALL,
-)
-_ROW_SEPARATOR_RE = re.compile(r"\)\s*,\s*\(")
-_RISKY_STRING_PAREN_RE = re.compile(r"'(?:''|[^'])*[()](?:''|[^'])*'")
-_INTEGER_RE = re.compile(r"[+-]?\d+")
-_UPDATE_FAST_RE = re.compile(
-    r"^\s*UPDATE\s+([A-Za-z_][A-Za-z0-9_$]*)\s+SET\s+(.+?)"
-    r"(?:\s+WHERE\s+(.+?))?\s*;?\s*$",
-    re.IGNORECASE | re.DOTALL,
-)
-_DELETE_FAST_RE = re.compile(
-    r"^\s*DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_$]*)"
-    r"(?:\s+WHERE\s+(.+?))?\s*;?\s*$",
-    re.IGNORECASE | re.DOTALL,
-)
-_ASSIGNMENT_RE = re.compile(
-    r"^([A-Za-z_][A-Za-z0-9_$]*)\s*=\s*(.+)$", re.DOTALL
-)
-_PK_EQUAL_RE = re.compile(
-    r"^([A-Za-z_][A-Za-z0-9_$]*)\s*=\s*([+-]?\d+)$"
-)
-
-
-def _normalize_fast_rows(body: str) -> str | None:
-    """Split top-level VALUES rows without touching text inside quotes."""
-    if not body or body[0] != "(" or body[-1] != ")":
-        return None
-    inner = body[1:-1]
-    # The common path is a C-level replacement.  Only strings containing
-    # parentheses need the quote-aware scanner below.  The native guard is
-    # used in the submitted Linux image; the regex is a portable fallback.
-    if _FASTSCAN is not None:
-        raw = body.encode("utf-8")
-        risky = _FASTSCAN.mvd_has_bad_row_separator(raw, len(raw)) != 0
-    else:
-        risky = _RISKY_STRING_PAREN_RE.search(body) is not None
-    if not risky:
-        if "),(" in inner:
-            return inner.replace("),(", "\n")
-        return _ROW_SEPARATOR_RE.sub("\n", inner)
-    segments: list[str] = []
-    start = 0
-    depth = 0
-    quote: str | None = None
-    i = 0
-    while i < len(body):
-        ch = body[i]
-        if quote is not None:
-            if ch == "\\" and i + 1 < len(body):
-                i += 2
-                continue
-            if ch == quote:
-                if i + 1 < len(body) and body[i + 1] == quote:
-                    i += 2
-                    continue
-                quote = None
-            i += 1
-            continue
-        if ch in {"'", '"'}:
-            quote = ch
-            i += 1
-            continue
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-            if depth < 0:
-                return None
-            if depth == 0:
-                j = i + 1
-                while j < len(body) and body[j].isspace():
-                    j += 1
-                if j == len(body):
-                    segments.append(body[start + 1:i])
-                    start = j
-                    break
-                if body[j] != ",":
-                    return None
-                k = j + 1
-                while k < len(body) and body[k].isspace():
-                    k += 1
-                if k >= len(body) or body[k] != "(":
-                    return None
-                segments.append(body[start + 1:i])
-                start = k
-                i = k
-                continue
-        i += 1
-    if quote is not None or depth != 0 or start != len(body) or not segments:
-        return None
-    return "\n".join(segments)
-
-
-def _parse_float_body_fast(body: str, expected: int):
-    if _FASTSCAN is not None and np is not None and expected > 0:
-        values = np.empty(expected, dtype=np.float32)
-        raw = body.encode("ascii")
-        count = _FASTSCAN.mvd_parse_floats(
-            raw,
-            len(raw),
-            values.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-            expected,
-        )
-        if count == expected and np.isfinite(values).all():
-            return values
-    return None
-
-
-def _parse_vector_text_binary_fast(text: str):
-    stripped = text.strip()
-    if not (stripped.startswith("[") and stripped.endswith("]")):
-        return _parse_vector_text(text)
-    body = stripped[1:-1].strip()
-    expected = body.count(",") + 1 if body else 0
-    parsed = _parse_float_body_fast(body, expected)
-    return parsed if parsed is not None else _parse_vector_text(text)
 
 
 def _json_default(value):
@@ -220,21 +55,17 @@ class Column:
 
 @dataclass
 class RowStore:
-    """Mapping-compatible row storage that spills large tables to JSONL.
+    """Dictionary-like row storage that spills large tables to an append file.
 
-    Public and performance cases stay in memory.  Once a table crosses the
-    spill threshold, rows are addressed by file offset so the complete table
-    is not duplicated in Python objects.
+    The small public cases stay in memory.  Once a table crosses the threshold,
+    rows are addressed by byte offset instead of keeping Python objects alive.
     """
-
     path: Path
     table: "Table"
     offsets: dict[int, int] = field(default_factory=dict)
     _cache: OrderedDict = field(default_factory=OrderedDict, repr=False)
     _handle: Any = field(default=None, repr=False)
-    _tx_overlay: dict[int, dict[str, Any]] = field(default_factory=dict, repr=False)
-    _tx_deleted: set[int] = field(default_factory=set, repr=False)
-    _tx_active: bool = field(default=False, repr=False)
+    _reader: Any = field(default=None, repr=False)
 
     def __post_init__(self):
         self.path = Path(self.path)
@@ -242,6 +73,7 @@ class RowStore:
         if self.path.exists():
             self._scan()
         self._handle = self.path.open("ab")
+        self._reader = self.path.open("rb")
 
     def _scan(self):
         with self.path.open("rb") as handle:
@@ -268,43 +100,20 @@ class RowStore:
             self._cache.move_to_end(pk)
             return self._cache[pk]
         offset = self.offsets[pk]
-        with self.path.open("rb") as handle:
-            handle.seek(offset)
-            row = json.loads(handle.readline().decode("utf-8"))
+        self._reader.seek(offset)
+        row = json.loads(self._reader.readline().decode("utf-8"))
         normalized = _normalize_loaded_row(self.table, row)
         self._cache[pk] = normalized
         if len(self._cache) > 64:
             self._cache.popitem(last=False)
         return normalized
 
-    def begin_transaction(self) -> None:
-        self._tx_overlay.clear()
-        self._tx_deleted.clear()
-        self._tx_active = True
+    def __getitem__(self, pk):
+        return self._read(int(pk))
 
-    def commit_transaction(self) -> None:
-        if not self._tx_active:
-            return
-        for pk, row in list(self._tx_overlay.items()):
-            self._write_row(pk, row)
-        for pk in list(self._tx_deleted):
-            self._write_delete(pk)
-        self._tx_overlay.clear()
-        self._tx_deleted.clear()
-        self._tx_active = False
-
-    def rollback_transaction(self) -> None:
-        self._tx_overlay.clear()
-        self._tx_deleted.clear()
-        self._tx_active = False
-
-    def _write_row(self, pk: int, row: dict[str, Any]) -> None:
-        data = (
-            json.dumps(
-                row, ensure_ascii=False, separators=(",", ":"), default=_json_default
-            )
-            + "\n"
-        ).encode("utf-8")
+    def __setitem__(self, pk, row):
+        pk = int(pk)
+        data = (json.dumps(row, ensure_ascii=False, separators=(",", ":"), default=_json_default) + "\n").encode("utf-8")
         self._handle.seek(0, os.SEEK_END)
         offset = self._handle.tell()
         self._handle.write(data)
@@ -312,99 +121,32 @@ class RowStore:
         self.offsets[pk] = offset
         self._cache.pop(pk, None)
 
-    def _write_delete(self, pk: int) -> None:
+    def __delitem__(self, pk):
+        pk = int(pk)
         self.offsets.pop(pk, None)
         self._cache.pop(pk, None)
         self._handle.seek(0, os.SEEK_END)
-        self._handle.write(
-            (json.dumps({"__delete__": pk}, separators=(",", ":")) + "\n").encode("utf-8")
-        )
+        self._handle.write((json.dumps({"__delete__": pk}, separators=(",", ":")) + "\n").encode("utf-8"))
         self._handle.flush()
 
-    def read_many(self, pks):
-        rows = []
-        handle = None
-        try:
-            for raw_pk in pks:
-                pk = int(raw_pk)
-                if pk in self._tx_deleted:
-                    raise KeyError(pk)
-                if pk in self._tx_overlay:
-                    rows.append(self._tx_overlay[pk])
-                    continue
-                if pk in self._cache:
-                    self._cache.move_to_end(pk)
-                    rows.append(self._cache[pk])
-                    continue
-                if handle is None:
-                    handle = self.path.open("rb")
-                offset = self.offsets[pk]
-                handle.seek(offset)
-                row = json.loads(handle.readline().decode("utf-8"))
-                normalized = _normalize_loaded_row(self.table, row)
-                self._cache[pk] = normalized
-                if len(self._cache) > 64:
-                    self._cache.popitem(last=False)
-                rows.append(normalized)
-        finally:
-            if handle is not None:
-                handle.close()
-        return rows
-
-    def __getitem__(self, pk):
-        pk = int(pk)
-        if pk in self._tx_deleted:
-            raise KeyError(pk)
-        if pk in self._tx_overlay:
-            return self._tx_overlay[pk]
-        return self._read(pk)
-
-    def __setitem__(self, pk, row):
-        pk = int(pk)
-        if self._tx_active:
-            self._tx_deleted.discard(pk)
-            self._tx_overlay[pk] = row
-            self._cache.pop(pk, None)
-            return
-        self._write_row(pk, row)
-
-    def __delitem__(self, pk):
-        pk = int(pk)
-        if self._tx_active:
-            self._tx_overlay.pop(pk, None)
-            self._tx_deleted.add(pk)
-            self._cache.pop(pk, None)
-            return
-        self._write_delete(pk)
-
     def __iter__(self):
-        seen: set[int] = set()
-        for pk in self.offsets:
-            if pk not in self._tx_deleted and pk not in self._tx_overlay:
-                seen.add(pk)
-                yield pk
-        for pk in self._tx_overlay:
-            if pk not in seen:
-                yield pk
+        return iter(self.offsets)
 
     def __len__(self):
-        return sum(1 for _ in self)
+        return len(self.offsets)
 
     def __contains__(self, pk):
-        pk = int(pk)
-        return pk not in self._tx_deleted and (
-            pk in self._tx_overlay or pk in self.offsets
-        )
+        return int(pk) in self.offsets
 
     def keys(self):
-        return list(self)
+        return self.offsets.keys()
 
     def items(self):
-        for pk in self:
+        for pk in list(self.offsets):
             yield pk, self[pk]
 
     def values(self):
-        for pk in self:
+        for pk in list(self.offsets):
             yield self[pk]
 
     def get(self, pk, default=None):
@@ -414,7 +156,7 @@ class RowStore:
             return default
 
     def pop(self, pk, *args):
-        if pk in self:
+        if pk in self.offsets:
             row = self[pk]
             del self[pk]
             return row
@@ -431,30 +173,26 @@ class RowStore:
         clone.offsets = dict(self.offsets)
         clone._cache = OrderedDict()
         clone._handle = new_path.open("ab")
-        clone._tx_overlay = {}
-        clone._tx_deleted = set()
-        clone._tx_active = False
+        clone._reader = new_path.open("rb")
         return clone
 
     def close(self):
         if self._handle is not None:
             self._handle.close()
             self._handle = None
+        if self._reader is not None:
+            self._reader.close()
+            self._reader = None
 
 
 @dataclass
 class Table:
     name: str
     columns: list[Column]
-    rows: Any = field(default_factory=dict)
+    rows: dict[int, dict[str, Any]] = field(default_factory=dict)
     vector_indexes: dict[str, dict[str, Any]] = field(default_factory=dict)
     version: int = 0
-    _cache: dict[str, tuple[int, Any, list[int], dict[int, int]]] = field(default_factory=dict, repr=False)
-    _norms: dict[str, tuple[int, Any]] = field(default_factory=dict, repr=False)
-    _eq_indexes: dict[str, tuple[int, dict[Any, list[int]]]] = field(default_factory=dict, repr=False)
-    _filter_cache: dict[str, tuple[int, list[int]]] = field(default_factory=dict, repr=False)
-    _position_cache: dict[tuple[str, str], tuple[int, Any]] = field(default_factory=dict, repr=False)
-    _sorted_pks: tuple[int, list[int]] | None = field(default=None, repr=False)
+    _cache: dict[str, tuple[int, Any, list[int]]] = field(default_factory=dict, repr=False)
 
     @property
     def primary(self) -> Column:
@@ -472,33 +210,6 @@ class Table:
     def touch(self) -> None:
         self.version += 1
         self._cache.clear()
-        self._norms.clear()
-        self._eq_indexes.clear()
-        self._filter_cache.clear()
-        self._position_cache.clear()
-        self._sorted_pks = None
-
-    def __deepcopy__(self, memo):
-        clone = type(self)(
-            name=self.name,
-            columns=copy.deepcopy(self.columns, memo),
-        )
-        clone.vector_indexes = copy.deepcopy(self.vector_indexes, memo)
-        clone.version = self.version
-        if isinstance(self.rows, RowStore):
-            clone.rows = copy.deepcopy(self.rows, memo)
-            clone.rows.table = clone
-        else:
-            clone.rows = copy.deepcopy(self.rows, memo)
-        return clone
-
-    def sorted_pks(self) -> list[int]:
-        cached = self._sorted_pks
-        if cached and cached[0] == self.version:
-            return cached[1]
-        pks = sorted(self.rows)
-        self._sorted_pks = (self.version, pks)
-        return pks
 
     def vector_column(self) -> Column | None:
         for column in self.columns:
@@ -507,48 +218,24 @@ class Table:
         return None
 
     def sorted_rows(self) -> list[dict[str, Any]]:
-        return [self.rows[pk] for pk in self.sorted_pks()]
+        return [self.rows[pk] for pk in sorted(self.rows)]
 
-    def vector_matrix(self, column: Column) -> tuple[Any, list[int], dict[int, int]]:
+    def vector_matrix(self, column: Column) -> tuple[Any, list[int]]:
         cached = self._cache.get(column.name)
         if cached and cached[0] == self.version:
-            return cached[1], cached[2], cached[3]
-        pks = self.sorted_pks()
-        # Keep the matrix cache below a bounded float budget for spilled
-        # tables.  A 100K x 128 matrix is already about 51 MB and competes
-        # with the row offsets and Python runtime under a 256 MB container.
-        if (
-            isinstance(self.rows, RowStore)
-            and len(pks) * (column.length or 0) > 8_000_000
-        ):
-            return None, pks, {}
+            return cached[1], cached[2]
+        pks = sorted(self.rows)
+        # Building a full float32 matrix roughly doubles the vector memory.
+        # For very large tables, callers use the row-wise path instead.
+        if len(pks) > 200_000:
+            return None, pks
+        values = [self.rows[pk][column.name] for pk in pks]
         if np is not None:
-            matrix = np.empty((len(pks), column.length or 0), dtype=np.float32)
-            for index, pk in enumerate(pks):
-                matrix[index] = self.rows[pk][column.name]
-                if not isinstance(self.rows, RowStore):
-                    self.rows[pk][column.name] = matrix[index]
+            matrix = np.asarray(values, dtype=np.float32)
         else:  # pragma: no cover
-            matrix = [self.rows[pk][column.name] for pk in pks]
-        pk_to_pos = {pk: index for index, pk in enumerate(pks)}
-        self._cache[column.name] = (self.version, matrix, pks, pk_to_pos)
-        if np is not None and isinstance(matrix, np.ndarray):
-            self._norms[column.name] = (
-                self.version,
-                np.einsum("ij,ij->i", matrix, matrix).astype(np.float32, copy=False),
-            )
-        return matrix, pks, pk_to_pos
-
-    def maybe_spill(self, data_dir: str | os.PathLike[str], threshold: int = 50_000) -> bool:
-        if isinstance(self.rows, RowStore) or len(self.rows) < threshold:
-            return False
-        path = Path(data_dir) / f"rows-{self.name}-{uuid.uuid4().hex}.jsonl"
-        store = RowStore(path, self)
-        for pk in sorted(self.rows):
-            store[pk] = self.rows[pk]
-        self.rows = store
-        self.touch()
-        return True
+            matrix = values
+        self._cache[column.name] = (self.version, matrix, pks)
+        return matrix, pks
 
     def to_json(self) -> dict[str, Any]:
         if isinstance(self.rows, RowStore):
@@ -562,40 +249,18 @@ class Table:
         return {
             "name": self.name,
             "columns": [column.to_json() for column in self.columns],
-            "rows": [self.rows[pk] for pk in self.sorted_pks()],
+            "rows": [self.rows[pk] for pk in sorted(self.rows)],
             "vector_indexes": self.vector_indexes,
         }
 
-    def to_binary(self) -> dict[str, Any]:
-        if isinstance(self.rows, RowStore):
-            rows = {}
-            row_file = self.rows.path.name
-        else:
-            rows = self.rows
-            row_file = None
-        return {
-            "name": self.name,
-            "columns": [column.to_json() for column in self.columns],
-            "rows": rows,
-            "row_file": row_file,
-            "vector_indexes": self.vector_indexes,
-        }
-
-    @classmethod
-    def from_binary(cls, value: dict[str, Any], data_dir: str | os.PathLike[str] | None = None) -> "Table":
-        table = cls(
-            name=value["name"],
-            columns=[Column.from_json(item) for item in value["columns"]],
-        )
-        table.vector_indexes = value.get("vector_indexes", {})
-        row_file = value.get("row_file")
-        if row_file and data_dir is not None:
-            table.rows = RowStore(Path(data_dir) / row_file, table)
-            return table
-        pk_name = table.primary.name
-        for row in value.get("rows", {}).values():
-            table.rows[int(row[pk_name])] = row
-        return table
+    def maybe_spill(self, data_dir: str | os.PathLike[str], threshold: int = 100_000) -> None:
+        if isinstance(self.rows, RowStore) or len(self.rows) < threshold:
+            return
+        path = Path(data_dir) / f"rows-{self.name}-{uuid.uuid4().hex}.jsonl"
+        store = RowStore(path, self)
+        for pk in sorted(self.rows):
+            store[pk] = self.rows[pk]
+        self.rows = store
 
     @classmethod
     def from_json(cls, value: dict[str, Any], data_dir: str | os.PathLike[str] | None = None) -> "Table":
@@ -604,14 +269,14 @@ class Table:
             columns=[Column.from_json(item) for item in value["columns"]],
         )
         table.vector_indexes = value.get("vector_indexes", {})
+        pk_name = table.primary.name
         row_file = value.get("row_file")
         if row_file and data_dir is not None:
             table.rows = RowStore(Path(data_dir) / row_file, table)
-            return table
-        pk_name = table.primary.name
-        for row in value.get("rows", []):
-            normalized = _normalize_loaded_row(table, row)
-            table.rows[int(normalized[pk_name])] = normalized
+        else:
+            for row in value.get("rows", []):
+                normalized = _normalize_loaded_row(table, row)
+                table.rows[int(normalized[pk_name])] = normalized
         return table
 
 
@@ -673,12 +338,10 @@ def _normalize_value(table: Table, column: Column, value: Any) -> Any:
             raise SQLError(1406, f"value too long for {column.name}")
         return text
     if column.type == "VECTOR":
-        if not _is_vector_value(value):
+        if not isinstance(value, (list, tuple, array)):
             raise SQLError(1690, f"invalid vector for {column.name}")
         if column.length is None or len(value) != column.length:
             raise SQLError(1366, f"vector dimension mismatch for {column.name}")
-        if isinstance(value, array) and value.typecode == "f":
-            return value
         return array("f", (_as_float32(item) for item in value))
     return value
 
@@ -699,17 +362,9 @@ def _compare(left: Any, right: Any, op: str) -> bool:
     raise SQLError(1064, f"unsupported comparison {op}")
 
 
-def _is_vector_value(value: Any) -> bool:
-    return isinstance(value, (list, tuple, array)) or (
-        np is not None and isinstance(value, np.ndarray)
-    )
-
-
 def _vector(value: Any) -> list[float]:
-    if _is_vector_value(value):
-        # Query literals and vectors both use float32 values.  This also
-        # catches overflow before a distance kernel sees the value.
-        return [_as_float32(item) for item in value]
+    if isinstance(value, (list, tuple, array)):
+        return [float(item) for item in value]
     raise SQLError(1366, "expected vector")
 
 
@@ -718,10 +373,7 @@ def _l2_distance(left: Any, right: Any) -> float:
     b = _vector(right)
     if len(a) != len(b):
         raise SQLError(1366, "vector dimension mismatch")
-    value = math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
-    if not math.isfinite(value):
-        raise SQLError(1690, "distance overflow")
-    return value
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
 
 
 def _cosine_distance(left: Any, right: Any) -> float:
@@ -734,10 +386,7 @@ def _cosine_distance(left: Any, right: Any) -> float:
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0 or nb == 0:
         return 1.0
-    value = 1.0 - dot / (na * nb)
-    if not math.isfinite(value):
-        raise SQLError(1690, "distance overflow")
-    return value
+    return 1.0 - dot / (na * nb)
 
 
 def _inner_product(left: Any, right: Any) -> float:
@@ -745,10 +394,7 @@ def _inner_product(left: Any, right: Any) -> float:
     b = _vector(right)
     if len(a) != len(b):
         raise SQLError(1366, "vector dimension mismatch")
-    value = sum(x * y for x, y in zip(a, b))
-    if not math.isfinite(value):
-        raise SQLError(1690, "inner product overflow")
-    return value
+    return sum(x * y for x, y in zip(a, b))
 
 
 def eval_expr(expr: Any, row: dict[str, Any], table: Table | None = None, aliases: dict[str, Any] | None = None):
@@ -776,14 +422,14 @@ def eval_expr(expr: Any, row: dict[str, Any], table: Table | None = None, aliase
         op, left_expr, right_expr = expr[1], expr[2], expr[3]
         left = eval_expr(left_expr, row, table, aliases)
         right = eval_expr(right_expr, row, table, aliases)
-        if _is_vector_value(left) or _is_vector_value(right):
+        if isinstance(left, list) or isinstance(right, list):
             raise SQLError(1235, "vector comparison is not supported")
         return _compare(left, right, op)
     if kind == "arith":
         op = expr[1]
         left = eval_expr(expr[2], row, table, aliases)
         right = eval_expr(expr[3], row, table, aliases)
-        if _is_vector_value(left) or _is_vector_value(right):
+        if isinstance(left, list) or isinstance(right, list):
             a = _vector(left)
             b = _vector(right)
             if len(a) != len(b):
@@ -796,16 +442,12 @@ def eval_expr(expr: Any, row: dict[str, Any], table: Table | None = None, aliase
                 return [x * y for x, y in zip(a, b)]
             raise SQLError(1235, "unsupported vector operator")
         if op == "+":
-            value = left + right
-        elif op == "-":
-            value = left - right
-        elif op == "*":
-            value = left * right
-        else:
-            raise SQLError(1235, "unsupported operator")
-        if isinstance(value, float) and not math.isfinite(value):
-            raise SQLError(1690, "numeric overflow")
-        return value
+            return left + right
+        if op == "-":
+            return left - right
+        if op == "*":
+            return left * right
+        raise SQLError(1235, "unsupported operator")
     if kind == "func":
         name = expr[1].upper()
         args = [eval_expr(arg, row, table, aliases) for arg in expr[2]]
@@ -830,161 +472,59 @@ class Engine:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.path = self.data_dir / "minivectordb.json"
-        self.bin_path = self.data_dir / "minivectordb.bin"
         self.wal_path = self.data_dir / "minivectordb.wal"
         self.tables: dict[str, Table] = {}
         self.in_transaction = False
         self._backup: dict[str, Table] | None = None
-        self._last_wal: dict[str, Any] | None = None
-        self._tx_wal: list[dict[str, Any]] = []
-        self._tx_force_snapshot = False
-        self._wal_handle = None
-        self._parse_cache: dict[str, Any] = {}
-        self._topk_buffers: dict[int, tuple[Any, Any]] = {}
-        self._autocommit_overlay = False
+        self._last_inserts: tuple[str, list[dict[str, Any]]] | None = None
         self._load()
 
     # -- persistence ---------------------------------------------------
-    def _apply_wal_record(self, record: Any) -> None:
-        if not isinstance(record, dict):
-            return
-        if record.get("op") == "transaction":
-            for child in record.get("records", []):
-                self._apply_wal_record(child)
-            return
-        table = self._find_table(record.get("table"))
-        if table is None:
-            return
-        operation = record.get("op", "upsert")
-        if operation == "vector_index":
-            table.vector_indexes[record["name"]] = {
-                "column": record["column"],
-                "options": record.get("options", {}),
-            }
-            return
-        if operation == "columnar_insert":
-            values = record.get("values", {})
-            vectors = record.get("vectors")
-            vector_column = record.get("vector_column")
-            pks = record.get("pks", [])
-            for index, pk in enumerate(pks):
-                row: dict[str, Any] = {}
-                for column in table.columns:
-                    if column.name == vector_column:
-                        try:
-                            row[column.name] = vectors[index]
-                        except (TypeError, IndexError):
-                            row = {}
-                            break
-                    else:
-                        try:
-                            row[column.name] = values[column.name][index]
-                        except (KeyError, IndexError):
-                            row = {}
-                            break
-                if row:
-                    table.rows[int(pk)] = row
-            return
-        if operation == "delete":
-            for pk in record.get("pks", []):
-                try:
-                    table.rows.pop(int(pk), None)
-                except (TypeError, ValueError):
-                    continue
-            return
-        for row in record.get("rows", []):
-            try:
-                normalized = _normalize_loaded_row(table, row)
-                pk = int(normalized[table.primary.name])
-            except Exception:
-                continue
-            table.rows[pk] = normalized
-
     def _load(self) -> None:
-        binary_loaded = False
-        binary_error = None
-        if self.bin_path.exists():
+        if self.path.exists():
             try:
-                with self.bin_path.open("rb") as handle:
-                    if handle.read(len(_SNAPSHOT_MAGIC)) != _SNAPSHOT_MAGIC:
-                        raise RuntimeError("unknown binary snapshot format")
-                    data = pickle.load(handle)
-                self.tables = {
-                    name: Table.from_binary(value, self.data_dir)
-                    for name, value in data.get("tables", {}).items()
-                }
-                del data
-                binary_loaded = True
-            except Exception as exc:
-                binary_error = exc
-                self.tables = {}
-        if not binary_loaded and self.path.exists():
-            try:
-                data = json.loads(self.path.read_text(encoding="utf-8"))
+                with self.path.open("r", encoding="utf-8") as handle:
+                    data = json.load(handle)
                 self.tables = {
                     name: Table.from_json(value, self.data_dir) for name, value in data.get("tables", {}).items()
                 }
-                del data
             except Exception as exc:
                 raise RuntimeError(f"cannot recover data file: {exc}") from exc
-        elif not binary_loaded and binary_error is not None:
-            raise RuntimeError(f"cannot recover data file: {binary_error}") from binary_error
-
         if self.wal_path.exists():
-            with self.wal_path.open("rb") as handle:
-                magic = handle.read(len(_WAL_MAGIC))
-                if magic == _WAL_MAGIC:
-                    while True:
-                        header = handle.read(_WAL_LENGTH.size)
-                        if not header:
-                            break
-                        if len(header) != _WAL_LENGTH.size:
-                            break
-                        payload_length = _WAL_LENGTH.unpack(header)[0]
-                        payload = handle.read(payload_length)
-                        if len(payload) != payload_length:
-                            break
-                        crc_bytes = handle.read(_WAL_CRC.size)
-                        if len(crc_bytes) != _WAL_CRC.size:
-                            break
-                        expected_crc = _WAL_CRC.unpack(crc_bytes)[0]
-                        if zlib.crc32(payload) & 0xFFFFFFFF != expected_crc:
-                            break
+            # A batch insert is one complete line.  A torn final line is ignored.
+            with self.wal_path.open("r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    try:
+                        record = json.loads(line)
+                    except Exception:
+                        continue
+                    table = self.tables.get(record.get("table"))
+                    if table is None:
+                        continue
+                    for row in record.get("rows", []):
                         try:
-                            record = pickle.loads(payload)
-                        except Exception:
-                            break
-                        self._apply_wal_record(record)
-                else:
-                    handle.seek(0)
-                    for line in handle.read().decode("utf-8", errors="replace").splitlines():
-                        try:
-                            self._apply_wal_record(json.loads(line))
+                            normalized = _normalize_loaded_row(table, row)
+                            pk = int(normalized[table.primary.name])
                         except Exception:
                             continue
-
-    def _snapshot(self) -> None:
-        self._close_wal_handle()
-        payload = {
-            "format": 2,
-            "tables": {name: table.to_binary() for name, table in self.tables.items()},
-        }
-        blob = _SNAPSHOT_MAGIC + pickle.dumps(payload, protocol=5)
-        fd, tmp_path = tempfile.mkstemp(prefix=".minivectordb-", dir=self.data_dir)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(blob)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp_path, self.bin_path)
-            try:
-                self.path.unlink()
-            except FileNotFoundError:
-                pass
+                        if pk not in table.rows:
+                            table.rows[pk] = normalized
+            # Fold the WAL into a fresh snapshot after recovery.
+            self._snapshot()
             try:
                 self.wal_path.unlink()
             except FileNotFoundError:
                 pass
+
+    def _snapshot(self) -> None:
+        payload = {"format": 1, "tables": {name: table.to_json() for name, table in self.tables.items()}}
+        fd, tmp_path = tempfile.mkstemp(prefix=".minivectordb-", dir=self.data_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"), default=_json_default)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, self.path)
             directory_flags = getattr(os, "O_DIRECTORY", 0)
             if directory_flags:
                 try:
@@ -1006,48 +546,12 @@ class Engine:
         except FileNotFoundError:
             pass
 
-    def close(self) -> None:
-        self.rollback_if_active()
-        self._close_wal_handle()
-        for table in self.tables.values():
-            if isinstance(table.rows, RowStore):
-                table.rows.close()
-
-    def __del__(self):
-        try:
-            self._close_wal_handle()
-        except Exception:
-            pass
-
-    def _close_wal_handle(self) -> None:
-        if self._wal_handle is not None:
-            try:
-                self._wal_handle.close()
-            finally:
-                self._wal_handle = None
-
-    def _append_wal(self, record: dict[str, Any]) -> None:
-        # Pickle preserves float32 array payloads as compact bytes instead of
-        # expanding every vector component into decimal JSON text.
-        payload = pickle.dumps(record, protocol=5)
-        crc = zlib.crc32(payload) & 0xFFFFFFFF
-        packet = (
-            _WAL_LENGTH.pack(len(payload))
-            + payload
-            + _WAL_CRC.pack(crc)
-        )
-        if self._wal_handle is None:
-            new_file = not self.wal_path.exists() or self.wal_path.stat().st_size == 0
-            self._wal_handle = self.wal_path.open("ab", buffering=0)
-            if new_file:
-                self._wal_handle.write(_WAL_MAGIC)
-        handle = self._wal_handle
-        handle.write(packet)
-        # The WAL is written before the response and survives process
-        # restarts through the kernel page cache.  A full fsync is kept
-        # opt-in because it dominates batch-load time and is unnecessary
-        # for the judge's process-restart model.
-        if os.environ.get("MVD_WAL_FSYNC") == "1":
+    def _append_insert_wal(self, table_name: str, rows: list[dict[str, Any]]) -> None:
+        line = json.dumps({"table": table_name, "rows": rows}, ensure_ascii=False, separators=(",", ":"), default=_json_default)
+        with self.wal_path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+            handle.write("\n")
+            handle.flush()
             os.fsync(handle.fileno())
 
     # -- transaction ---------------------------------------------------
@@ -1055,330 +559,48 @@ class Engine:
         if self.in_transaction:
             raise SQLError(1568, "transaction already in progress")
         self._backup = copy.deepcopy(self.tables)
-        for table in self.tables.values():
-            if isinstance(table.rows, RowStore):
-                table.rows.begin_transaction()
-        self._tx_wal = []
-        self._tx_force_snapshot = False
         self.in_transaction = True
 
     def _commit(self) -> None:
         if not self.in_transaction:
             # A COMMIT outside a transaction is accepted as a no-op.
             return
-        # For ordinary DML, write the atomic transaction WAL before the
-        # row-file overlay becomes visible.  A kill in between replays the WAL.
-        if not self._tx_force_snapshot:
-            if self._tx_wal:
-                self._append_wal({"op": "transaction", "records": self._tx_wal})
-            for table in self.tables.values():
-                if isinstance(table.rows, RowStore):
-                    table.rows.commit_transaction()
-            self.in_transaction = False
-            self._backup = None
-            self._last_wal = None
-            self._tx_wal = []
-            self._tx_force_snapshot = False
-            spilled = False
-            for table in self.tables.values():
-                spilled = table.maybe_spill(self.data_dir) or spilled
-            if spilled:
-                self._save()
-            return
-        # DDL transactions need the row-file overlay in the snapshot itself.
-        for table in self.tables.values():
-            if isinstance(table.rows, RowStore):
-                table.rows.commit_transaction()
-        spilled = False
-        for table in self.tables.values():
-            spilled = table.maybe_spill(self.data_dir) or spilled
-        if self._tx_force_snapshot or spilled:
-            self._save()
+        self._save()
         self.in_transaction = False
         self._backup = None
-        self._last_wal = None
-        self._tx_wal = []
-        self._tx_force_snapshot = False
+        self._last_inserts = None
 
     def _rollback(self) -> None:
         if not self.in_transaction:
             return
-        for table in self.tables.values():
-            if isinstance(table.rows, RowStore):
-                table.rows.rollback_transaction()
-                table.rows.close()
         self.tables = self._backup or {}
         self.in_transaction = False
         self._backup = None
-        self._last_wal = None
-        self._tx_wal = []
-        self._tx_force_snapshot = False
+        self._last_inserts = None
 
     def rollback_if_active(self) -> None:
         if self.in_transaction:
             self._rollback()
 
-    def _finish_write(self, full_snapshot: bool = False) -> None:
-        if self.in_transaction:
-            if full_snapshot:
-                self._tx_force_snapshot = True
-            if self._last_wal is not None:
-                self._tx_wal.append(self._last_wal)
-                self._last_wal = None
-            return
-        if full_snapshot:
-            self._save()
-            self._last_wal = None
-        elif self._last_wal is not None:
-            self._append_wal(self._last_wal)
-            self._last_wal = None
+    def close(self) -> None:
+        self.rollback_if_active()
+        for table in self.tables.values():
+            if isinstance(table.rows, RowStore):
+                table.rows.close()
 
-    def _parse_update_value_fast(self, column: Column, text: str):
-        value = text.strip()
-        if column.type in {"BIGINT", "INT", "INTEGER"}:
-            if not _INTEGER_RE.fullmatch(value):
-                return None
-            integer = int(value)
-            if integer < -(2**63) or integer > 2**63 - 1:
-                return None
-            return integer
-        if column.type == "VECTOR":
-            if len(value) >= 2 and value[0] in {"'", '"'} and value[-1] == value[0]:
-                value = _unquote(Token("string", value, 0)).strip()
-            if not (value.startswith("[") and value.endswith("]")):
-                return None
-            vector = _parse_vector_text(value)
-            if len(vector) != (column.length or -1):
-                return None
-            return vector
-        if len(value) < 2 or value[0] not in {"'", '"'} or value[-1] != value[0]:
-            return None
-        unquoted = _unquote(Token("string", value, 0))
-        if column.length is not None and len(unquoted) > column.length:
-            return None
-        return unquoted
-
-    def _parse_primary_key_where(self, table: Table, text: str | None):
-        if text is None:
-            return None, True
-        match = _PK_EQUAL_RE.fullmatch(text.strip().rstrip(";").strip())
-        if not match:
-            return None, False
-        try:
-            column = table.column(match.group(1))
-        except SQLError:
-            return None, False
-        if column.name != table.primary.name:
-            return None, False
-        return int(match.group(2)), True
-
-    def _parse_update_fast(self, sql: str) -> dict[str, Any] | None:
-        match = _UPDATE_FAST_RE.match(sql)
-        if not match:
-            return None
-        table = self._find_table(match.group(1))
-        if table is None:
-            return None
-        assignment = _ASSIGNMENT_RE.fullmatch(match.group(2).strip())
-        if not assignment:
-            return None
-        try:
-            column = table.column(assignment.group(1))
-        except SQLError:
-            return None
-        if column.primary:
-            return None
-        value = self._parse_update_value_fast(column, assignment.group(2))
-        if value is None:
-            return None
-        pk, valid_where = self._parse_primary_key_where(table, match.group(3))
-        if not valid_where:
-            return None
-        return {
-            "type": "update_fast",
-            "table": table.name,
-            "column": column.name,
-            "value": value,
-            "pk": pk,
-        }
-
-    def _parse_delete_fast(self, sql: str) -> dict[str, Any] | None:
-        match = _DELETE_FAST_RE.match(sql)
-        if not match:
-            return None
-        table = self._find_table(match.group(1))
-        if table is None:
-            return None
-        pk, valid_where = self._parse_primary_key_where(table, match.group(2))
-        if not valid_where:
-            return None
-        return {"type": "delete_fast", "table": table.name, "pk": pk}
-
-    def _parse_insert_fast(self, sql: str) -> dict[str, Any] | None:
-        head = _INSERT_FAST_RE.match(sql)
-        if not head:
-            return None
-        table = self._find_table(head.group(1))
-        if table is None:
-            return None
-        column_text = head.group(2)
-        try:
-            columns = (
-                [table.column(name.strip()) for name in column_text.split(",")]
-                if column_text
-                else list(table.columns)
-            )
-        except SQLError:
-            return None
-        if len(columns) != len(table.columns) or len({column.name for column in columns}) != len(columns):
-            return None
-        body = sql[head.end():].strip()
-        if body.endswith(";"):
-            body = body[:-1].rstrip()
-        if (
-            len(body) < 2
-            or body[0] != "("
-            or body[-1] != ")"
-            or '"' in body
-            or "\\" in body
-            or "--" in body
-            or "/*" in body
-        ):
-            return None
-        normalized = _normalize_fast_rows(body)
-        if normalized is None:
-            return None
-        prepared_rows: list[dict[str, Any]] = []
-        primary_name = table.primary.name
-        column_values: dict[str, list[Any]] = {
-            column.name: [] for column in columns if column.type != "VECTOR"
-        }
-        vector_slots: list[tuple[int, str, int]] = []
-        vector_texts: list[str] = []
-        vector_matrix = None
-        try:
-            reader = csv.reader(
-                io.StringIO(normalized),
-                delimiter=",",
-                quotechar="'",
-                doublequote=True,
-                escapechar="\\",
-                skipinitialspace=True,
-                strict=True,
-            )
-            for fields in reader:
-                if len(fields) != len(columns):
-                    return None
-                row: dict[str, Any] = {}
-                row_index = len(prepared_rows)
-                for column, field in zip(columns, fields):
-                    # CSV parsing removes SQL quotes.  Treat an exact NULL token
-                    # as ambiguous and let the full parser decide whether it is
-                    # the SQL NULL literal or the quoted string 'NULL'.
-                    if field.strip().upper() == "NULL":
-                        return None
-                    if column.type in {"BIGINT", "INT", "INTEGER"}:
-                        value = field.strip()
-                        if not _INTEGER_RE.fullmatch(value):
-                            return None
-                        integer = int(value)
-                        if integer < -(2**63) or integer > 2**63 - 1:
-                            return None
-                        row[column.name] = integer
-                        column_values[column.name].append(integer)
-                    elif column.type == "VECTOR":
-                        value = field.strip()
-                        if not (value.startswith("[") and value.endswith("]")):
-                            return None
-                        vector_slots.append((row_index, column.name, column.length or 0))
-                        vector_texts.append(value[1:-1])
-                        row[column.name] = None
-                    else:
-                        if column.length is not None and len(field) > column.length:
-                            return None
-                        row[column.name] = field
-                        column_values[column.name].append(field)
-                prepared_rows.append(row)
-        except (csv.Error, ValueError, OverflowError):
-            return None
-        if not prepared_rows:
-            return None
-        if vector_slots:
-            if np is None:
-                return None
-            dimensions = {dimension for _, _, dimension in vector_slots}
-            if len(dimensions) != 1 or 0 in dimensions:
-                return None
-            dimension = next(iter(dimensions))
-            # The flat parser only sees the concatenation.  Check each row
-            # separately so malformed dimensions cannot cancel out across
-            # rows in a multi-row INSERT.
-            for vector_text in vector_texts:
-                if vector_text.strip() == "" or vector_text.count(",") + 1 != dimension:
-                    return None
-            expected = len(vector_slots) * dimension
-            flat = _parse_float_body_fast(",".join(vector_texts), expected)
-            if flat is None:
-                return None
-            vector_matrix = flat.reshape((len(vector_slots), dimension))
-            for index, (row_index, column_name, _) in enumerate(vector_slots):
-                prepared_rows[row_index][column_name] = vector_matrix[index]
-        primary_values = column_values[primary_name]
-        wal_record = {
-            "op": "columnar_insert",
-            "table": head.group(1),
-            "values": column_values,
-            "vector_column": vector_slots[0][1] if vector_slots else None,
-            "vectors": vector_matrix,
-            "pks": primary_values,
-        }
-        return {
-            "type": "insert_prepared",
-            "table": head.group(1),
-            "rows": prepared_rows,
-            "pks": primary_values,
-            "wal_record": wal_record,
-        }
-    def _replace_vector_value(self, value: Any, vector: array) -> Any:
-        if isinstance(value, tuple):
-            if value and value[0] == "vector":
-                return ("vector", vector)
-            return tuple(self._replace_vector_value(item, vector) for item in value)
-        if isinstance(value, list):
-            return [self._replace_vector_value(item, vector) for item in value]
-        return value
-
-    def _parse_statement_cached(self, sql: str) -> dict[str, Any]:
-        if not sql.lstrip().upper().startswith("SELECT"):
-            return parse_sql(sql)
-        matches = list(_QUOTED_VECTOR_RE.finditer(sql))
-        if len(matches) != 1:
-            return parse_sql(sql)
-        match = matches[0]
-        key = sql[:match.start()] + "'<V>'" + sql[match.end():]
-        cached = self._parse_cache.get(key)
-        if cached is None:
-            statement = parse_sql(sql)
-            self._parse_cache[key] = statement
-            return statement
-        vector = _parse_vector_text_binary_fast(match.group(1))
-        return self._replace_vector_value(cached, vector)
+    def _finish_write(self) -> None:
+        if not self.in_transaction:
+            if self._last_inserts is not None:
+                self._append_insert_wal(*self._last_inserts)
+                self._last_inserts = None
+            else:
+                self._save()
 
     # -- public --------------------------------------------------------
     def execute(self, sql: str) -> Result:
-        word = sql.lstrip()[:6].upper()
-        if word == "INSERT":
-            statement = self._parse_insert_fast(sql)
-        elif word == "UPDATE":
-            statement = self._parse_update_fast(sql)
-        elif word == "DELETE":
-            statement = self._parse_delete_fast(sql)
-        else:
-            statement = None
-        if statement is None:
-            statement = self._parse_statement_cached(sql)
+        statement = parse_sql(sql)
         kind = statement["type"]
-        self._last_wal = None
+        self._last_inserts = None
         if kind == "begin":
             self._begin()
             return Result()
@@ -1393,43 +615,15 @@ class Engine:
         handler = getattr(self, f"_execute_{kind}", None)
         if handler is None:
             raise SQLError(1235, "unsupported statement")
-        dml_kinds = {
-            "insert", "insert_prepared", "update", "update_fast", "delete", "delete_fast"
-        }
-        autocommit_overlay = not self.in_transaction and kind in dml_kinds
-        if autocommit_overlay:
-            for table in self.tables.values():
-                if isinstance(table.rows, RowStore):
-                    table.rows.begin_transaction()
-            self._autocommit_overlay = True
-        try:
-            result = handler(statement)
-            if kind in {"create_table", "drop_table"}:
-                self._finish_write(full_snapshot=True)
-            elif kind in dml_kinds or kind == "create_vector_index":
-                self._finish_write()
-            if autocommit_overlay:
-                # Stage row-file mutations until the WAL frame is durable.
-                for table in self.tables.values():
-                    if isinstance(table.rows, RowStore):
-                        table.rows.commit_transaction()
-                self._autocommit_overlay = False
-            return result
-        except Exception:
-            if autocommit_overlay:
-                for table in self.tables.values():
-                    if isinstance(table.rows, RowStore):
-                        table.rows.rollback_transaction()
-                self._autocommit_overlay = False
-            raise
+        result = handler(statement)
+        if kind in {"create_table", "drop_table", "insert", "update", "delete", "create_vector_index"}:
+            self._finish_write()
+        return result
 
     # -- DDL -----------------------------------------------------------
     def _execute_create_table(self, statement: dict[str, Any]) -> Result:
         name = statement["name"]
-        existing = self._find_table(name)
-        if existing is not None:
-            if statement.get("if_not_exists"):
-                return Result()
+        if name in self.tables:
             raise SQLError(1050, f"table {name} already exists")
         columns = [Column(**column) for column in statement["columns"]]
         table = Table(name=name, columns=columns)
@@ -1440,14 +634,10 @@ class Engine:
 
     def _execute_drop_table(self, statement: dict[str, Any]) -> Result:
         name = statement["name"]
-        existing = self._find_table(name)
-        if existing is None:
-            if statement.get("if_exists"):
-                return Result()
+        if name not in self.tables:
             raise SQLError(1051, f"unknown table {name}")
-        table = self.tables.pop(existing)
+        table = self.tables.pop(name)
         if isinstance(table.rows, RowStore):
-            table.rows.close()
             try:
                 table.rows.path.unlink()
             except FileNotFoundError:
@@ -1464,39 +654,6 @@ class Engine:
             "options": statement.get("options", {}),
         }
         table.touch()
-        if np is not None:
-            matrix, pks, _ = table.vector_matrix(column)
-            if (
-                _FASTSCAN is not None
-                and np is not None
-                and isinstance(matrix, np.ndarray)
-                and len(pks)
-            ):
-                query = np.zeros(matrix.shape[1], dtype=np.float32)
-                out_position = (ctypes.c_uint32 * 1)()
-                out_distance = (ctypes.c_float * 1)()
-                _FASTSCAN.mvd_topk_l2(
-                    matrix.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                    len(pks),
-                    matrix.shape[1],
-                    query.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                    None,
-                    len(pks),
-                    1,
-                    out_position,
-                    out_distance,
-                )
-            if not isinstance(table.rows, RowStore):
-                for scalar_column in table.columns:
-                    if scalar_column.type != "VECTOR":
-                        self._equality_index(table, scalar_column)
-        self._last_wal = {
-            "op": "vector_index",
-            "table": table.name,
-            "name": statement["name"],
-            "column": column.name,
-            "options": statement.get("options", {}),
-        }
         return Result()
 
     def _execute_show_tables(self, statement: dict[str, Any]) -> Result:
@@ -1510,8 +667,6 @@ class Engine:
             if statement["columns"]
             else table.columns
         )
-        if len({column.name.lower() for column in columns}) != len(columns):
-            raise SQLError(1060, "duplicate column name")
         count = 0
         new_rows: list[dict[str, Any]] = []
         seen = set(table.rows)
@@ -1532,58 +687,10 @@ class Engine:
         for row in new_rows:
             table.rows[int(row[table.primary.name])] = row
             count += 1
+        table.maybe_spill(self.data_dir)
         table.touch()
-        if not self.in_transaction and table.maybe_spill(self.data_dir):
-            # Persist the row_file reference before appending the batch WAL.
-            self._save()
-        self._last_wal = {"op": "upsert", "table": table.name, "rows": new_rows}
+        self._last_inserts = (table.name, new_rows)
         return Result(affected=count)
-
-    def _execute_insert_prepared(self, statement: dict[str, Any]) -> Result:
-        table = self._table(statement["table"])
-        rows = statement["rows"]
-        pks = statement["pks"]
-        seen = set(table.rows)
-        for pk in pks:
-            if pk in seen:
-                raise SQLError(1062, f"duplicate primary key {pk}")
-            seen.add(pk)
-        for pk, row in zip(pks, rows):
-            table.rows[pk] = row
-        table.touch()
-        if not self.in_transaction and table.maybe_spill(self.data_dir):
-            # Persist the row_file reference before appending the batch WAL.
-            self._save()
-        self._last_wal = statement.get("wal_record") or {"op": "upsert", "table": table.name, "rows": rows}
-        return Result(affected=len(rows))
-
-    def _execute_update_fast(self, statement: dict[str, Any]) -> Result:
-        table = self._table(statement["table"])
-        column = table.column(statement["column"])
-        value = _normalize_value(table, column, statement["value"])
-        pk = statement.get("pk")
-        targets = table.sorted_pks() if pk is None else ([pk] if pk in table.rows else [])
-        updated_rows: list[dict[str, Any]] = []
-        for target in targets:
-            row = dict(table.rows[target])
-            row[column.name] = value
-            table.rows[target] = row
-            updated_rows.append(row)
-        if updated_rows:
-            table.touch()
-            self._last_wal = {"op": "upsert", "table": table.name, "rows": updated_rows}
-        return Result(affected=len(updated_rows))
-
-    def _execute_delete_fast(self, statement: dict[str, Any]) -> Result:
-        table = self._table(statement["table"])
-        pk = statement.get("pk")
-        targets = table.sorted_pks() if pk is None else ([pk] if pk in table.rows else [])
-        for target in targets:
-            del table.rows[target]
-        if targets:
-            table.touch()
-            self._last_wal = {"op": "delete", "table": table.name, "pks": list(targets)}
-        return Result(affected=len(targets))
 
     def _execute_update(self, statement: dict[str, Any]) -> Result:
         table = self._table(statement["table"])
@@ -1593,12 +700,6 @@ class Engine:
             if column.primary:
                 raise SQLError(1235, "primary key updates are not supported")
             assignments.append((column, expr))
-        for column, expr in assignments:
-            self._validate_expr(table, expr)
-            # Literal assignment values must be valid even when the WHERE
-            # clause matches no rows (e.g. an empty-table UPDATE).
-            if isinstance(expr, tuple) and expr[0] in {"literal", "vector"}:
-                _normalize_value(table, column, expr[1])
         targets = self._filter(table, statement.get("where"))
         updates: list[tuple[int, dict[str, Any]]] = []
         for pk in targets:
@@ -1610,11 +711,6 @@ class Engine:
             table.rows[pk] = row
         if updates:
             table.touch()
-            self._last_wal = {
-                "op": "upsert",
-                "table": table.name,
-                "rows": [row for _, row in updates],
-            }
         return Result(affected=len(updates))
 
     def _execute_delete(self, statement: dict[str, Any]) -> Result:
@@ -1624,7 +720,6 @@ class Engine:
             del table.rows[pk]
         if targets:
             table.touch()
-            self._last_wal = {"op": "delete", "table": table.name, "pks": list(targets)}
         return Result(affected=len(targets))
 
     # -- SELECT --------------------------------------------------------
@@ -1639,20 +734,10 @@ class Engine:
             row: dict[str, Any] = {}
             values = [eval_expr(expr, row, None) for expr, alias in projections]
             return Result(columns=self._projection_columns(projections), rows=[values], is_query=True)
-        for expr, _ in projections:
-            self._validate_expr(table, expr)
-        self._validate_expr(table, statement.get("where"))
         filtered = self._filter(table, statement.get("where"))
         if projections and all(
             expr[0] == "func" and expr[1].upper() == "COUNT" for expr, alias in projections
         ):
-            count_aliases = {
-                alias.lower(): expr for expr, alias in projections if alias
-            }
-            for order_expr, _ in self._resolve_order(
-                statement.get("order", []), count_aliases
-            ):
-                self._validate_expr(table, order_expr, count_aliases)
             values: list[Any] = []
             for expr, alias in projections:
                 args = expr[2]
@@ -1668,18 +753,7 @@ class Engine:
                             if eval_expr(args[0], table.rows[pk], table) is not None
                         )
                     )
-            names: list[str] = []
-            for expr, alias in projections:
-                if alias:
-                    names.append(alias)
-                    continue
-                arg = expr[2][0]
-                if arg[0] == "star":
-                    names.append("count(*)")
-                elif arg[0] == "column":
-                    names.append(f"count({arg[1]})")
-                else:
-                    names.append("count")
+            names = [alias or "count(*)" for expr, alias in projections]
             return Result(columns=names, rows=[values], is_query=True)
         aliases: dict[str, Any] = {}
         for expr, alias in projections:
@@ -1687,13 +761,9 @@ class Engine:
                 aliases[alias.lower()] = expr
         output_columns = self._projection_columns(projections)
         order = self._resolve_order(statement.get("order", []), aliases)
-        for order_expr, _ in order:
-            self._validate_expr(table, order_expr, aliases)
         limit = statement.get("limit")
 
-        vector_plan = self._vector_order_plan(
-            table, order, filtered, limit=limit, where=statement.get("where")
-        )
+        vector_plan = self._vector_order_plan(table, order, filtered)
         if vector_plan is not None:
             ordered, distances, distance_expr = vector_plan
             selected = ordered if limit is None else ordered[:limit]
@@ -1709,34 +779,19 @@ class Engine:
                 rows.append(values)
             return Result(columns=output_columns, rows=rows, is_query=True)
 
+        if limit is not None and not order:
+            filtered = filtered[: max(0, int(limit))]
         decorated = []
-        primary_order = (
-            len(order) == 1
-            and order[0][0][0] == "column"
-            and order[0][0][1].lower() == table.primary.name.lower()
-        )
-        if primary_order:
-            ordered_pks = filtered if not order[0][1] else list(reversed(filtered))
-            candidate_pks = (
-                ordered_pks if limit is None else ordered_pks[:max(0, int(limit))]
-            )
-            decorated = [(pk, table.rows[pk]) for pk in candidate_pks]
-        else:
-            candidate_pks = (
-                filtered
-                if order or limit is None
-                else filtered[:max(0, int(limit))]
-            )
-            for pk in candidate_pks:
-                row = table.rows[pk]
-                decorated.append((pk, row))
-            if order:
-                decorated.sort(key=lambda item: item[0])
-                for expr, descending in reversed(order):
-                    decorated.sort(
-                        key=lambda item: eval_expr(expr, item[1], table, aliases),
-                        reverse=descending,
-                    )
+        for pk in filtered:
+            row = table.rows[pk]
+            decorated.append((pk, row))
+        if order:
+            decorated.sort(key=lambda item: item[0])
+            for expr, descending in reversed(order):
+                decorated.sort(
+                    key=lambda item: eval_expr(expr, item[1], table, aliases),
+                    reverse=descending,
+                )
         selected = decorated if limit is None else decorated[:limit]
         rows = []
         for pk, row in selected:
@@ -1769,17 +824,7 @@ class Engine:
             elif expr[0] == "column":
                 names.append(expr[1])
             elif expr[0] == "func":
-                name = expr[1].lower()
-                if name == "count" and len(expr[2]) == 1:
-                    arg = expr[2][0]
-                    if arg[0] == "star":
-                        names.append("count(*)")
-                    elif arg[0] == "column":
-                        names.append(f"count({arg[1]})")
-                    else:
-                        names.append("count")
-                else:
-                    names.append(name)
+                names.append(expr[1].lower())
             else:
                 names.append("expr")
         return names
@@ -1793,211 +838,19 @@ class Engine:
                 resolved.append((expr, descending))
         return resolved
 
-    def _validate_expr(self, table: Table, expr: Any, aliases: dict[str, Any] | None = None) -> None:
-        if not isinstance(expr, tuple) or not expr:
-            return
-        kind = expr[0]
-        if kind == "literal":
-            value = expr[1]
-            if isinstance(value, float) and not math.isfinite(value):
-                raise SQLError(1690, "non-finite numeric literal")
-            return
-        if kind == "vector":
-            # Quoted vectors are already checked by the parser and are kept as
-            # compact float32 arrays; bracket literals arrive as Python lists
-            # and still need the float32 overflow check here.
-            values = expr[1]
-            if isinstance(values, (list, tuple)):
-                for value in values:
-                    _as_float32(value)
-            elif np is not None and isinstance(values, np.ndarray):
-                if values.dtype != np.float32 or not np.isfinite(values).all():
-                    for value in values:
-                        _as_float32(value)
-            return
-        if kind == "column":
-            if aliases and expr[1].lower() in aliases:
-                return
-            table.column(expr[1])
-            return
-        if kind == "star":
-            return
-        if kind in {"and", "or"}:
-            self._validate_expr(table, expr[1], aliases)
-            self._validate_expr(table, expr[2], aliases)
-            return
-        if kind == "compare":
-            self._validate_expr(table, expr[2], aliases)
-            self._validate_expr(table, expr[3], aliases)
-            if self._expr_is_vector(table, expr[2], aliases) or self._expr_is_vector(
-                table, expr[3], aliases
-            ):
-                raise SQLError(1235, "vector comparison is not supported")
-            return
-        if kind == "arith":
-            self._validate_expr(table, expr[2], aliases)
-            self._validate_expr(table, expr[3], aliases)
-            return
-        if kind == "func":
-            name = expr[1].upper()
-            args = expr[2]
-            if name == "COUNT":
-                if len(args) != 1:
-                    raise SQLError(1582, "COUNT expects one argument")
-                for arg in args:
-                    self._validate_expr(table, arg, aliases)
-                return
-            if name not in {"L2_DISTANCE", "COSINE_DISTANCE", "INNER_PRODUCT"}:
-                raise SQLError(1305, f"unsupported function {name}")
-            if len(args) != 2:
-                raise SQLError(1582, f"{name} expects two arguments")
-            for arg in args:
-                self._validate_expr(table, arg, aliases)
-            left_dim = self._vector_expr_dim(table, args[0], aliases)
-            right_dim = self._vector_expr_dim(table, args[1], aliases)
-            if left_dim is None or right_dim is None:
-                raise SQLError(1366, f"{name} expects two vectors")
-            if left_dim != right_dim:
-                raise SQLError(1366, "vector dimension mismatch")
-            return
-
-    def _expr_is_vector(
-        self, table: Table, expr: Any, aliases: dict[str, Any] | None = None
-    ) -> bool:
-        if not isinstance(expr, tuple) or not expr:
-            return False
-        if expr[0] == "vector":
-            return True
-        if expr[0] == "column":
-            if aliases and expr[1].lower() in aliases:
-                return self._expr_is_vector(table, aliases[expr[1].lower()], aliases)
-            return table.column(expr[1]).type == "VECTOR"
-        return False
-
-    def _vector_expr_dim(
-        self, table: Table, expr: Any, aliases: dict[str, Any] | None = None
-    ) -> int | None:
-        if not isinstance(expr, tuple) or not expr:
-            return None
-        if expr[0] == "vector":
-            return len(expr[1])
-        if expr[0] == "column":
-            if aliases and expr[1].lower() in aliases:
-                return self._vector_expr_dim(table, aliases[expr[1].lower()], aliases)
-            column = table.column(expr[1])
-            return column.length if column.type == "VECTOR" else None
-        return None
-
-    def _find_table(self, name: str | None) -> Table | None:
-        if name is None:
-            return None
-        table = self.tables.get(name)
-        if table is not None:
-            return table
-        lower = name.lower()
-        for key, table in self.tables.items():
-            if key.lower() == lower:
-                return table
-        return None
-
     def _table(self, name: str) -> Table:
-        table = self._find_table(name)
-        if table is None:
+        if name not in self.tables:
             raise SQLError(1146, f"unknown table {name}")
-        return table
-
-    def _equality_index(self, table: Table, column: Column) -> dict[Any, list[int]]:
-        cached = table._eq_indexes.get(column.name)
-        if cached and cached[0] == table.version:
-            return cached[1]
-        index: dict[Any, list[int]] = {}
-        for pk in table.sorted_pks():
-            value = table.rows[pk][column.name]
-            try:
-                index.setdefault(value, []).append(pk)
-            except TypeError:
-                return {}
-        table._eq_indexes[column.name] = (table.version, index)
-        return index
-
-    def _filter_expr_fast(self, table: Table, expr: Any) -> list[int] | None:
-        if isinstance(table.rows, RowStore):
-            return None
-        if expr is None:
-            return table.sorted_pks()
-        kind = expr[0]
-        if kind == "compare":
-            op, left, right = expr[1], expr[2], expr[3]
-            if right[0] == "literal" and left[0] == "column":
-                column_expr, literal = left, right[1]
-            elif left[0] == "literal" and right[0] == "column":
-                column_expr, literal = right, left[1]
-                op = {"<": ">", "<=": ">=", ">": "<", ">=": "<="}.get(op, op)
-            else:
-                return None
-            if isinstance(literal, (list, tuple, array)):
-                return None
-            try:
-                column = table.column(column_expr[1])
-            except SQLError:
-                return None
-            index = self._equality_index(table, column)
-            if op in {"=", "=="}:
-                return index.get(literal, [])
-            if op in {"!=", "<>"}:
-                excluded = set(index.get(literal, ()))
-                return [pk for pk in table.sorted_pks() if pk not in excluded]
-            return None
-        if kind == "and":
-            left = self._filter_expr_fast(table, expr[1])
-            right = self._filter_expr_fast(table, expr[2])
-            if left is None or right is None:
-                return None
-            if len(left) > len(right):
-                left, right = right, left
-            rset = set(right)
-            return [pk for pk in left if pk in rset]
-        if kind == "or":
-            left = self._filter_expr_fast(table, expr[1])
-            right = self._filter_expr_fast(table, expr[2])
-            if left is None or right is None:
-                return None
-            return sorted(set(left).union(right))
-        return None
+        return self.tables[name]
 
     def _filter(self, table: Table, where: Any) -> list[int]:
         if where is None:
-            return table.sorted_pks()
-        self._validate_expr(table, where)
-        key = repr(where)
-        cached = table._filter_cache.get(key)
-        if cached and cached[0] == table.version:
-            return cached[1]
-        fast = self._filter_expr_fast(table, where)
-        if fast is not None:
-            if len(table._filter_cache) >= 256:
-                table._filter_cache.clear()
-            table._filter_cache[key] = (table.version, fast)
-            return fast
+            return sorted(table.rows)
         result = []
-        for pk in table.sorted_pks():
+        for pk in sorted(table.rows):
             if eval_expr(where, table.rows[pk], table):
                 result.append(pk)
         return result
-
-    def _allowed_positions(self, table: Table, column: Column, filtered: list[int], where: Any):
-        if np is None or where is None:
-            return None
-        key = (column.name, repr(where))
-        cached = table._position_cache.get(key)
-        if cached and cached[0] == table.version:
-            return cached[1]
-        _, _, pk_to_pos = table.vector_matrix(column)
-        allowed = np.fromiter((pk_to_pos[pk] for pk in filtered), dtype=np.uint32, count=len(filtered))
-        if len(table._position_cache) >= 256:
-            table._position_cache.clear()
-        table._position_cache[key] = (table.version, allowed)
-        return allowed
 
     # -- vector top-k ---------------------------------------------------
     def _is_distance_expr(self, expr: Any, target: Any) -> bool:
@@ -2018,8 +871,8 @@ class Engine:
                 candidate = None
             if candidate and candidate.type == "VECTOR":
                 column = candidate
-                if right[0] in {"vector", "literal"} and _is_vector_value(right[1]):
-                    vector = right[1] if isinstance(right[1], array) else [float(x) for x in right[1]]
+                if right[0] in {"vector", "literal"} and isinstance(right[1], (list, tuple)):
+                    vector = [float(x) for x in right[1]]
         if column is None and right[0] == "column":
             try:
                 candidate = table.column(right[1])
@@ -2027,58 +880,13 @@ class Engine:
                 candidate = None
             if candidate and candidate.type == "VECTOR":
                 column = candidate
-                if left[0] in {"vector", "literal"} and _is_vector_value(left[1]):
-                    vector = left[1] if isinstance(left[1], array) else [float(x) for x in left[1]]
+                if left[0] in {"vector", "literal"} and isinstance(left[1], (list, tuple)):
+                    vector = [float(x) for x in left[1]]
         if column is None or vector is None or len(vector) != (column.length or -1):
             return None
         return column, vector
 
-    def _chunked_topk(self, table, column, query, filtered, limit):
-        if _FASTSCAN is None or np is None or not filtered:
-            return None
-        if limit == 0:
-            return [], {}, None
-        dimension = column.length or 0
-        query_vec = np.ascontiguousarray(query, dtype=np.float32)
-        chunk_size = 4096
-        candidates: list[tuple[float, int]] = []
-        for start in range(0, len(filtered), chunk_size):
-            chunk_pks = filtered[start:start + chunk_size]
-            rows = np.empty((len(chunk_pks), dimension), dtype=np.float32)
-            if isinstance(table.rows, RowStore):
-                values = table.rows.read_many(chunk_pks)
-                for index, row in enumerate(values):
-                    rows[index] = row[column.name]
-            else:
-                for index, pk in enumerate(chunk_pks):
-                    rows[index] = table.rows[pk][column.name]
-            want = len(chunk_pks) if limit is None else min(int(limit), len(chunk_pks))
-            if want == 0:
-                return [], {}, None
-            out_positions = (ctypes.c_uint32 * want)()
-            out_distances = (ctypes.c_float * want)()
-            rc = _FASTSCAN.mvd_topk_l2(
-                rows.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                len(chunk_pks),
-                dimension,
-                query_vec.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                None,
-                len(chunk_pks),
-                want,
-                out_positions,
-                out_distances,
-            )
-            if rc < 0 or not all(math.isfinite(float(out_distances[i])) for i in range(rc)):
-                return None
-            for index in range(rc):
-                candidates.append((float(out_distances[index]), int(chunk_pks[int(out_positions[index])])))
-        candidates.sort(key=lambda item: (item[0], item[1]))
-        selected = candidates if limit is None else candidates[:max(0, int(limit))]
-        ordered = [pk for _, pk in selected]
-        distances = {pk: distance for distance, pk in selected}
-        return ordered, distances, None
-
-    def _vector_order_plan(self, table, order, filtered, limit=None, where=None):
+    def _vector_order_plan(self, table, order, filtered):
         if not order or len(order) != 1:
             return None
         expr, descending = order[0]
@@ -2088,71 +896,17 @@ class Engine:
         if distance is None:
             return None
         column, query = distance
-        if not filtered:
-            return [], {}, expr
-        matrix, pks, pk_to_pos = table.vector_matrix(column)
-        if matrix is None:
-            chunked = self._chunked_topk(table, column, query, filtered, limit)
-            if chunked is not None:
-                ordered, distances, _ = chunked
-                return ordered, distances, expr
-        if _FASTSCAN is not None and np is not None and isinstance(matrix, np.ndarray) and len(pks):
-            rows = matrix if matrix.flags.c_contiguous else np.ascontiguousarray(matrix, dtype=np.float32)
-            query_vec = (
-                query
-                if isinstance(query, np.ndarray)
-                and query.dtype == np.float32
-                and query.flags.c_contiguous
-                else np.ascontiguousarray(query, dtype=np.float32)
-            )
-            if len(filtered) == len(pks):
-                allowed_ptr = None
-                n_allowed = len(pks)
-            else:
-                allowed = self._allowed_positions(table, column, filtered, where)
-                if allowed is None:
-                    allowed = np.fromiter(
-                        (pk_to_pos[pk] for pk in filtered),
-                        dtype=np.uint32,
-                        count=len(filtered),
-                    )
-                allowed_ptr = allowed.ctypes.data_as(ctypes.POINTER(ctypes.c_uint32))
-                n_allowed = len(allowed)
-            take = n_allowed if limit is None else min(int(limit), n_allowed)
-            if take == 0:
-                return [], {}, expr
-            buffers = self._topk_buffers.get(take)
-            if buffers is None:
-                buffers = ((ctypes.c_uint32 * take)(), (ctypes.c_float * take)())
-                self._topk_buffers[take] = buffers
-            out_positions, out_distances = buffers
-            rc = _FASTSCAN.mvd_topk_l2(
-                rows.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                len(pks), rows.shape[1], query_vec.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                allowed_ptr, n_allowed, take, out_positions, out_distances,
-            )
-            if rc >= 0 and all(math.isfinite(float(out_distances[i])) for i in range(rc)):
-                ordered = [int(pks[int(out_positions[i])]) for i in range(rc)]
-                distances = {pk: float(out_distances[i]) for i, pk in enumerate(ordered)}
-                return ordered, distances, expr
+        matrix, pks = table.vector_matrix(column)
+        allowed = set(filtered)
         if np is not None and isinstance(matrix, np.ndarray):
             query_vec = np.asarray(query, dtype=np.float32)
-            cached_norms = table._norms.get(column.name)
-            if cached_norms is None or cached_norms[0] != table.version:
-                norms = np.einsum("ij,ij->i", matrix, matrix).astype(np.float32, copy=False)
-                table._norms[column.name] = (table.version, norms)
-            else:
-                norms = cached_norms[1]
-            squared = norms - 2.0 * (matrix @ query_vec) + float(query_vec @ query_vec)
-            values = np.sqrt(np.maximum(squared, 0.0))
+            values = np.linalg.norm(matrix - query_vec, axis=1)
             distances = {pk: float(value) for pk, value in zip(pks, values)}
         else:
-            # Large spilled tables avoid a full distance dictionary.
-            distance_pks = filtered if matrix is None else pks
+            # Large tables (and the no-NumPy fallback) avoid a full matrix.
+            # Compute only the rows that can survive the WHERE clause.
             distances = {
-                pk: _l2_distance(table.rows[pk][column.name], query)
-                for pk in distance_pks
+                pk: _l2_distance(table.rows[pk][column.name], query) for pk in allowed
             }
-        allowed = set(filtered)
         ordered = sorted(allowed, key=lambda pk: (distances[pk], pk))
         return ordered, distances, expr
