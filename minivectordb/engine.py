@@ -843,9 +843,39 @@ class Engine:
             raise SQLError(1146, f"unknown table {name}")
         return self.tables[name]
 
+    def _primary_lookup(self, table: Table, where: Any) -> int | None:
+        if isinstance(where, tuple) and where and where[0] == "and":
+            for part in where[1:]:
+                found = self._primary_lookup(table, part)
+                if found is not None:
+                    return found
+            return None
+        if not (isinstance(where, tuple) and where and where[0] == "compare" and where[1] == "="):
+            return None
+        left, right = where[2], where[3]
+        for column_side, value_side in ((left, right), (right, left)):
+            if column_side[0] != "column" or value_side[0] != "literal":
+                continue
+            try:
+                column = table.column(column_side[1])
+            except SQLError:
+                continue
+            if not column.primary:
+                continue
+            try:
+                return int(value_side[1])
+            except (TypeError, ValueError):
+                return None
+        return None
+
     def _filter(self, table: Table, where: Any) -> list[int]:
         if where is None:
             return sorted(table.rows)
+        direct = self._primary_lookup(table, where)
+        if direct is not None:
+            if direct in table.rows and eval_expr(where, table.rows[direct], table):
+                return [direct]
+            return []
         result = []
         for pk in sorted(table.rows):
             if eval_expr(where, table.rows[pk], table):
