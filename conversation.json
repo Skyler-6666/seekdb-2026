@@ -20,7 +20,7 @@
   "version_linkage": {
     "repository": "https://github.com/Skyler-6666/seekdb-2026",
     "branch": "2026-competition-round2",
-    "code_version_described": "feb6d35",
+    "code_version_described": "95a6e88",
     "commit_chain": [
       {
         "sha": "c5d9d44c9a1f3c0c88143d7084e8caa421ee95b8",
@@ -49,11 +49,15 @@
       {
         "sha": "feb6d35",
         "summary": "Avoid materializing all spilled-table rows when an unordered query has LIMIT"
+      },
+      {
+        "sha": "95a6e88",
+        "summary": "Stage RowStore mutations for autocommit DML until the WAL response boundary, preserving crash atomicity"
       }
     ],
     "official_package": "oceanbase/seekdb branch 2026-competition-round2: 20 public cases, STDIO_PROTOCOL.md and protocol_check/",
     "ci_evidence": "Final Linux Docker validation from the submitted tree: official 20/20 public cases PASS, edge probe PASS, crash recovery PASS, 100K x 128 low-memory spill/reload PASS, and spilled-table transaction commit/rollback/crash semantics PASS.",
-    "this_material_commit": "This final learning record accompanies code commit feb6d35 and records the spill and LIMIT-bounding regression."
+    "this_material_commit": "This final learning record accompanies code commit 95a6e88 and records the spill, autocommit atomicity and LIMIT-bounding regression."
   },
   "user_prompts": [
     {
@@ -301,6 +305,16 @@
       "output": "20/20 public PASS. 100K spill: insert 14.842 s, reload 12.161 s, vector preparation 0.018 s, TopK 31.866 s, memory.peak 268,435,456 bytes (the configured 256 MiB limit). Spilled-table rollback and commit returned the committed values after restart; uncommitted updates/deletes/inserts were absent after SIGKILL.",
       "result": "pass_local",
       "interpretation": "The large-table path now uses disk-backed RowStore plus transaction overlays. Committed rows are snapshotted with a row_file reference; uncommitted overlays never reach the row file. Large vector scans avoid an unbounded matrix cache and remain exact, at the cost of slower large-table JSON scans."
+    },
+    {
+      "id": "e15",
+      "session": "S3",
+      "purpose": "Close the remaining crash-atomicity gap for automatically committed statements on spilled tables.",
+      "command": "Run latest Docker image through public 20 cases, edge probe, crash_test, 100K spill/reload/query stress, spilled transaction rollback/commit and SIGKILL tests.",
+      "environment": "linux/amd64 Docker, 2 CPU, 2 GiB; 256 MB spill stress; 512 MB transaction spill tests.",
+      "output": "Public 20/20 PASS; edge probe PASS; CRASH_RECOVERY_OK; 100K x 128 spill/reload/query PASS; spilled transaction rollback/commit PASS; uncommitted SIGKILL transaction absent after restart.",
+      "result": "pass_local",
+      "interpretation": "Autocommit RowStore changes are now staged in an overlay and committed only after the WAL frame succeeds; explicit transaction WAL is written before the row overlay is made visible."
     }
   ],
   "evidence_units": [
@@ -406,7 +420,9 @@
     "Latest 100K x 128 stress: memory.peak 257,044,480 bytes under 256 MiB; preparation 0.114 s and TopK 0.002 s.",
     "Code commit 7751e4f adds RowStore spill and a bounded matrix budget for data larger than 256 MB.",
     "Spilled-table transaction tests confirm read-your-writes, rollback restoration, commit persistence and no uncommitted rows after SIGKILL.",
-    "100K x 128 spill/reload/query completed under the 256 MiB Docker limit; public and edge suites remain green."
+    "100K x 128 spill/reload/query completed under the 256 MiB Docker limit; public and edge suites remain green.",
+    "Code commit 95a6e88 stages spilled-table autocommit mutations until the WAL frame succeeds.",
+    "The final Linux Docker regression keeps 20/20 public cases plus spill, recovery and transaction probes green."
   ],
   "retrospective": [
     "The host does not determine the score; the scoring boundary and the native code inside the container do. WSL2 and Docker made those measurements reproducible.",
