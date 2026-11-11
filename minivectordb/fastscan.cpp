@@ -89,11 +89,27 @@ static inline float l2_distance(const float* row, const float* query, size_t dim
 
 extern "C" int mvd_has_bad_row_separator(const char* text, size_t length) {
   if (!text || length < 3) return 0;
-  for (size_t i = 1; i + 2 < length; ++i) {
-    if (text[i] == ')' && text[i + 1] == ',' && text[i + 2] == '(' &&
-        text[i - 1] != '\'') {
-      return 1;
+  char quote = 0;
+  for (size_t i = 0; i < length; ++i) {
+    const char ch = text[i];
+    if (quote) {
+      if (ch == '\\' && i + 1 < length) {
+        ++i;
+        continue;
+      }
+      if (ch == quote) {
+        if (i + 1 < length && text[i + 1] == quote) {
+          ++i;
+          continue;
+        }
+        quote = 0;
+        continue;
+      }
+      // A parenthesis inside a SQL string can make a regex row split unsafe.
+      if (ch == '(' || ch == ')') return 1;
+      continue;
     }
+    if (ch == '\'' || ch == '"') quote = ch;
   }
   return 0;
 }

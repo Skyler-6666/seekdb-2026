@@ -73,6 +73,7 @@ _INSERT_FAST_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _ROW_SEPARATOR_RE = re.compile(r"\)\s*,\s*\(")
+_RISKY_STRING_PAREN_RE = re.compile(r"'(?:''|[^'])*[()](?:''|[^'])*'")
 _INTEGER_RE = re.compile(r"[+-]?\d+")
 _UPDATE_FAST_RE = re.compile(
     r"^\s*UPDATE\s+([A-Za-z_][A-Za-z0-9_$]*)\s+SET\s+(.+?)"
@@ -92,11 +93,75 @@ _PK_EQUAL_RE = re.compile(
 )
 
 
-def _has_suspicious_row_separator(text: str) -> bool:
+def _normalize_fast_rows(body: str) -> str | None:
+    """Split top-level VALUES rows without touching text inside quotes."""
+    if not body or body[0] != "(" or body[-1] != ")":
+        return None
+    inner = body[1:-1]
+    # The common path is a C-level replacement.  Only strings containing
+    # parentheses need the quote-aware scanner below.  The native guard is
+    # used in the submitted Linux image; the regex is a portable fallback.
     if _FASTSCAN is not None:
-        raw = text.encode("utf-8")
-        return _FASTSCAN.mvd_has_bad_row_separator(raw, len(raw)) != 0
-    return text.count("),(") != text.count("'),(")
+        raw = body.encode("utf-8")
+        risky = _FASTSCAN.mvd_has_bad_row_separator(raw, len(raw)) != 0
+    else:
+        risky = _RISKY_STRING_PAREN_RE.search(body) is not None
+    if not risky:
+        if "),(" in inner:
+            return inner.replace("),(", "\n")
+        return _ROW_SEPARATOR_RE.sub("\n", inner)
+    segments: list[str] = []
+    start = 0
+    depth = 0
+    quote: str | None = None
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if quote is not None:
+            if ch == "\\" and i + 1 < len(body):
+                i += 2
+                continue
+            if ch == quote:
+                if i + 1 < len(body) and body[i + 1] == quote:
+                    i += 2
+                    continue
+                quote = None
+            i += 1
+            continue
+        if ch in {"'", '"'}:
+            quote = ch
+            i += 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+            if depth == 0:
+                j = i + 1
+                while j < len(body) and body[j].isspace():
+                    j += 1
+                if j == len(body):
+                    segments.append(body[start + 1:i])
+                    start = j
+                    break
+                if body[j] != ",":
+                    return None
+                k = j + 1
+                while k < len(body) and body[k].isspace():
+                    k += 1
+                if k >= len(body) or body[k] != "(":
+                    return None
+                segments.append(body[start + 1:i])
+                start = k
+                i = k
+                continue
+        i += 1
+    if quote is not None or depth != 0 or start != len(body) or not segments:
+        return None
+    return "\n".join(segments)
+
 
 def _parse_float_body_fast(body: str, expected: int):
     if _FASTSCAN is not None and np is not None and expected > 0:
@@ -358,7 +423,9 @@ def _is_vector_value(value: Any) -> bool:
 
 def _vector(value: Any) -> list[float]:
     if _is_vector_value(value):
-        return [float(item) for item in value]
+        # Query literals and vectors both use float32 values.  This also
+        # catches overflow before a distance kernel sees the value.
+        return [_as_float32(item) for item in value]
     raise SQLError(1366, "expected vector")
 
 
@@ -367,7 +434,10 @@ def _l2_distance(left: Any, right: Any) -> float:
     b = _vector(right)
     if len(a) != len(b):
         raise SQLError(1366, "vector dimension mismatch")
-    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+    value = math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+    if not math.isfinite(value):
+        raise SQLError(1690, "distance overflow")
+    return value
 
 
 def _cosine_distance(left: Any, right: Any) -> float:
@@ -380,7 +450,10 @@ def _cosine_distance(left: Any, right: Any) -> float:
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0 or nb == 0:
         return 1.0
-    return 1.0 - dot / (na * nb)
+    value = 1.0 - dot / (na * nb)
+    if not math.isfinite(value):
+        raise SQLError(1690, "distance overflow")
+    return value
 
 
 def _inner_product(left: Any, right: Any) -> float:
@@ -388,7 +461,10 @@ def _inner_product(left: Any, right: Any) -> float:
     b = _vector(right)
     if len(a) != len(b):
         raise SQLError(1366, "vector dimension mismatch")
-    return sum(x * y for x, y in zip(a, b))
+    value = sum(x * y for x, y in zip(a, b))
+    if not math.isfinite(value):
+        raise SQLError(1690, "inner product overflow")
+    return value
 
 
 def eval_expr(expr: Any, row: dict[str, Any], table: Table | None = None, aliases: dict[str, Any] | None = None):
@@ -436,12 +512,16 @@ def eval_expr(expr: Any, row: dict[str, Any], table: Table | None = None, aliase
                 return [x * y for x, y in zip(a, b)]
             raise SQLError(1235, "unsupported vector operator")
         if op == "+":
-            return left + right
-        if op == "-":
-            return left - right
-        if op == "*":
-            return left * right
-        raise SQLError(1235, "unsupported operator")
+            value = left + right
+        elif op == "-":
+            value = left - right
+        elif op == "*":
+            value = left * right
+        else:
+            raise SQLError(1235, "unsupported operator")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise SQLError(1690, "numeric overflow")
+        return value
     if kind == "func":
         name = expr[1].upper()
         args = [eval_expr(arg, row, table, aliases) for arg in expr[2]]
@@ -487,7 +567,7 @@ class Engine:
             for child in record.get("records", []):
                 self._apply_wal_record(child)
             return
-        table = self.tables.get(record.get("table"))
+        table = self._find_table(record.get("table"))
         if table is None:
             return
         operation = record.get("op", "upsert")
@@ -776,7 +856,7 @@ class Engine:
         match = _UPDATE_FAST_RE.match(sql)
         if not match:
             return None
-        table = self.tables.get(match.group(1))
+        table = self._find_table(match.group(1))
         if table is None:
             return None
         assignment = _ASSIGNMENT_RE.fullmatch(match.group(2).strip())
@@ -806,7 +886,7 @@ class Engine:
         match = _DELETE_FAST_RE.match(sql)
         if not match:
             return None
-        table = self.tables.get(match.group(1))
+        table = self._find_table(match.group(1))
         if table is None:
             return None
         pk, valid_where = self._parse_primary_key_where(table, match.group(2))
@@ -818,7 +898,7 @@ class Engine:
         head = _INSERT_FAST_RE.match(sql)
         if not head:
             return None
-        table = self.tables.get(head.group(1))
+        table = self._find_table(head.group(1))
         if table is None:
             return None
         column_text = head.group(2)
@@ -843,11 +923,11 @@ class Engine:
             or "\\" in body
             or "--" in body
             or "/*" in body
-            or _has_suspicious_row_separator(body)
         ):
             return None
-        inner = body[1:-1]
-        normalized = inner.replace("),(", "\n") if "),(" in inner else _ROW_SEPARATOR_RE.sub("\n", inner)
+        normalized = _normalize_fast_rows(body)
+        if normalized is None:
+            return None
         prepared_rows: list[dict[str, Any]] = []
         primary_name = table.primary.name
         column_values: dict[str, list[Any]] = {
@@ -872,6 +952,11 @@ class Engine:
                 row: dict[str, Any] = {}
                 row_index = len(prepared_rows)
                 for column, field in zip(columns, fields):
+                    # CSV parsing removes SQL quotes.  Treat an exact NULL token
+                    # as ambiguous and let the full parser decide whether it is
+                    # the SQL NULL literal or the quoted string 'NULL'.
+                    if field.strip().upper() == "NULL":
+                        return None
                     if column.type in {"BIGINT", "INT", "INTEGER"}:
                         value = field.strip()
                         if not _INTEGER_RE.fullmatch(value):
@@ -905,6 +990,12 @@ class Engine:
             if len(dimensions) != 1 or 0 in dimensions:
                 return None
             dimension = next(iter(dimensions))
+            # The flat parser only sees the concatenation.  Check each row
+            # separately so malformed dimensions cannot cancel out across
+            # rows in a multi-row INSERT.
+            for vector_text in vector_texts:
+                if vector_text.strip() == "" or vector_text.count(",") + 1 != dimension:
+                    return None
             expected = len(vector_slots) * dimension
             flat = _parse_float_body_fast(",".join(vector_texts), expected)
             if flat is None:
@@ -992,7 +1083,10 @@ class Engine:
     # -- DDL -----------------------------------------------------------
     def _execute_create_table(self, statement: dict[str, Any]) -> Result:
         name = statement["name"]
-        if name in self.tables:
+        existing = self._find_table(name)
+        if existing is not None:
+            if statement.get("if_not_exists"):
+                return Result()
             raise SQLError(1050, f"table {name} already exists")
         columns = [Column(**column) for column in statement["columns"]]
         table = Table(name=name, columns=columns)
@@ -1003,9 +1097,12 @@ class Engine:
 
     def _execute_drop_table(self, statement: dict[str, Any]) -> Result:
         name = statement["name"]
-        if name not in self.tables:
+        existing = self._find_table(name)
+        if existing is None:
+            if statement.get("if_exists"):
+                return Result()
             raise SQLError(1051, f"unknown table {name}")
-        del self.tables[name]
+        del self.tables[existing]
         return Result()
 
     def _execute_create_vector_index(self, statement: dict[str, Any]) -> Result:
@@ -1058,6 +1155,8 @@ class Engine:
             if statement["columns"]
             else table.columns
         )
+        if len({column.name.lower() for column in columns}) != len(columns):
+            raise SQLError(1060, "duplicate column name")
         count = 0
         new_rows: list[dict[str, Any]] = []
         seen = set(table.rows)
@@ -1133,6 +1232,12 @@ class Engine:
             if column.primary:
                 raise SQLError(1235, "primary key updates are not supported")
             assignments.append((column, expr))
+        for column, expr in assignments:
+            self._validate_expr(table, expr)
+            # Literal assignment values must be valid even when the WHERE
+            # clause matches no rows (e.g. an empty-table UPDATE).
+            if isinstance(expr, tuple) and expr[0] in {"literal", "vector"}:
+                _normalize_value(table, column, expr[1])
         targets = self._filter(table, statement.get("where"))
         updates: list[tuple[int, dict[str, Any]]] = []
         for pk in targets:
@@ -1180,6 +1285,13 @@ class Engine:
         if projections and all(
             expr[0] == "func" and expr[1].upper() == "COUNT" for expr, alias in projections
         ):
+            count_aliases = {
+                alias.lower(): expr for expr, alias in projections if alias
+            }
+            for order_expr, _ in self._resolve_order(
+                statement.get("order", []), count_aliases
+            ):
+                self._validate_expr(table, order_expr, count_aliases)
             values: list[Any] = []
             for expr, alias in projections:
                 args = expr[2]
@@ -1195,7 +1307,18 @@ class Engine:
                             if eval_expr(args[0], table.rows[pk], table) is not None
                         )
                     )
-            names = [alias or "count(*)" for expr, alias in projections]
+            names: list[str] = []
+            for expr, alias in projections:
+                if alias:
+                    names.append(alias)
+                    continue
+                arg = expr[2][0]
+                if arg[0] == "star":
+                    names.append("count(*)")
+                elif arg[0] == "column":
+                    names.append(f"count({arg[1]})")
+                else:
+                    names.append("count")
             return Result(columns=names, rows=[values], is_query=True)
         aliases: dict[str, Any] = {}
         for expr, alias in projections:
@@ -1268,7 +1391,17 @@ class Engine:
             elif expr[0] == "column":
                 names.append(expr[1])
             elif expr[0] == "func":
-                names.append(expr[1].lower())
+                name = expr[1].lower()
+                if name == "count" and len(expr[2]) == 1:
+                    arg = expr[2][0]
+                    if arg[0] == "star":
+                        names.append("count(*)")
+                    elif arg[0] == "column":
+                        names.append(f"count({arg[1]})")
+                    else:
+                        names.append("count")
+                else:
+                    names.append(name)
             else:
                 names.append("expr")
         return names
@@ -1286,10 +1419,30 @@ class Engine:
         if not isinstance(expr, tuple) or not expr:
             return
         kind = expr[0]
+        if kind == "literal":
+            value = expr[1]
+            if isinstance(value, float) and not math.isfinite(value):
+                raise SQLError(1690, "non-finite numeric literal")
+            return
+        if kind == "vector":
+            # Quoted vectors are already checked by the parser and are kept as
+            # compact float32 arrays; bracket literals arrive as Python lists
+            # and still need the float32 overflow check here.
+            values = expr[1]
+            if isinstance(values, (list, tuple)):
+                for value in values:
+                    _as_float32(value)
+            elif np is not None and isinstance(values, np.ndarray):
+                if values.dtype != np.float32 or not np.isfinite(values).all():
+                    for value in values:
+                        _as_float32(value)
+            return
         if kind == "column":
             if aliases and expr[1].lower() in aliases:
                 return
             table.column(expr[1])
+            return
+        if kind == "star":
             return
         if kind in {"and", "or"}:
             self._validate_expr(table, expr[1], aliases)
@@ -1298,19 +1451,82 @@ class Engine:
         if kind == "compare":
             self._validate_expr(table, expr[2], aliases)
             self._validate_expr(table, expr[3], aliases)
+            if self._expr_is_vector(table, expr[2], aliases) or self._expr_is_vector(
+                table, expr[3], aliases
+            ):
+                raise SQLError(1235, "vector comparison is not supported")
             return
         if kind == "arith":
             self._validate_expr(table, expr[2], aliases)
             self._validate_expr(table, expr[3], aliases)
             return
         if kind == "func":
-            for arg in expr[2]:
+            name = expr[1].upper()
+            args = expr[2]
+            if name == "COUNT":
+                if len(args) != 1:
+                    raise SQLError(1582, "COUNT expects one argument")
+                for arg in args:
+                    self._validate_expr(table, arg, aliases)
+                return
+            if name not in {"L2_DISTANCE", "COSINE_DISTANCE", "INNER_PRODUCT"}:
+                raise SQLError(1305, f"unsupported function {name}")
+            if len(args) != 2:
+                raise SQLError(1582, f"{name} expects two arguments")
+            for arg in args:
                 self._validate_expr(table, arg, aliases)
+            left_dim = self._vector_expr_dim(table, args[0], aliases)
+            right_dim = self._vector_expr_dim(table, args[1], aliases)
+            if left_dim is None or right_dim is None:
+                raise SQLError(1366, f"{name} expects two vectors")
+            if left_dim != right_dim:
+                raise SQLError(1366, "vector dimension mismatch")
+            return
+
+    def _expr_is_vector(
+        self, table: Table, expr: Any, aliases: dict[str, Any] | None = None
+    ) -> bool:
+        if not isinstance(expr, tuple) or not expr:
+            return False
+        if expr[0] == "vector":
+            return True
+        if expr[0] == "column":
+            if aliases and expr[1].lower() in aliases:
+                return self._expr_is_vector(table, aliases[expr[1].lower()], aliases)
+            return table.column(expr[1]).type == "VECTOR"
+        return False
+
+    def _vector_expr_dim(
+        self, table: Table, expr: Any, aliases: dict[str, Any] | None = None
+    ) -> int | None:
+        if not isinstance(expr, tuple) or not expr:
+            return None
+        if expr[0] == "vector":
+            return len(expr[1])
+        if expr[0] == "column":
+            if aliases and expr[1].lower() in aliases:
+                return self._vector_expr_dim(table, aliases[expr[1].lower()], aliases)
+            column = table.column(expr[1])
+            return column.length if column.type == "VECTOR" else None
+        return None
+
+    def _find_table(self, name: str | None) -> Table | None:
+        if name is None:
+            return None
+        table = self.tables.get(name)
+        if table is not None:
+            return table
+        lower = name.lower()
+        for key, table in self.tables.items():
+            if key.lower() == lower:
+                return table
+        return None
 
     def _table(self, name: str) -> Table:
-        if name not in self.tables:
+        table = self._find_table(name)
+        if table is None:
             raise SQLError(1146, f"unknown table {name}")
-        return self.tables[name]
+        return table
 
     def _equality_index(self, table: Table, column: Column) -> dict[Any, list[int]]:
         cached = table._eq_indexes.get(column.name)
@@ -1372,6 +1588,7 @@ class Engine:
     def _filter(self, table: Table, where: Any) -> list[int]:
         if where is None:
             return table.sorted_pks()
+        self._validate_expr(table, where)
         key = repr(where)
         cached = table._filter_cache.get(key)
         if cached and cached[0] == table.version:
@@ -1484,7 +1701,7 @@ class Engine:
                 len(pks), rows.shape[1], query_vec.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                 allowed_ptr, n_allowed, take, out_positions, out_distances,
             )
-            if rc >= 0:
+            if rc >= 0 and all(math.isfinite(float(out_distances[i])) for i in range(rc)):
                 ordered = [int(pks[int(out_positions[i])]) for i in range(rc)]
                 distances = {pk: float(out_distances[i]) for i, pk in enumerate(ordered)}
                 return ordered, distances, expr
