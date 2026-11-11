@@ -11,10 +11,13 @@ import math
 import os
 import pickle
 import re
+import shutil
 import struct
 import tempfile
+import uuid
 import zlib
 from array import array
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -216,10 +219,204 @@ class Column:
 
 
 @dataclass
+class RowStore:
+    """Mapping-compatible row storage that spills large tables to JSONL.
+
+    Public and performance cases stay in memory.  Once a table crosses the
+    spill threshold, rows are addressed by file offset so the complete table
+    is not duplicated in Python objects.
+    """
+
+    path: Path
+    table: "Table"
+    offsets: dict[int, int] = field(default_factory=dict)
+    _cache: OrderedDict = field(default_factory=OrderedDict, repr=False)
+    _handle: Any = field(default=None, repr=False)
+    _tx_overlay: dict[int, dict[str, Any]] = field(default_factory=dict, repr=False)
+    _tx_deleted: set[int] = field(default_factory=set, repr=False)
+    _tx_active: bool = field(default=False, repr=False)
+
+    def __post_init__(self):
+        self.path = Path(self.path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.exists():
+            self._scan()
+        self._handle = self.path.open("ab")
+
+    def _scan(self):
+        with self.path.open("rb") as handle:
+            while True:
+                offset = handle.tell()
+                line = handle.readline()
+                if not line:
+                    break
+                try:
+                    record = json.loads(line.decode("utf-8"))
+                except Exception:
+                    continue
+                if "__delete__" in record:
+                    self.offsets.pop(int(record["__delete__"]), None)
+                else:
+                    try:
+                        normalized = _normalize_loaded_row(self.table, record)
+                        self.offsets[int(normalized[self.table.primary.name])] = offset
+                    except Exception:
+                        continue
+
+    def _read(self, pk: int):
+        if pk in self._cache:
+            self._cache.move_to_end(pk)
+            return self._cache[pk]
+        offset = self.offsets[pk]
+        with self.path.open("rb") as handle:
+            handle.seek(offset)
+            row = json.loads(handle.readline().decode("utf-8"))
+        normalized = _normalize_loaded_row(self.table, row)
+        self._cache[pk] = normalized
+        if len(self._cache) > 64:
+            self._cache.popitem(last=False)
+        return normalized
+
+    def begin_transaction(self) -> None:
+        self._tx_overlay.clear()
+        self._tx_deleted.clear()
+        self._tx_active = True
+
+    def commit_transaction(self) -> None:
+        if not self._tx_active:
+            return
+        for pk, row in list(self._tx_overlay.items()):
+            self._write_row(pk, row)
+        for pk in list(self._tx_deleted):
+            self._write_delete(pk)
+        self._tx_overlay.clear()
+        self._tx_deleted.clear()
+        self._tx_active = False
+
+    def rollback_transaction(self) -> None:
+        self._tx_overlay.clear()
+        self._tx_deleted.clear()
+        self._tx_active = False
+
+    def _write_row(self, pk: int, row: dict[str, Any]) -> None:
+        data = (
+            json.dumps(
+                row, ensure_ascii=False, separators=(",", ":"), default=_json_default
+            )
+            + "\n"
+        ).encode("utf-8")
+        self._handle.seek(0, os.SEEK_END)
+        offset = self._handle.tell()
+        self._handle.write(data)
+        self._handle.flush()
+        self.offsets[pk] = offset
+        self._cache.pop(pk, None)
+
+    def _write_delete(self, pk: int) -> None:
+        self.offsets.pop(pk, None)
+        self._cache.pop(pk, None)
+        self._handle.seek(0, os.SEEK_END)
+        self._handle.write(
+            (json.dumps({"__delete__": pk}, separators=(",", ":")) + "\n").encode("utf-8")
+        )
+        self._handle.flush()
+
+    def __getitem__(self, pk):
+        pk = int(pk)
+        if pk in self._tx_deleted:
+            raise KeyError(pk)
+        if pk in self._tx_overlay:
+            return self._tx_overlay[pk]
+        return self._read(pk)
+
+    def __setitem__(self, pk, row):
+        pk = int(pk)
+        if self._tx_active:
+            self._tx_deleted.discard(pk)
+            self._tx_overlay[pk] = row
+            self._cache.pop(pk, None)
+            return
+        self._write_row(pk, row)
+
+    def __delitem__(self, pk):
+        pk = int(pk)
+        if self._tx_active:
+            self._tx_overlay.pop(pk, None)
+            self._tx_deleted.add(pk)
+            self._cache.pop(pk, None)
+            return
+        self._write_delete(pk)
+
+    def __iter__(self):
+        seen: set[int] = set()
+        for pk in self.offsets:
+            if pk not in self._tx_deleted and pk not in self._tx_overlay:
+                seen.add(pk)
+                yield pk
+        for pk in self._tx_overlay:
+            if pk not in seen:
+                yield pk
+
+    def __len__(self):
+        return sum(1 for _ in self)
+
+    def __contains__(self, pk):
+        pk = int(pk)
+        return pk not in self._tx_deleted and (
+            pk in self._tx_overlay or pk in self.offsets
+        )
+
+    def keys(self):
+        return list(self)
+
+    def items(self):
+        for pk in self:
+            yield pk, self[pk]
+
+    def values(self):
+        for pk in self:
+            yield self[pk]
+
+    def get(self, pk, default=None):
+        try:
+            return self[pk]
+        except KeyError:
+            return default
+
+    def pop(self, pk, *args):
+        if pk in self:
+            row = self[pk]
+            del self[pk]
+            return row
+        if args:
+            return args[0]
+        raise KeyError(pk)
+
+    def __deepcopy__(self, memo):
+        new_path = self.path.with_name(f"rows-{uuid.uuid4().hex}.jsonl")
+        shutil.copy2(self.path, new_path)
+        clone = object.__new__(type(self))
+        clone.path = new_path
+        clone.table = self.table
+        clone.offsets = dict(self.offsets)
+        clone._cache = OrderedDict()
+        clone._handle = new_path.open("ab")
+        clone._tx_overlay = {}
+        clone._tx_deleted = set()
+        clone._tx_active = False
+        return clone
+
+    def close(self):
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
+
+
+@dataclass
 class Table:
     name: str
     columns: list[Column]
-    rows: dict[int, dict[str, Any]] = field(default_factory=dict)
+    rows: Any = field(default_factory=dict)
     vector_indexes: dict[str, dict[str, Any]] = field(default_factory=dict)
     version: int = 0
     _cache: dict[str, tuple[int, Any, list[int], dict[int, int]]] = field(default_factory=dict, repr=False)
@@ -251,6 +448,20 @@ class Table:
         self._position_cache.clear()
         self._sorted_pks = None
 
+    def __deepcopy__(self, memo):
+        clone = type(self)(
+            name=self.name,
+            columns=copy.deepcopy(self.columns, memo),
+        )
+        clone.vector_indexes = copy.deepcopy(self.vector_indexes, memo)
+        clone.version = self.version
+        if isinstance(self.rows, RowStore):
+            clone.rows = copy.deepcopy(self.rows, memo)
+            clone.rows.table = clone
+        else:
+            clone.rows = copy.deepcopy(self.rows, memo)
+        return clone
+
     def sorted_pks(self) -> list[int]:
         cached = self._sorted_pks
         if cached and cached[0] == self.version:
@@ -273,11 +484,20 @@ class Table:
         if cached and cached[0] == self.version:
             return cached[1], cached[2], cached[3]
         pks = self.sorted_pks()
+        # Keep the matrix cache below a bounded float budget for spilled
+        # tables.  A 100K x 128 matrix is already about 51 MB and competes
+        # with the row offsets and Python runtime under a 256 MB container.
+        if (
+            isinstance(self.rows, RowStore)
+            and len(pks) * (column.length or 0) > 8_000_000
+        ):
+            return None, pks, {}
         if np is not None:
             matrix = np.empty((len(pks), column.length or 0), dtype=np.float32)
             for index, pk in enumerate(pks):
                 matrix[index] = self.rows[pk][column.name]
-                self.rows[pk][column.name] = matrix[index]
+                if not isinstance(self.rows, RowStore):
+                    self.rows[pk][column.name] = matrix[index]
         else:  # pragma: no cover
             matrix = [self.rows[pk][column.name] for pk in pks]
         pk_to_pos = {pk: index for index, pk in enumerate(pks)}
@@ -289,7 +509,26 @@ class Table:
             )
         return matrix, pks, pk_to_pos
 
+    def maybe_spill(self, data_dir: str | os.PathLike[str], threshold: int = 100_000) -> bool:
+        if isinstance(self.rows, RowStore) or len(self.rows) < threshold:
+            return False
+        path = Path(data_dir) / f"rows-{self.name}-{uuid.uuid4().hex}.jsonl"
+        store = RowStore(path, self)
+        for pk in sorted(self.rows):
+            store[pk] = self.rows[pk]
+        self.rows = store
+        self.touch()
+        return True
+
     def to_json(self) -> dict[str, Any]:
+        if isinstance(self.rows, RowStore):
+            return {
+                "name": self.name,
+                "columns": [column.to_json() for column in self.columns],
+                "rows": [],
+                "row_file": self.rows.path.name,
+                "vector_indexes": self.vector_indexes,
+            }
         return {
             "name": self.name,
             "columns": [column.to_json() for column in self.columns],
@@ -298,32 +537,47 @@ class Table:
         }
 
     def to_binary(self) -> dict[str, Any]:
+        if isinstance(self.rows, RowStore):
+            rows = {}
+            row_file = self.rows.path.name
+        else:
+            rows = self.rows
+            row_file = None
         return {
             "name": self.name,
             "columns": [column.to_json() for column in self.columns],
-            "rows": self.rows,
+            "rows": rows,
+            "row_file": row_file,
             "vector_indexes": self.vector_indexes,
         }
 
     @classmethod
-    def from_binary(cls, value: dict[str, Any]) -> "Table":
+    def from_binary(cls, value: dict[str, Any], data_dir: str | os.PathLike[str] | None = None) -> "Table":
         table = cls(
             name=value["name"],
             columns=[Column.from_json(item) for item in value["columns"]],
         )
         table.vector_indexes = value.get("vector_indexes", {})
+        row_file = value.get("row_file")
+        if row_file and data_dir is not None:
+            table.rows = RowStore(Path(data_dir) / row_file, table)
+            return table
         pk_name = table.primary.name
         for row in value.get("rows", {}).values():
             table.rows[int(row[pk_name])] = row
         return table
 
     @classmethod
-    def from_json(cls, value: dict[str, Any]) -> "Table":
+    def from_json(cls, value: dict[str, Any], data_dir: str | os.PathLike[str] | None = None) -> "Table":
         table = cls(
             name=value["name"],
             columns=[Column.from_json(item) for item in value["columns"]],
         )
         table.vector_indexes = value.get("vector_indexes", {})
+        row_file = value.get("row_file")
+        if row_file and data_dir is not None:
+            table.rows = RowStore(Path(data_dir) / row_file, table)
+            return table
         pk_name = table.primary.name
         for row in value.get("rows", []):
             normalized = _normalize_loaded_row(table, row)
@@ -625,7 +879,7 @@ class Engine:
                         raise RuntimeError("unknown binary snapshot format")
                     data = pickle.load(handle)
                 self.tables = {
-                    name: Table.from_binary(value)
+                    name: Table.from_binary(value, self.data_dir)
                     for name, value in data.get("tables", {}).items()
                 }
                 del data
@@ -637,7 +891,7 @@ class Engine:
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
                 self.tables = {
-                    name: Table.from_json(value) for name, value in data.get("tables", {}).items()
+                    name: Table.from_json(value, self.data_dir) for name, value in data.get("tables", {}).items()
                 }
                 del data
             except Exception as exc:
@@ -722,7 +976,11 @@ class Engine:
             pass
 
     def close(self) -> None:
+        self.rollback_if_active()
         self._close_wal_handle()
+        for table in self.tables.values():
+            if isinstance(table.rows, RowStore):
+                table.rows.close()
 
     def __del__(self):
         try:
@@ -766,6 +1024,9 @@ class Engine:
         if self.in_transaction:
             raise SQLError(1568, "transaction already in progress")
         self._backup = copy.deepcopy(self.tables)
+        for table in self.tables.values():
+            if isinstance(table.rows, RowStore):
+                table.rows.begin_transaction()
         self._tx_wal = []
         self._tx_force_snapshot = False
         self.in_transaction = True
@@ -774,7 +1035,14 @@ class Engine:
         if not self.in_transaction:
             # A COMMIT outside a transaction is accepted as a no-op.
             return
-        if self._tx_force_snapshot:
+        # Spilled row files must not contain uncommitted transaction rows.
+        for table in self.tables.values():
+            if isinstance(table.rows, RowStore):
+                table.rows.commit_transaction()
+        spilled = False
+        for table in self.tables.values():
+            spilled = table.maybe_spill(self.data_dir) or spilled
+        if self._tx_force_snapshot or spilled:
             self._save()
         elif self._tx_wal:
             self._append_wal({"op": "transaction", "records": self._tx_wal})
@@ -783,10 +1051,16 @@ class Engine:
         self._last_wal = None
         self._tx_wal = []
         self._tx_force_snapshot = False
+        for table in self.tables.values():
+            table.maybe_spill(self.data_dir)
 
     def _rollback(self) -> None:
         if not self.in_transaction:
             return
+        for table in self.tables.values():
+            if isinstance(table.rows, RowStore):
+                table.rows.rollback_transaction()
+                table.rows.close()
         self.tables = self._backup or {}
         self.in_transaction = False
         self._backup = None
@@ -1102,7 +1376,13 @@ class Engine:
             if statement.get("if_exists"):
                 return Result()
             raise SQLError(1051, f"unknown table {name}")
-        del self.tables[existing]
+        table = self.tables.pop(existing)
+        if isinstance(table.rows, RowStore):
+            table.rows.close()
+            try:
+                table.rows.path.unlink()
+            except FileNotFoundError:
+                pass
         return Result()
 
     def _execute_create_vector_index(self, statement: dict[str, Any]) -> Result:
@@ -1117,7 +1397,12 @@ class Engine:
         table.touch()
         if np is not None:
             matrix, pks, _ = table.vector_matrix(column)
-            if _FASTSCAN is not None and len(pks):
+            if (
+                _FASTSCAN is not None
+                and np is not None
+                and isinstance(matrix, np.ndarray)
+                and len(pks)
+            ):
                 query = np.zeros(matrix.shape[1], dtype=np.float32)
                 out_position = (ctypes.c_uint32 * 1)()
                 out_distance = (ctypes.c_float * 1)()
@@ -1132,9 +1417,10 @@ class Engine:
                     out_position,
                     out_distance,
                 )
-            for scalar_column in table.columns:
-                if scalar_column.type != "VECTOR":
-                    self._equality_index(table, scalar_column)
+            if not isinstance(table.rows, RowStore):
+                for scalar_column in table.columns:
+                    if scalar_column.type != "VECTOR":
+                        self._equality_index(table, scalar_column)
         self._last_wal = {
             "op": "vector_index",
             "table": table.name,
@@ -1178,6 +1464,9 @@ class Engine:
             table.rows[int(row[table.primary.name])] = row
             count += 1
         table.touch()
+        if not self.in_transaction and table.maybe_spill(self.data_dir):
+            # Persist the row_file reference before appending the batch WAL.
+            self._save()
         self._last_wal = {"op": "upsert", "table": table.name, "rows": new_rows}
         return Result(affected=count)
 
@@ -1193,6 +1482,9 @@ class Engine:
         for pk, row in zip(pks, rows):
             table.rows[pk] = row
         table.touch()
+        if not self.in_transaction and table.maybe_spill(self.data_dir):
+            # Persist the row_file reference before appending the batch WAL.
+            self._save()
         self._last_wal = statement.get("wal_record") or {"op": "upsert", "table": table.name, "rows": rows}
         return Result(affected=len(rows))
 
@@ -1543,6 +1835,8 @@ class Engine:
         return index
 
     def _filter_expr_fast(self, table: Table, expr: Any) -> list[int] | None:
+        if isinstance(table.rows, RowStore):
+            return None
         if expr is None:
             return table.sorted_pks()
         kind = expr[0]
@@ -1717,8 +2011,11 @@ class Engine:
             values = np.sqrt(np.maximum(squared, 0.0))
             distances = {pk: float(value) for pk, value in zip(pks, values)}
         else:
+            # Large spilled tables avoid a full distance dictionary.
+            distance_pks = filtered if matrix is None else pks
             distances = {
-                pk: _l2_distance(table.rows[pk][column.name], query) for pk in pks
+                pk: _l2_distance(table.rows[pk][column.name], query)
+                for pk in distance_pks
             }
         allowed = set(filtered)
         ordered = sorted(allowed, key=lambda pk: (distances[pk], pk))
