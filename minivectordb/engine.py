@@ -321,6 +321,36 @@ class RowStore:
         )
         self._handle.flush()
 
+    def read_many(self, pks):
+        rows = []
+        handle = None
+        try:
+            for raw_pk in pks:
+                pk = int(raw_pk)
+                if pk in self._tx_deleted:
+                    raise KeyError(pk)
+                if pk in self._tx_overlay:
+                    rows.append(self._tx_overlay[pk])
+                    continue
+                if pk in self._cache:
+                    self._cache.move_to_end(pk)
+                    rows.append(self._cache[pk])
+                    continue
+                if handle is None:
+                    handle = self.path.open("rb")
+                offset = self.offsets[pk]
+                handle.seek(offset)
+                row = json.loads(handle.readline().decode("utf-8"))
+                normalized = _normalize_loaded_row(self.table, row)
+                self._cache[pk] = normalized
+                if len(self._cache) > 64:
+                    self._cache.popitem(last=False)
+                rows.append(normalized)
+        finally:
+            if handle is not None:
+                handle.close()
+        return rows
+
     def __getitem__(self, pk):
         pk = int(pk)
         if pk in self._tx_deleted:
@@ -2003,6 +2033,51 @@ class Engine:
             return None
         return column, vector
 
+    def _chunked_topk(self, table, column, query, filtered, limit):
+        if _FASTSCAN is None or np is None or not filtered:
+            return None
+        if limit == 0:
+            return [], {}, None
+        dimension = column.length or 0
+        query_vec = np.ascontiguousarray(query, dtype=np.float32)
+        chunk_size = 4096
+        candidates: list[tuple[float, int]] = []
+        for start in range(0, len(filtered), chunk_size):
+            chunk_pks = filtered[start:start + chunk_size]
+            rows = np.empty((len(chunk_pks), dimension), dtype=np.float32)
+            if isinstance(table.rows, RowStore):
+                values = table.rows.read_many(chunk_pks)
+                for index, row in enumerate(values):
+                    rows[index] = row[column.name]
+            else:
+                for index, pk in enumerate(chunk_pks):
+                    rows[index] = table.rows[pk][column.name]
+            want = len(chunk_pks) if limit is None else min(int(limit), len(chunk_pks))
+            if want == 0:
+                return [], {}, None
+            out_positions = (ctypes.c_uint32 * want)()
+            out_distances = (ctypes.c_float * want)()
+            rc = _FASTSCAN.mvd_topk_l2(
+                rows.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                len(chunk_pks),
+                dimension,
+                query_vec.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                None,
+                len(chunk_pks),
+                want,
+                out_positions,
+                out_distances,
+            )
+            if rc < 0 or not all(math.isfinite(float(out_distances[i])) for i in range(rc)):
+                return None
+            for index in range(rc):
+                candidates.append((float(out_distances[index]), int(chunk_pks[int(out_positions[index])])))
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        selected = candidates if limit is None else candidates[:max(0, int(limit))]
+        ordered = [pk for _, pk in selected]
+        distances = {pk: distance for distance, pk in selected}
+        return ordered, distances, None
+
     def _vector_order_plan(self, table, order, filtered, limit=None, where=None):
         if not order or len(order) != 1:
             return None
@@ -2016,6 +2091,11 @@ class Engine:
         if not filtered:
             return [], {}, expr
         matrix, pks, pk_to_pos = table.vector_matrix(column)
+        if matrix is None:
+            chunked = self._chunked_topk(table, column, query, filtered, limit)
+            if chunked is not None:
+                ordered, distances, _ = chunked
+                return ordered, distances, expr
         if _FASTSCAN is not None and np is not None and isinstance(matrix, np.ndarray) and len(pks):
             rows = matrix if matrix.flags.c_contiguous else np.ascontiguousarray(matrix, dtype=np.float32)
             query_vec = (
