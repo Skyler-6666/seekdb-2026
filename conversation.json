@@ -20,7 +20,7 @@
   "version_linkage": {
     "repository": "https://github.com/Skyler-6666/seekdb-2026",
     "branch": "2026-competition-round2",
-    "code_version_described": "7751e4f",
+    "code_version_described": "feb6d35",
     "commit_chain": [
       {
         "sha": "c5d9d44c9a1f3c0c88143d7084e8caa421ee95b8",
@@ -45,11 +45,15 @@
       {
         "sha": "7751e4f",
         "summary": "Add disk-backed RowStore spill, bounded matrix caching, transaction overlays and spill-safe snapshot/WAL recovery for data larger than the memory budget"
+      },
+      {
+        "sha": "feb6d35",
+        "summary": "Avoid materializing all spilled-table rows when an unordered query has LIMIT"
       }
     ],
     "official_package": "oceanbase/seekdb branch 2026-competition-round2: 20 public cases, STDIO_PROTOCOL.md and protocol_check/",
     "ci_evidence": "Final Linux Docker validation from the submitted tree: official 20/20 public cases PASS, edge probe PASS, crash recovery PASS, 100K x 128 low-memory spill/reload PASS, and spilled-table transaction commit/rollback/crash semantics PASS.",
-    "this_material_commit": "This final learning record accompanies code commit 7751e4f and records the large-table spill audit plus the post-fcf7e3e functional regression."
+    "this_material_commit": "This final learning record accompanies code commit feb6d35 and records the spill and LIMIT-bounding regression."
   },
   "user_prompts": [
     {
