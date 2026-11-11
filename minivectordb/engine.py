@@ -509,7 +509,7 @@ class Table:
             )
         return matrix, pks, pk_to_pos
 
-    def maybe_spill(self, data_dir: str | os.PathLike[str], threshold: int = 100_000) -> bool:
+    def maybe_spill(self, data_dir: str | os.PathLike[str], threshold: int = 50_000) -> bool:
         if isinstance(self.rows, RowStore) or len(self.rows) < threshold:
             return False
         path = Path(data_dir) / f"rows-{self.name}-{uuid.uuid4().hex}.jsonl"
@@ -1680,21 +1680,33 @@ class Engine:
             return Result(columns=output_columns, rows=rows, is_query=True)
 
         decorated = []
-        candidate_pks = (
-            filtered
-            if order or limit is None
-            else filtered[:max(0, int(limit))]
+        primary_order = (
+            len(order) == 1
+            and order[0][0][0] == "column"
+            and order[0][0][1].lower() == table.primary.name.lower()
         )
-        for pk in candidate_pks:
-            row = table.rows[pk]
-            decorated.append((pk, row))
-        if order:
-            decorated.sort(key=lambda item: item[0])
-            for expr, descending in reversed(order):
-                decorated.sort(
-                    key=lambda item: eval_expr(expr, item[1], table, aliases),
-                    reverse=descending,
-                )
+        if primary_order:
+            ordered_pks = filtered if not order[0][1] else list(reversed(filtered))
+            candidate_pks = (
+                ordered_pks if limit is None else ordered_pks[:max(0, int(limit))]
+            )
+            decorated = [(pk, table.rows[pk]) for pk in candidate_pks]
+        else:
+            candidate_pks = (
+                filtered
+                if order or limit is None
+                else filtered[:max(0, int(limit))]
+            )
+            for pk in candidate_pks:
+                row = table.rows[pk]
+                decorated.append((pk, row))
+            if order:
+                decorated.sort(key=lambda item: item[0])
+                for expr, descending in reversed(order):
+                    decorated.sort(
+                        key=lambda item: eval_expr(expr, item[1], table, aliases),
+                        reverse=descending,
+                    )
         selected = decorated if limit is None else decorated[:limit]
         rows = []
         for pk, row in selected:
