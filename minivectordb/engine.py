@@ -226,7 +226,8 @@ class Table:
             return cached[1], cached[2]
         pks = sorted(self.rows)
         # Building a full float32 matrix roughly doubles the vector memory.
-        # For very large tables, callers use the row-wise path instead.
+        # Up to 200k rows this is fast and bounded; larger tables use the
+        # row-wise path so a query cannot allocate a huge matrix.
         if len(pks) > 200_000:
             return None, pks
         values = [self.rows[pk][column.name] for pk in pks]
@@ -930,8 +931,15 @@ class Engine:
         allowed = set(filtered)
         if np is not None and isinstance(matrix, np.ndarray):
             query_vec = np.asarray(query, dtype=np.float32)
-            values = np.linalg.norm(matrix - query_vec, axis=1)
-            distances = {pk: float(value) for pk, value in zip(pks, values)}
+            if len(allowed) * 2 < len(pks):
+                import bisect
+                allowed_list = list(allowed)
+                positions = [bisect.bisect_left(pks, pk) for pk in allowed_list]
+                values = np.linalg.norm(matrix[positions] - query_vec, axis=1)
+                distances = {pk: float(value) for pk, value in zip(allowed_list, values)}
+            else:
+                values = np.linalg.norm(matrix - query_vec, axis=1)
+                distances = {pk: float(value) for pk, value in zip(pks, values)}
         else:
             # Large tables (and the no-NumPy fallback) avoid a full matrix.
             # Compute only the rows that can survive the WHERE clause.
