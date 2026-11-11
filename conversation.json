@@ -306,7 +306,7 @@
       "purpose": "Make the storage path survive the official requirement for data larger than the memory budget without breaking transactions or vector queries.",
       "command": "Built minivectordb-fast:latest18; ran the official 20-case suite, edge probe, normal crash_test, 100K x 128 spill/reload and query stress, a spilled-table transaction rollback/commit test, and a SIGKILL-after-spill test.",
       "environment": "linux/amd64 Docker, 2 CPU, 256 MB for spill stress, 512 MB for transaction spill tests.",
-      "output": "20/20 public PASS. Latest final 100K x 128 run: insert 18.162 s, reload 11.970 s, vector preparation 0.014 s, TopK 31.457 s, memory.peak 268,435,456 bytes (the configured 256 MiB limit). Spilled-table rollback and commit returned the committed values after restart; uncommitted updates/deletes/inserts were absent after SIGKILL.",
+      "output": "20/20 public PASS. Latest final 100K x 128 run: insert 13.871 s, reload 16.709 s, vector preparation 0.014 s, TopK 31.457 s, memory.peak 268,435,456 bytes (the configured 256 MiB limit). Spilled-table rollback and commit returned the committed values after restart; uncommitted updates/deletes/inserts were absent after SIGKILL.",
       "result": "pass_local",
       "interpretation": "The large-table path now uses disk-backed RowStore plus transaction overlays. Committed rows are snapshotted with a row_file reference; uncommitted overlays never reach the row file. Large vector scans avoid an unbounded matrix cache and remain exact, at the cost of slower large-table JSON scans."
     },
