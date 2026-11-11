@@ -20,7 +20,7 @@
   "version_linkage": {
     "repository": "https://github.com/Skyler-6666/seekdb-2026",
     "branch": "2026-competition-round2",
-    "code_version_described": "95a6e88",
+    "code_version_described": "5c42fda",
     "commit_chain": [
       {
         "sha": "c5d9d44c9a1f3c0c88143d7084e8caa421ee95b8",
@@ -53,11 +53,15 @@
       {
         "sha": "95a6e88",
         "summary": "Stage RowStore mutations for autocommit DML until the WAL response boundary, preserving crash atomicity"
+      },
+      {
+        "sha": "5c42fda",
+        "summary": "Lower the spill threshold and bound unordered/primary-key ORDER BY scans for resource-limited large tables"
       }
     ],
     "official_package": "oceanbase/seekdb branch 2026-competition-round2: 20 public cases, STDIO_PROTOCOL.md and protocol_check/",
     "ci_evidence": "Final Linux Docker validation from the submitted tree: official 20/20 public cases PASS, edge probe PASS, crash recovery PASS, 100K x 128 low-memory spill/reload PASS, and spilled-table transaction commit/rollback/crash semantics PASS.",
-    "this_material_commit": "This final learning record accompanies code commit 95a6e88 and records the spill, autocommit atomicity and LIMIT-bounding regression."
+    "this_material_commit": "This final learning record accompanies code commit 5c42fda and records the final resource and admission audit."
   },
   "user_prompts": [
     {
@@ -160,7 +164,7 @@
       "student": "The user asked to re-check why the MySQL cases still failed and to make the solution safer, including performance and Agent feedback.",
       "agent_before": "The public suite passed, but the storage engine still kept all rows and the vector matrix in memory.",
       "finding": "The official task explicitly includes data larger than the memory limit; a public-only validation could not prove this requirement.",
-      "action": "Added RowStore spill at 100K rows, bounded the vector matrix cache, persisted row_file references in snapshots, and added transaction overlays so uncommitted spilled rows cannot leak after rollback or crash.",
+      "action": "Added RowStore spill at 50,000 rows, bounded the vector matrix cache, persisted row_file references in snapshots, and added transaction overlays so uncommitted spilled rows cannot leak after rollback or crash.",
       "retest": "Official 20/20 PASS; 100K x 128 spill/reload PASS; rollback/commit after spill PASS; uncommitted spill transaction after SIGKILL PASS.",
       "evidence": "This addresses the storage-resource requirement rather than relying on the smaller public workload."
     }

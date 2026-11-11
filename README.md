@@ -80,7 +80,7 @@ or ranking.
 
 ## Persistence and recovery
 
-- Small tables stay in memory; tables crossing 100,000 rows spill to a
+- Small tables stay in memory; tables crossing 50,000 rows spill to a
   disk-backed JSONL `RowStore` with a bounded in-process row cache.
 - Spilled tables use transaction overlays, so uncommitted row mutations never
   enter the durable row file and cannot leak into recovery.
