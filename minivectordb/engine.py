@@ -811,6 +811,7 @@ class Engine:
         self._wal_handle = None
         self._parse_cache: dict[str, Any] = {}
         self._topk_buffers: dict[int, tuple[Any, Any]] = {}
+        self._autocommit_overlay = False
         self._load()
 
     # -- persistence ---------------------------------------------------
@@ -1035,7 +1036,26 @@ class Engine:
         if not self.in_transaction:
             # A COMMIT outside a transaction is accepted as a no-op.
             return
-        # Spilled row files must not contain uncommitted transaction rows.
+        # For ordinary DML, write the atomic transaction WAL before the
+        # row-file overlay becomes visible.  A kill in between replays the WAL.
+        if not self._tx_force_snapshot:
+            if self._tx_wal:
+                self._append_wal({"op": "transaction", "records": self._tx_wal})
+            for table in self.tables.values():
+                if isinstance(table.rows, RowStore):
+                    table.rows.commit_transaction()
+            self.in_transaction = False
+            self._backup = None
+            self._last_wal = None
+            self._tx_wal = []
+            self._tx_force_snapshot = False
+            spilled = False
+            for table in self.tables.values():
+                spilled = table.maybe_spill(self.data_dir) or spilled
+            if spilled:
+                self._save()
+            return
+        # DDL transactions need the row-file overlay in the snapshot itself.
         for table in self.tables.values():
             if isinstance(table.rows, RowStore):
                 table.rows.commit_transaction()
@@ -1044,15 +1064,11 @@ class Engine:
             spilled = table.maybe_spill(self.data_dir) or spilled
         if self._tx_force_snapshot or spilled:
             self._save()
-        elif self._tx_wal:
-            self._append_wal({"op": "transaction", "records": self._tx_wal})
         self.in_transaction = False
         self._backup = None
         self._last_wal = None
         self._tx_wal = []
         self._tx_force_snapshot = False
-        for table in self.tables.values():
-            table.maybe_spill(self.data_dir)
 
     def _rollback(self) -> None:
         if not self.in_transaction:
@@ -1347,12 +1363,35 @@ class Engine:
         handler = getattr(self, f"_execute_{kind}", None)
         if handler is None:
             raise SQLError(1235, "unsupported statement")
-        result = handler(statement)
-        if kind in {"create_table", "drop_table"}:
-            self._finish_write(full_snapshot=True)
-        elif kind in {"create_vector_index", "insert", "insert_prepared", "update", "update_fast", "delete", "delete_fast"}:
-            self._finish_write()
-        return result
+        dml_kinds = {
+            "insert", "insert_prepared", "update", "update_fast", "delete", "delete_fast"
+        }
+        autocommit_overlay = not self.in_transaction and kind in dml_kinds
+        if autocommit_overlay:
+            for table in self.tables.values():
+                if isinstance(table.rows, RowStore):
+                    table.rows.begin_transaction()
+            self._autocommit_overlay = True
+        try:
+            result = handler(statement)
+            if kind in {"create_table", "drop_table"}:
+                self._finish_write(full_snapshot=True)
+            elif kind in dml_kinds or kind == "create_vector_index":
+                self._finish_write()
+            if autocommit_overlay:
+                # Stage row-file mutations until the WAL frame is durable.
+                for table in self.tables.values():
+                    if isinstance(table.rows, RowStore):
+                        table.rows.commit_transaction()
+                self._autocommit_overlay = False
+            return result
+        except Exception:
+            if autocommit_overlay:
+                for table in self.tables.values():
+                    if isinstance(table.rows, RowStore):
+                        table.rows.rollback_transaction()
+                self._autocommit_overlay = False
+            raise
 
     # -- DDL -----------------------------------------------------------
     def _execute_create_table(self, statement: dict[str, Any]) -> Result:
