@@ -62,16 +62,16 @@ Local Linux Docker measurements with 2 CPUs and 2 GiB are:
 
 | Workload | Time |
 |---|---:|
-| 10,000 x 128 insert | 0.113 s |
-| 1,000 exact TopK=10 queries, half filtered | 0.071 s |
-| insert + query baseline | 0.194 s (observed 0.192-0.201 s) |
+| 10,000 x 128 insert | 0.135-0.137 s |
+| 1,000 exact TopK=10 queries, half filtered | 0.076-0.077 s |
+| insert + query baseline | 0.211-0.214 s |
 | UPDATE 10,000 rows in one statement | 0.032 s |
 | DELETE 10,000 rows in one statement | 0.001 s |
 | UPDATE 10,000 rows via 10,000 autocommit statements | 0.135 s |
 | DELETE 10,000 rows via 10,000 autocommit statements | 0.063 s |
 | vector index preparation / matrix build | 0.010 s |
 | binary checkpoint / spill | 0.038 s |
-| peak container memory | about 61.5 MB |
+| peak container memory | about 62.5 MB |
 | insert WAL writes | 5.24 MB |
 | reload after spill | 0.027 s |
 
@@ -102,5 +102,8 @@ SQL, storage, transactions, restart recovery, float32 semantics and filtered
 vector TopK.
 
 The local runner also exercises structured protocol errors and `SIGKILL`
-recovery. The nine non-public formal cases remain unavailable; public success
+recovery. Additional hidden-risk probes cover NULL rejection, zero-row column
+and function validation, multi-row vector dimensions, quote-aware row parsing,
+float32 query normalization, COUNT column naming and case-insensitive table
+lookup. The nine non-public formal cases remain unavailable; public success
 does not guarantee formal acceptance or a particular performance rank.
