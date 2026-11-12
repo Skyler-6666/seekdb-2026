@@ -39,6 +39,7 @@ _TOKEN_RE = re.compile(
   | (?P<block_comment>/\*.*?\*/)
   | (?P<string>'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*")
   | (?P<number>[+-]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?)
+  | (?P<quoted_ident>`(?:[^`\\]|\\.|``)*`)
   | (?P<identifier>[A-Za-z_][A-Za-z0-9_$]*)
   | (?P<operator><=|>=|<>|!=|==|=|<|>)
   | (?P<punct>[(),.;*\[\]])
@@ -85,6 +86,10 @@ def _unquote(token: Token) -> str:
             out.append(ch)
             i += 1
     return "".join(out)
+
+
+def _unquote_backtick(token: Token) -> str:
+    return token.value[1:-1].replace("``", "`")
 
 
 def _parse_vector_text(text: str) -> array:
@@ -155,9 +160,11 @@ class Parser:
 
     def identifier(self) -> str:
         token = self.peek()
-        if token.kind != "identifier":
+        if token.kind not in {"identifier", "quoted_ident"}:
             raise SQLError(1064, "expected identifier")
         self.next()
+        if token.kind == "quoted_ident":
+            return _unquote_backtick(token)
         return token.value
 
     def end(self) -> None:
@@ -456,7 +463,7 @@ class Parser:
                 alias = None
                 if self.accept_keyword("AS"):
                     alias = self.identifier()
-                elif self.peek().kind == "identifier" and not self.at_keyword(
+                elif self.peek().kind in {"identifier", "quoted_ident"} and not self.at_keyword(
                     "FROM", "WHERE", "ORDER", "LIMIT", "AND", "OR"
                 ):
                     alias = self.identifier()
@@ -488,8 +495,8 @@ class Parser:
             if token.kind != "number" or "." in token.value:
                 raise SQLError(1064, "LIMIT must be an integer")
             limit = int(token.value)
-            if limit < 0:
-                raise SQLError(1064, "LIMIT must be non-negative")
+            if limit < 0 or limit > 2**63 - 1:
+                raise SQLError(1064, "LIMIT is out of range")
         self.end()
         return {
             "type": "select",
@@ -549,6 +556,11 @@ class Parser:
         if token.value in {"=", "==", "<", "<=", ">", ">=", "!=", "<>"}:
             self.next()
             return ("compare", token.value, left, self.parse_additive())
+        if self.accept_keyword("IS"):
+            negated = self.accept_keyword("NOT")
+            if not self.accept_keyword("NULL"):
+                raise SQLError(1064, "expected NULL after IS")
+            return ("isnull", left, negated)
         return left
 
     def parse_additive(self) -> Any:
@@ -606,8 +618,12 @@ class Parser:
             expr = self.parse_expr()
             self.expect(")")
             return expr
-        if token.kind == "identifier":
+        if token.kind in {"identifier", "quoted_ident"}:
             name = self.next().value
+            if token.kind == "quoted_ident":
+                name = _unquote_backtick(token)
+            elif name.upper() == "NULL":
+                return ("literal", None)
             if self.accept("("):
                 args = []
                 if not self.at(")"):

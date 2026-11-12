@@ -1,0 +1,44 @@
+name: round2-official-check
+
+on:
+  push:
+    branches:
+      - competition/round2-correctness-fix
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch official public package
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse \
+            --branch 2026-competition-round2 \
+            https://github.com/oceanbase/seekdb.git upstream
+          git -C upstream sparse-checkout set mysqltest protocol_check
+          cp -r upstream/mysqltest .
+          cp -r upstream/protocol_check .
+          git -C upstream show HEAD:STDIO_PROTOCOL.md > STDIO_PROTOCOL.md
+      - name: Build image
+        run: docker build -t minivectordb:ci .
+      - name: Official handshake
+        run: |
+          python3 protocol_check/run.py --image minivectordb:ci \
+            --handshake-only --output "protocol-results/handshake"
+      - name: Official public cases
+        run: |
+          python3 protocol_check/run.py --image minivectordb:ci \
+            --output "protocol-results/public"
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: round2-results
+          path: protocol-results/
+          if-no-files-found: ignore
+          retention-days: 3

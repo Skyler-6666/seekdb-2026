@@ -231,6 +231,8 @@ class Table:
         if len(pks) > 200_000:
             return None, pks
         values = [self.rows[pk][column.name] for pk in pks]
+        if any(value is None for value in values):
+            return None, pks
         if np is not None:
             matrix = np.asarray(values, dtype=np.float32)
         else:  # pragma: no cover
@@ -294,7 +296,10 @@ def _normalize_loaded_row(table: Table, row: dict[str, Any]) -> dict[str, Any]:
     for column in table.columns:
         value = row.get(column.name)
         if value is None:
-            raise SQLError(1105, "NULL is not supported")
+            if column.primary:
+                raise SQLError(1105, "NULL is not supported")
+            result[column.name] = None
+            continue
         if column.type in {"BIGINT", "INT", "INTEGER"}:
             result[column.name] = int(value)
         elif column.type == "VARCHAR":
@@ -323,7 +328,9 @@ def _as_float32(value: Any) -> float:
 
 def _normalize_value(table: Table, column: Column, value: Any) -> Any:
     if value is None:
-        raise SQLError(1048, f"column {column.name} cannot be NULL")
+        if column.primary:
+            raise SQLError(1048, f"column {column.name} cannot be NULL")
+        return None
     if column.type in {"BIGINT", "INT", "INTEGER"}:
         if isinstance(value, bool) or not isinstance(value, int):
             if isinstance(value, float) and value.is_integer():
@@ -363,13 +370,34 @@ def _compare(left: Any, right: Any, op: str) -> bool:
     raise SQLError(1064, f"unsupported comparison {op}")
 
 
+def _func_label(expr: Any) -> str:
+    parts: list[str] = []
+    for arg in expr[2]:
+        if arg[0] == "star":
+            parts.append("*")
+        elif arg[0] == "column":
+            parts.append(arg[1])
+        elif arg[0] == "literal":
+            parts.append(str(arg[1]))
+        else:
+            parts.append("?")
+    return f"{expr[1]}({','.join(parts)})"
+
+
+def _sortable(value: Any) -> tuple[int, Any]:
+    # NULLs sort first ascending / last descending, like MySQL.
+    return (0, value) if value is None else (1, value)
+
+
 def _vector(value: Any) -> list[float]:
     if isinstance(value, (list, tuple, array)):
         return [float(item) for item in value]
     raise SQLError(1366, "expected vector")
 
 
-def _l2_distance(left: Any, right: Any) -> float:
+def _l2_distance(left: Any, right: Any) -> float | None:
+    if left is None or right is None:
+        return None
     a = _vector(left)
     b = _vector(right)
     if len(a) != len(b):
@@ -377,7 +405,9 @@ def _l2_distance(left: Any, right: Any) -> float:
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
 
 
-def _cosine_distance(left: Any, right: Any) -> float:
+def _cosine_distance(left: Any, right: Any) -> float | None:
+    if left is None or right is None:
+        return None
     a = _vector(left)
     b = _vector(right)
     if len(a) != len(b):
@@ -390,7 +420,9 @@ def _cosine_distance(left: Any, right: Any) -> float:
     return 1.0 - dot / (na * nb)
 
 
-def _inner_product(left: Any, right: Any) -> float:
+def _inner_product(left: Any, right: Any) -> float | None:
+    if left is None or right is None:
+        return None
     a = _vector(left)
     b = _vector(right)
     if len(a) != len(b):
@@ -408,11 +440,13 @@ def eval_expr(expr: Any, row: dict[str, Any], table: Table | None = None, aliase
         name = expr[1]
         if aliases and name.lower() in aliases:
             return aliases[name.lower()]
-        if row is None or name not in row:
-            if table is not None and any(c.name.lower() == name.lower() for c in table.columns):
-                return row[next(c.name for c in table.columns if c.name.lower() == name.lower())]
-            raise SQLError(1054, f"unknown column {name}")
-        return row[name]
+        if row is not None:
+            if name in row:
+                return row[name]
+            for key in row:
+                if key.lower() == name.lower():
+                    return row[key]
+        raise SQLError(1054, f"unknown column {name}")
     if kind == "star":
         raise SQLError(1054, "star is not an expression")
     if kind == "and":
@@ -423,13 +457,25 @@ def eval_expr(expr: Any, row: dict[str, Any], table: Table | None = None, aliase
         op, left_expr, right_expr = expr[1], expr[2], expr[3]
         left = eval_expr(left_expr, row, table, aliases)
         right = eval_expr(right_expr, row, table, aliases)
-        if isinstance(left, list) or isinstance(right, list):
-            raise SQLError(1235, "vector comparison is not supported")
+        if isinstance(left, (list, array)) or isinstance(right, (list, array)):
+            if not (isinstance(left, (list, array)) and isinstance(right, (list, array))):
+                raise SQLError(1235, "vector comparison is not supported")
+            if op not in {"=", "==", "!=", "<>"}:
+                raise SQLError(1235, "vector comparison is not supported")
+            return _compare(_vector(left), _vector(right), op)
+        if left is None or right is None:
+            return False
         return _compare(left, right, op)
+    if kind == "isnull":
+        value = eval_expr(expr[1], row, table, aliases)
+        negated = expr[2]
+        return (value is None) != negated
     if kind == "arith":
         op = expr[1]
         left = eval_expr(expr[2], row, table, aliases)
         right = eval_expr(expr[3], row, table, aliases)
+        if left is None or right is None:
+            return None
         if isinstance(left, list) or isinstance(right, list):
             a = _vector(left)
             b = _vector(right)
@@ -625,6 +671,8 @@ class Engine:
     def _execute_create_table(self, statement: dict[str, Any]) -> Result:
         name = statement["name"]
         if name in self.tables:
+            if statement.get("if_not_exists"):
+                return Result()
             raise SQLError(1050, f"table {name} already exists")
         columns = [Column(**column) for column in statement["columns"]]
         table = Table(name=name, columns=columns)
@@ -636,6 +684,8 @@ class Engine:
     def _execute_drop_table(self, statement: dict[str, Any]) -> Result:
         name = statement["name"]
         if name not in self.tables:
+            if statement.get("if_exists"):
+                return Result()
             raise SQLError(1051, f"unknown table {name}")
         table = self.tables.pop(name)
         if isinstance(table.rows, RowStore):
@@ -650,6 +700,8 @@ class Engine:
         column = table.column(statement["column"])
         if column.type != "VECTOR":
             raise SQLError(1235, "vector index requires a VECTOR column")
+        if statement["name"] in table.vector_indexes:
+            raise SQLError(1061, f"duplicate index name {statement['name']}")
         table.vector_indexes[statement["name"]] = {
             "column": column.name,
             "options": statement.get("options", {}),
@@ -701,6 +753,8 @@ class Engine:
             if column.primary:
                 raise SQLError(1235, "primary key updates are not supported")
             assignments.append((column, expr))
+        for column, expr in assignments:
+            self._validate_expr_columns(table, expr)
         targets = self._filter(table, statement.get("where"))
         updates: list[tuple[int, dict[str, Any]]] = []
         for pk in targets:
@@ -736,6 +790,15 @@ class Engine:
             values = [eval_expr(expr, row, None) for expr, alias in projections]
             return Result(columns=self._projection_columns(projections), rows=[values], is_query=True)
         filtered = self._filter(table, statement.get("where"))
+        aliases: dict[str, Any] = {}
+        for expr, alias in projections:
+            if alias:
+                aliases[alias.lower()] = expr
+        order = self._resolve_order(statement.get("order", []), aliases)
+        for expr, alias in projections:
+            self._validate_expr_columns(table, expr)
+        for expr, descending in order:
+            self._validate_expr_columns(table, expr)
         if projections and all(
             expr[0] == "func" and expr[1].upper() == "COUNT" for expr, alias in projections
         ):
@@ -754,14 +817,9 @@ class Engine:
                             if eval_expr(args[0], table.rows[pk], table) is not None
                         )
                     )
-            names = [alias or "count(*)" for expr, alias in projections]
+            names = [alias or _func_label(expr) for expr, alias in projections]
             return Result(columns=names, rows=[values], is_query=True)
-        aliases: dict[str, Any] = {}
-        for expr, alias in projections:
-            if alias:
-                aliases[alias.lower()] = expr
         output_columns = self._projection_columns(projections)
-        order = self._resolve_order(statement.get("order", []), aliases)
         limit = statement.get("limit")
 
         vector_plan = self._vector_order_plan(table, order, filtered)
@@ -790,7 +848,7 @@ class Engine:
             decorated.sort(key=lambda item: item[0])
             for expr, descending in reversed(order):
                 decorated.sort(
-                    key=lambda item: eval_expr(expr, item[1], table, aliases),
+                    key=lambda item: _sortable(eval_expr(expr, item[1], table, aliases)),
                     reverse=descending,
                 )
         selected = decorated if limit is None else decorated[:limit]
@@ -825,7 +883,7 @@ class Engine:
             elif expr[0] == "column":
                 names.append(expr[1])
             elif expr[0] == "func":
-                names.append(expr[1].lower())
+                names.append(_func_label(expr))
             else:
                 names.append("expr")
         return names
@@ -869,9 +927,27 @@ class Engine:
                 return None
         return None
 
+    def _validate_expr_columns(self, table: Table, expr: Any) -> None:
+        if not isinstance(expr, tuple):
+            return
+        kind = expr[0]
+        if kind == "column":
+            table.column(expr[1])
+            return
+        if kind in {"and", "or"}:
+            self._validate_expr_columns(table, expr[1])
+            self._validate_expr_columns(table, expr[2])
+        elif kind in {"compare", "arith", "isnull"}:
+            for part in expr[1:]:
+                self._validate_expr_columns(table, part)
+        elif kind == "func":
+            for arg in expr[2]:
+                self._validate_expr_columns(table, arg)
+
     def _filter(self, table: Table, where: Any) -> list[int]:
         if where is None:
             return sorted(table.rows)
+        self._validate_expr_columns(table, where)
         direct = self._primary_lookup(table, where)
         if direct is not None:
             if direct in table.rows and eval_expr(where, table.rows[direct], table):
@@ -946,5 +1022,5 @@ class Engine:
             distances = {
                 pk: _l2_distance(table.rows[pk][column.name], query) for pk in allowed
             }
-        ordered = sorted(allowed, key=lambda pk: (distances[pk], pk))
+        ordered = sorted(allowed, key=lambda pk: (_sortable(distances[pk]), pk))
         return ordered, distances, expr
