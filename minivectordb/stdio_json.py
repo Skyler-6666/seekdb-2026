@@ -17,13 +17,15 @@ _ERROR_CODES = {
     1050: "table_exists",
     1051: "unknown_table",
     1054: "unknown_column",
+    1061: "index_exists",
     1062: "duplicate_key",
-    1064: "syntax_error",
+    1064: "unsupported_sql",
     1146: "unknown_table",
     1235: "unsupported_sql",
-    1264: "value_out_of_range",
+    1264: "invalid_bigint",
+    1265: "invalid_bigint",
     1366: "dimension_mismatch",
-    1406: "value_too_long",
+    1406: "varchar_too_long",
     1690: "invalid_vector",
 }
 
@@ -46,10 +48,6 @@ def _result_message(ident: Any, result: Result, sql: str) -> dict[str, Any]:
     if word in {"INSERT", "UPDATE", "DELETE"}:
         return {"id": ident, "ok": True, "affected_rows": int(result.affected)}
     return {"id": ident, "ok": True}
-
-
-def _reject_json_constant(value: str) -> None:
-    raise ValueError(f"non-standard JSON constant: {value}")
 
 
 def emit(message: dict[str, Any]) -> None:
@@ -76,7 +74,7 @@ class JSONLServer:
             if not line:
                 continue
             try:
-                request = json.loads(line, parse_constant=_reject_json_constant)
+                request = json.loads(line)
             except Exception as exc:
                 self.emit({"id": None, "ok": False, "error": {"code": "invalid_json", "message": str(exc)}})
                 continue
@@ -88,7 +86,6 @@ class JSONLServer:
             if op == "shutdown":
                 self.engine.rollback_if_active()
                 self.emit({"id": ident, "ok": True})
-                self.engine.close()
                 return 0
             if op != "execute":
                 self.emit(
@@ -129,5 +126,4 @@ class JSONLServer:
                     }
                 )
         self.engine.rollback_if_active()
-        self.engine.close()
         return 0

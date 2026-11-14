@@ -1,38 +1,19 @@
-FROM python:3.11-slim AS build
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends g++ \
-    && rm -rf /var/lib/apt/lists/*
-
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+FROM rust:1.99.1-slim-bookworm@sha256:392f221964669402bf4ae133d2a46c3ae270f64734133f4b2703d40019235c1a AS build
 WORKDIR /build
-COPY minivectordb/fastscan.cpp /build/fastscan.cpp
-RUN g++ -std=c++17 -O3 -march=native -fopenmp -fPIC -shared \
-    -static-libgcc -static-libstdc++ \
-    -o /build/libfastscan.so /build/fastscan.cpp
+COPY --link Cargo.toml Cargo.lock ./
+COPY --link src ./src
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo fetch --locked && cargo build --release --locked --offline && mkdir /runtime-data
 
-FROM python:3.11-slim
-
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONUTF8=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    VECTORDB_DATA_DIR=/data \
-    MVD_REQUIRE_FASTSCAN=1
-
-WORKDIR /app
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
-
-# NumPy remains the portable fallback; compiled fastscan is the primary path.
-RUN pip install --no-cache-dir numpy==1.26.4
-
-COPY minivectordb /app/minivectordb
-COPY --from=build /build/libfastscan.so /app/minivectordb/libfastscan.so
-
-RUN mkdir -p /data
-
-VOLUME ["/data"]
-
-ENTRYPOINT ["python3", "-m", "minivectordb.main"]
-CMD ["--data-dir", "/data"]
+FROM scratch AS runtime
+COPY --from=build /lib/x86_64-linux-gnu/libgcc_s.so.1 /lib/x86_64-linux-gnu/libgcc_s.so.1
+COPY --from=build /lib/x86_64-linux-gnu/libc.so.6 /lib/x86_64-linux-gnu/libc.so.6
+COPY --from=build /lib/x86_64-linux-gnu/libm.so.6 /lib/x86_64-linux-gnu/libm.so.6
+COPY --from=build /lib64/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2
+COPY --from=build /build/target/release/minivectordb /minivectordb
+COPY --from=build /runtime-data /data
+# The driver can bind a private, root-owned case directory at /data.
+USER 0:0
+WORKDIR /data
+ENTRYPOINT ["/minivectordb"]

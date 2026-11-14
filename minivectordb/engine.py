@@ -12,6 +12,7 @@ import uuid
 from array import array
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from functools import cmp_to_key
 from pathlib import Path
 from typing import Any
 
@@ -104,7 +105,7 @@ class RowStore:
         row = json.loads(self._reader.readline().decode("utf-8"))
         normalized = _normalize_loaded_row(self.table, row)
         self._cache[pk] = normalized
-        if len(self._cache) > 64:
+        if len(self._cache) > 8:
             self._cache.popitem(last=False)
         return normalized
 
@@ -192,6 +193,7 @@ class Table:
     rows: dict[int, dict[str, Any]] = field(default_factory=dict)
     vector_indexes: dict[str, dict[str, Any]] = field(default_factory=dict)
     version: int = 0
+    approx_bytes: int = 0
     _cache: dict[str, tuple[int, Any, list[int]]] = field(default_factory=dict, repr=False)
 
     @property
@@ -255,7 +257,9 @@ class Table:
         }
 
     def maybe_spill(self, data_dir: str | os.PathLike[str], threshold: int = 100_000) -> None:
-        if isinstance(self.rows, RowStore) or len(self.rows) < threshold:
+        if isinstance(self.rows, RowStore):
+            return
+        if len(self.rows) < threshold and self.approx_bytes < 32 * 1024 * 1024:
             return
         path = Path(data_dir) / f"rows-{self.name}-{uuid.uuid4().hex}.jsonl"
         store = RowStore(path, self)
@@ -329,7 +333,7 @@ def _normalize_value(table: Table, column: Column, value: Any) -> Any:
             if isinstance(value, float) and value.is_integer():
                 value = int(value)
             else:
-                raise SQLError(1366, f"invalid integer for {column.name}")
+                raise SQLError(1265, f"invalid integer for {column.name}")
         if value < -(2**63) or value > 2**63 - 1:
             raise SQLError(1264, f"integer out of range for {column.name}")
         return int(value)
@@ -650,6 +654,8 @@ class Engine:
         column = table.column(statement["column"])
         if column.type != "VECTOR":
             raise SQLError(1235, "vector index requires a VECTOR column")
+        if statement["name"] in table.vector_indexes:
+            raise SQLError(1061, "index already exists")
         table.vector_indexes[statement["name"]] = {
             "column": column.name,
             "options": statement.get("options", {}),
@@ -684,6 +690,7 @@ class Engine:
             if pk in seen:
                 raise SQLError(1062, f"duplicate primary key {pk}")
             seen.add(pk)
+            table.approx_bytes += sum(len(str(value)) for value in row.values())
             new_rows.append(row)
         for row in new_rows:
             table.rows[int(row[table.primary.name])] = row
@@ -782,20 +789,45 @@ class Engine:
 
         if limit is not None and not order:
             filtered = filtered[: max(0, int(limit))]
-        decorated = []
-        for pk in filtered:
-            row = table.rows[pk]
-            decorated.append((pk, row))
-        if order:
-            decorated.sort(key=lambda item: item[0])
-            for expr, descending in reversed(order):
-                decorated.sort(
-                    key=lambda item: eval_expr(expr, item[1], table, aliases),
-                    reverse=descending,
-                )
-        selected = decorated if limit is None else decorated[:limit]
+
+        def compare_rows(left, right):
+            for index, (_, descending) in enumerate(order):
+                a, b = left[1][index], right[1][index]
+                if a == b:
+                    continue
+                result = -1 if a < b else 1
+                return -result if descending else result
+            return -1 if left[0] < right[0] else (1 if left[0] > right[0] else 0)
+
+        if order and limit is not None:
+            # Keep only the requested top rows; a wide table must not be
+            # materialized in full just to return one row.
+            top: list[tuple[int, tuple[Any, ...], dict[str, Any]]] = []
+            for pk in filtered:
+                row = table.rows[pk]
+                keys = tuple(eval_expr(expr, row, table, aliases) for expr, _ in order)
+                top.append((pk, keys, row))
+                if len(top) > int(limit):
+                    top.sort(key=cmp_to_key(compare_rows))
+                    top.pop()
+            top.sort(key=cmp_to_key(compare_rows))
+            selected = [(pk, row) for pk, _, row in top]
+        else:
+            # Keep only primary keys + sort keys, not whole wide rows.
+            decorated = []
+            for pk in filtered:
+                row = table.rows[pk]
+                keys = tuple(eval_expr(expr, row, table, aliases) for expr, _ in order)
+                decorated.append((pk, keys))
+            if order:
+                decorated.sort(key=cmp_to_key(compare_rows))
+            selected = [(pk, None) for pk, _ in decorated]
+            if limit is not None:
+                selected = selected[: max(0, int(limit))]
         rows = []
         for pk, row in selected:
+            if row is None:
+                row = table.rows[pk]
             values = []
             local_aliases = dict(aliases)
             for expr, alias in projections:
